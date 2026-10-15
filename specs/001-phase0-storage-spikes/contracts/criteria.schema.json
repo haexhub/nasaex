@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "nasaex/phase0/criteria.schema.json",
   "title": "Phase 0 spike criteria file",
-  "description": "Schema of docs/phase0/criteria/S<n>.yaml (and S<n>.v<k>.yaml) after YAML parsing. A frozen file is immutable; its identity is its SHA-256 in frozen.lock.",
+  "description": "Schema of docs/phase0/criteria/S<n>.yaml (and S<n>.v<k>.yaml) after YAML parsing. A frozen file is immutable; its identity is the (file, version, SHA-256) tuple in frozen.lock.",
   "type": "object",
   "required": ["spike", "criteria_version", "status", "name", "gates", "fallback", "scenarios"],
   "additionalProperties": false,
@@ -44,6 +44,51 @@
     {
       "if": { "properties": { "criteria_version": { "minimum": 2 } }, "required": ["criteria_version"] },
       "then": { "required": ["amends", "reason", "date"] }
+    },
+    {
+      "if": { "properties": { "spike": { "const": "S1" } }, "required": ["spike"] },
+      "then": {
+        "properties": {
+          "gates": { "const": "ADR-0002" },
+          "scenarios": { "items": { "properties": { "id": { "pattern": "^S1\\.[0-9]+$" } } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "spike": { "const": "S2" } }, "required": ["spike"] },
+      "then": {
+        "properties": {
+          "gates": { "const": "ADR-0002" },
+          "scenarios": { "items": { "properties": { "id": { "pattern": "^S2\\.[0-9]+$" } } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "spike": { "const": "S3" } }, "required": ["spike"] },
+      "then": {
+        "properties": {
+          "gates": { "const": "ADR-0002" },
+          "scenarios": { "items": { "properties": { "id": { "pattern": "^S3\\.[0-9]+$" } } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "spike": { "const": "S4" } }, "required": ["spike"] },
+      "then": {
+        "properties": {
+          "gates": { "const": "ADR-0002" },
+          "scenarios": { "items": { "properties": { "id": { "pattern": "^S4\\.[0-9]+$" } } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "spike": { "const": "S5" } }, "required": ["spike"] },
+      "then": {
+        "properties": {
+          "gates": { "const": "ADR-0005" },
+          "scenarios": { "items": { "properties": { "id": { "pattern": "^S5\\.[0-9]+$" } } } }
+        }
+      }
     }
   ],
   "$defs": {

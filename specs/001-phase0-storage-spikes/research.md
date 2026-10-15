@@ -29,7 +29,7 @@ criteria are frozen (see plan, open items O3).
 | F4 | The kernel overlayfs documentation says changes to the underlying (upper or lower) filesystems while the overlay is mounted are not allowed and give undefined behaviour (no crash, no deadlock). The mover changes the lower layer (archive writes and deletions) and the upper layer (pool copy removal, whiteout cleanup) under a mounted share. Even offline changes to the lower tree are undefined once `redirect_dir`, `index`, `metacopy` or `xino` have been used, and S1 scenario 6 will probably need `redirect_dir`. S1 scenario 10 covers only the archive side. | S1 scenario 10, S3 steps 5/6/9 | Gap |
 | F5 | `nixos-rebuild switch` sets the system profile to the new generation before it activates and does not roll back by itself when activation fails. ADR-0005 says the previous generation is restored; that restoration is therefore backend behaviour that the S5 harness must supply and test. | S5 scenarios 3-5, ADR-0005 | Sharpening |
 | F6 | mergerfs upstream documents the opposite stacking direction (an overlayfs mount as a branch inside a mergerfs pool). Overlayfs on top of mergerfs is not documented upstream, so nothing upstream vouches for it. | ADR-0002, S1 | Information |
-| F7 | Process: PR #3 (`docs(spec): specify phase 0 storage spikes`) is already **merged** (rebase merge, head `f256c54`). The branch `001-phase0-storage-spikes` carries commits that are not on `main` (`299032b` and the plan commits), and no open PR carries them. | Delivery | Process |
+| F7 | Process: PR #3 (`docs(spec): specify phase 0 storage spikes`) is already **merged** (rebase merge, head `f256c54`). PR #4 is the delivery vehicle for the branch's remaining commits: the clarification commit is rebased as `c4a5947`, followed by the plan commit; no separate PR is needed. | Delivery | Process |
 | F8 | Process: `.specify/memory/constitution.md` is still the unfilled Spec Kit template (placeholders only). The Constitution Check below was done against `.spaex/constitution.md`. | Plan | Process |
 | F9 | Process: the root `flake.nix` (spaex devShell) tracks `nixos-unstable` and has no committed `flake.lock`, so it is not a pin. The spikes need their own pinned flake. | Plan D1 | Process |
 
@@ -226,15 +226,15 @@ All injection is driven from the host side by the Python test script (the test d
 process). Named injection points are defined in `contracts/fault-points.md`; the mover step
 hooks are in `contracts/mover-steps.md`.
 
-- **Hard power-off**: `machine.crash()` of the test driver. It sends `quit` to the QEMU
+- **QEMU process termination**: `machine.crash()` of the test driver. It sends `quit` to the QEMU
   monitor and waits for the process to exit; a following `machine.start()` (or the
   driver's implicit start) boots the same machine state, so disks persist.
   `[Certain]` (`machine/__init__.py`, `crash()`; nixpkgs tests `zfs.nix` use
   `crash()` followed by a start). Effect: guest RAM, including the guest page cache,
-  is lost; every write already submitted to the virtual disk survives, because the
-  qcow2 file lives in the host page cache. Residual risk (record in every result record):
-  loss or reordering of un-flushed writes inside a real disk's volatile cache is **not**
-  emulated. `[Likely]`
+  is lost. Writes already submitted to the virtual disk may remain visible because the
+  qcow2 file lives in the host page cache. This does not emulate host power loss or loss
+  of un-flushed writes in host or device caches. Record that limitation in every result
+  record. `[Likely]`
 - **Process kill**: `kill -9` of the named process inside the guest through the driver
   shell (`machine.succeed("kill -9 ...")`), triggered while the mover is blocked at a hook
   (see D7). A mid-sync kill for S2.4 additionally uses SnapRAID's own progress log (see 3.4).
@@ -276,9 +276,10 @@ hooks are in `contracts/mover-steps.md`.
   Between and inside steps it calls `spike_hook <point>`. A hook is a no-op unless the host
   has armed that point; an armed hook writes a `reached` marker and then blocks until
   released. The host test script waits for the marker (`wait_for_file`), performs the kill
-  (process kill, power-off, or device failure), and either releases the hook (no kill) or
-  lets the kill take the blocked process down. The hook itself never calls `sync`, so a
-  power-off sees exactly the on-disk effects of the steps before the point.
+  (process kill, QEMU process termination, or device failure), and either releases the hook
+  (no kill) or lets the kill take the blocked process down. The hook itself never calls `sync`,
+  so a QEMU termination sees exactly the on-disk effects of the steps before the point, subject
+  to the host-page-cache limitation described above.
 - **Rationale**: the spec's assumption is that the step list and the recovery procedure are
   the artifacts the product will later implement, so the step list is a contract and the
   script is disposable. A blocking cooperative hook is deterministic (the process cannot
@@ -542,7 +543,8 @@ Flake outputs (system `x86_64-linux`):
 
 - **Decision**: a GitHub Actions workflow (created in the implementation phase) with three
   jobs:
-  1. `static` (no KVM, every PR touching `spikes/**`, `docs/phase0/**`, `docs/adr/**`):
+  1. `static` (no KVM, every PR touching `spikes/**`, `specs/001-phase0-storage-spikes/**`,
+     `docs/phase0/**`, `docs/adr/**`):
      `nix flake check` for the cheap checks and `spikectl verify` with full git history.
   2. `suite` (KVM runner, manual dispatch and a label on the PR): `nix run ...#suite -- --mode
      shakedown` by default; uploads the junit XML and the scratch output as an artifact. In
@@ -768,7 +770,8 @@ All `[Certain]`, nixpkgs `a033e66`:
 - Disks: `virtualisation.emptyDiskImages` creates sparse `empty<N>.qcow2` files in the machine
   state directory on first start (`qemu-img create -f qcow2`), with per-disk `driveConfig` (so a
   serial can be set); they persist across stop/start of the same machine.
-- `Machine.crash()`: monitor `quit`; `Machine.shutdown()`: `poweroff` in the guest;
+- `Machine.crash()`: monitor `quit` (QEMU process termination, not host power loss);
+  `Machine.shutdown()`: `poweroff` in the guest;
   `Machine.send_monitor_command()` and a QMP session exist; `Machine.block()`/`unblock()` toggle
   the vlan link (not used for disk faults).
 - `qemu.forceAccel` aborts if `/dev/kvm` is missing or not accessible.

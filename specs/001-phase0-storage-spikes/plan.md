@@ -66,7 +66,7 @@ Rationale, alternatives and sources for each are in [research.md](research.md) (
 | Harness | `pkgs.testers.runNixOSTest`, Python scripts, driver run outside the sandbox with `forceAccel`, fresh state per run, own scenario recorder (the driver's `subtest` aborts on error) [D2] |
 | Disks | `emptyDiskImages` with stable serials; `large` profile (S1: pool 2x8 GiB, archive 6/10/4 GiB XFS/XFS/ext4, parity 12 GiB) and `small` profile (S2-S4); sparse qcow2 [D3] |
 | SMB client | Second VM with `mount.cifs` plus `smbclient`; minimal smb.conf [D4] |
-| Fault injection | `machine.crash()` (power-off), in-guest `kill -9` while blocked at a hook, QEMU `device_del`/`drive_del` for device failure, filler file for out-of-space, guest-side byte flips for corruption; all at named points [D5] |
+| Fault injection | `machine.crash()` (QEMU process termination; host-power-loss semantics unverified), in-guest `kill -9` while blocked at a hook, QEMU `device_del`/`drive_del` for device failure, filler file for out-of-space, guest-side byte flips for corruption; all at named points [D5] |
 | Mover hooks | Throwaway reference mover calls blocking `spike_hook <point>`; host kills at the point; every durable effect is a point [D6] |
 | Oracle | Host-side seeded fixtures give expected manifests; observed state read from share and raw layers; parity coverage proven by device-failure drill on a copied machine state; S2 predictions at block granularity; negative controls validate the oracle [D7] |
 | Criteria and records | YAML in `docs/phase0/criteria/`, append-only `frozen.lock` (SHA-256), versioned amendments, JSON records plus `evidence.tar.xz` in `docs/phase0/results/<spike>/<record-id>/` [D8] |
@@ -202,7 +202,7 @@ never lives under `spikes/`.
 | O7 | nixpkgs channel. | `nixos-26.05` (stable) at the committed lock; unstable is the alternative. The stable branch moving on does not affect the pin. |
 | O8 | S5 harness feasibility (tmpfs root, bootloader, local writable store, offline rebuild). | First S5 task is a feasibility probe; the documented fallback records which part of ADR-0004 was reproduced. |
 | O9 | Which mergerfs `passthrough.io` mode the criteria test; the spec names only `max-stack-depth`. | Baseline `passthrough.io=off` (default); one additional S1 run with `rw` and `cache.files=auto-full` for the large-file and rename scenarios, so the product module can choose with evidence. |
-| O10 | PR #3 is already merged (rebase merge, head `f256c54`); the branch contains commits that are not on `main` and no open PR carries them (finding F7). | The maintainers choose: rebase the branch onto `main` and open a new PR, or cherry-pick. Not done here (instruction: no second PR). |
+| O10 | PR #3 is already merged (rebase merge, head `f256c54`); the branch contains the rebased clarification commit and the remaining plan commit. | Keep PR #4 as the delivery vehicle for these commits; no rebase/cherry-pick or second PR is needed. |
 | O11 | `.specify/memory/constitution.md` is an unfilled template (finding F8). | Either fill it (`/speckit-constitution`) or state that the spaex constitution is the only gate. |
 | O12 | SMB client details (which commands expose DOS attributes and xattrs, smb.conf keys) are UNVERIFIED. | Settled in the S1 criteria task through a shakedown, recorded as required settings (FR-013). |
 | O13 | Third-party GitHub Actions need full-SHA pins. | Resolve at implementation. |

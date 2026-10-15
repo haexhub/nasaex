@@ -149,7 +149,7 @@
             "memory_gib": { "type": "integer", "minimum": 1 }
           }
         },
-        "kvm": { "type": "boolean", "description": "Must be true for a record; a run without KVM never produces one." },
+        "kvm": { "const": true, "description": "Must be true for a record; a run without KVM never produces one." },
         "vm_resources": {
           "type": "object",
           "additionalProperties": {

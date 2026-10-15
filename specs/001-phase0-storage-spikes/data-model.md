@@ -59,7 +59,7 @@ The frozen wording of one spike's scenarios.
 | `tables` | Data tables the checks read: S2 recoverability predictions, S4 degraded-state table, S3 crash-point list |
 | `changelog` | Pre-freeze edit notes (plan open item O2) |
 
-Frozen identity: the pair (`file`, SHA-256 of the file bytes) recorded as a line
+Frozen identity: the triple (`file`, `version`, SHA-256 of the file bytes) recorded as a line
 `<file> <version> <sha256>` in `docs/phase0/criteria/frozen.lock`. A file named in the lock is immutable;
 the lock is append-only.
 
