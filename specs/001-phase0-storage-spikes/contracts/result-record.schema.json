@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nasaex/phase0/result-record.schema.json",
+  "title": "Phase 0 result record",
+  "description": "docs/phase0/results/<spike>/<record-id>/record.json. Immutable once committed. Contains identifiers and hashes only; no absolute host paths, user names or host names.",
+  "type": "object",
+  "required": [
+    "record_id", "kind", "spike", "criteria_version", "criteria_sha256", "environment",
+    "date", "scenarios", "verdict", "residual_risk", "evidence_archive"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "record_id": {
+      "type": "string",
+      "pattern": "^(S[1-5]|repro-S[1-5])-[0-9]{8}T[0-9]{6}Z-v[0-9]+$",
+      "description": "<spike>-<UTC timestamp, basic format>-v<criteria version>; repro records use the repro- prefix."
+    },
+    "kind": { "enum": ["spike-run", "repro"] },
+    "spike": { "enum": ["S1", "S2", "S3", "S4", "S5"] },
+    "criteria_version": { "type": "integer", "minimum": 1 },
+    "criteria_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Must equal the lock entry of this criteria version in docs/phase0/criteria/frozen.lock."
+    },
+    "environment": { "$ref": "#/$defs/environment" },
+    "date": {
+      "type": "object",
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "properties": {
+        "start": { "type": "string", "format": "date-time" },
+        "end": { "type": "string", "format": "date-time" }
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/scenarioResult" }
+    },
+    "verdict": {
+      "enum": ["PASS", "FAIL"],
+      "description": "PASS iff every scenario of the named criteria version is present with outcome pass. A missing scenario counts as fail."
+    },
+    "fallback_decision": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Required when verdict is FAIL: the fallback that applies (spec FR-007, FR-031)."
+    },
+    "coverage": {
+      "type": "object",
+      "description": "Numbers behind SC-005 (crash points enumerated and executed per kill mode), SC-006 (predicted versus actual file sets), SC-007 (transitions), SC-008 (rebuild durations).",
+      "additionalProperties": true
+    },
+    "required_settings": {
+      "type": "object",
+      "description": "Mount or share settings found necessary (FR-013), the verified refresh procedure for archive and pool layer changes (S1.10), the written recovery procedure of S2.7.",
+      "additionalProperties": true
+    },
+    "residual_risk": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" },
+      "description": "At least: device-level volatile write caches are not emulated; virtual disks stand in for real disks."
+    },
+    "supersedes": {
+      "type": "string",
+      "pattern": "^(S[1-5]|repro-S[1-5])-[0-9]{8}T[0-9]{6}Z-v[0-9]+$",
+      "description": "Earlier record that this run re-runs after a documented design correction. The earlier record is never deleted."
+    },
+    "repro_runs": {
+      "type": "array",
+      "description": "kind=repro only: the record ids of the three consecutive clean runs (SC-004).",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "type": "string" }
+    },
+    "evidence_archive": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "pattern": "^evidence\\.tar\\.xz$" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "verdict": { "const": "FAIL" } }, "required": ["verdict"] },
+      "then": { "required": ["fallback_decision"] }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "repro" } }, "required": ["kind"] },
+      "then": { "required": ["repro_runs"] }
+    }
+  ],
+  "$defs": {
+    "environment": {
+      "type": "object",
+      "required": ["repo_commit", "flake_lock_sha256", "nixpkgs_rev", "profile", "tool_versions", "host", "kvm"],
+      "additionalProperties": false,
+      "properties": {
+        "repo_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "flake_lock_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "nixpkgs_rev": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "profile": { "enum": ["large", "small", "s5"] },
+        "disks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["serial", "role", "size_mib"],
+            "additionalProperties": false,
+            "properties": {
+              "serial": { "type": "string" },
+              "role": { "enum": ["pool", "archive", "parity", "replacement", "system", "state"] },
+              "size_mib": { "type": "integer", "minimum": 1 },
+              "filesystem": { "type": "string" }
+            }
+          }
+        },
+        "tool_versions": {
+          "type": "object",
+          "description": "Observed inside the guest or on the host at run time, not copied from documentation.",
+          "required": ["kernel", "qemu"],
+          "additionalProperties": { "type": "string" },
+          "properties": {
+            "kernel": { "type": "string" },
+            "qemu": { "type": "string" },
+            "mergerfs": { "type": "string" },
+            "snapraid": { "type": "string" },
+            "btrfs_progs": { "type": "string" },
+            "samba": { "type": "string" },
+            "nix": { "type": "string" }
+          }
+        },
+        "kernel_config": {
+          "type": "object",
+          "description": "Pre-flight results, for example CONFIG_FUSE_PASSTHROUGH and CONFIG_OVERLAY_FS_REDIRECT_DIR as read from the running kernel.",
+          "additionalProperties": { "type": "string" }
+        },
+        "host": {
+          "type": "object",
+          "required": ["cpu_class", "vcpus", "memory_gib"],
+          "additionalProperties": false,
+          "properties": {
+            "cpu_class": { "type": "string", "description": "CPU model class only (for example vendor and family); no host name." },
+            "vcpus": { "type": "integer", "minimum": 1 },
+            "memory_gib": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "kvm": { "type": "boolean", "description": "Must be true for a record; a run without KVM never produces one." },
+        "vm_resources": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": { "vcpus": { "type": "integer" }, "memory_mib": { "type": "integer" } }
+          }
+        }
+      }
+    },
+    "scenarioResult": {
+      "type": "object",
+      "required": ["id", "outcome"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^S[1-5]\\.[0-9]+$" },
+        "outcome": { "enum": ["pass", "fail", "error", "skipped", "flaky"] },
+        "duration_s": { "type": "number", "minimum": 0 },
+        "cases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "outcome"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "description": "<scenario id>:<case>, for example S3.2:post:M5:poweroff" },
+              "outcome": { "enum": ["pass", "fail", "error", "skipped", "flaky"] },
+              "fault_point": { "type": "string" },
+              "fault_kind": { "type": "string" }
+            }
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "description": "Entries inside evidence.tar.xz.",
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string", "pattern": "^[^/].*$" },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}
