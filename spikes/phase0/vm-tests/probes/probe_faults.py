@@ -4,8 +4,9 @@
 # directory of the driver and a PROBE-RESULT line in the log.
 import json
 import re
-import subprocess
 from pathlib import Path
+
+from testlib.faults import device_failed_at_boot
 
 DISKS = {d["serial"]: d for d in TOPOLOGY["disks"]}
 RESULT: dict = {"environment": {}, "kinds": {}}
@@ -171,11 +172,7 @@ kind(
 # --- device-failed-at-boot: swap the backing image for an empty one before the next start ----
 server.crash()
 target = DISKS["arch0"]
-image = Path(server.state_dir) / target["image"]
-size = target["sizeMiB"]
-subprocess.run(
-    [QEMU_IMG, "create", "-f", "qcow2", str(image), f"{size}M"], check=True, capture_output=True
-)
+device_failed_at_boot(server, target, QEMU_IMG, point="probe:device-failed-at-boot")
 boot()
 blank = shell(f"blkid -p {by_id('arch0')}")[0] != 0
 arch0_mount = shell("systemctl is-active mnt-archive-arch0.mount")[1].strip()

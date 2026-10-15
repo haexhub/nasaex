@@ -51,6 +51,8 @@ class Recorder:
             return "fail", f"{label}: {failure}"
         except Exception as error:  # noqa: BLE001 - isolation: any harness error is an outcome
             return "error", f"{label}: {type(error).__name__}: {error}"
+        if self._deadline is not None and self._clock() > self._deadline:
+            return "error", f"{label}: budget exhausted after it finished"
         return "pass", ""
 
     def _claim(self, scenario_id: str) -> None:
@@ -80,25 +82,30 @@ class Recorder:
         self._claim(scenario_id)
         started = self._clock()
         entries, notes = [], []
-        for case in cases:
-            outcome, note = self._execute(case.id, lambda case=case: fn(case))
-            entries.append(
-                {
-                    "id": case.id,
-                    "outcome": outcome,
-                    "fault_kind": case.fault_kind,
-                    "fault_point": case.fault_point,
-                }
-            )
-            if note:
-                notes.append(note)
-        outcomes = {entry["outcome"] for entry in entries}
-        if not entries:
-            outcome, notes = "error", [f"{scenario_id}: no cases were generated"]
-        elif outcomes == {"pass"}:
-            outcome = "pass"
+        try:
+            for case in cases:
+                outcome, note = self._execute(case.id, lambda case=case: fn(case))
+                entries.append(
+                    {
+                        "id": case.id,
+                        "outcome": outcome,
+                        "fault_kind": case.fault_kind,
+                        "fault_point": case.fault_point,
+                    }
+                )
+                if note:
+                    notes.append(note)
+        except Exception as error:  # noqa: BLE001 - iterator failures are scenario outcomes
+            outcome = "error"
+            notes.append(f"{scenario_id}: {type(error).__name__}: {error}")
         else:
-            outcome = next(o for o in SEVERITY if o in outcomes)
+            outcomes = {entry["outcome"] for entry in entries}
+            if not entries:
+                outcome, notes = "error", [f"{scenario_id}: no cases were generated"]
+            elif outcomes == {"pass"}:
+                outcome = "pass"
+            else:
+                outcome = next(o for o in SEVERITY if o in outcomes)
         self._store(scenario_id, outcome, notes, started, cases=entries)
 
     def attach(self, path: str, sha256: str) -> None:

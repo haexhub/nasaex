@@ -12,6 +12,7 @@ from spikectl.model import (
     ModelError,
     load_criteria,
     load_record,
+    parse_criteria_filename,
     read_lock,
     record_paths,
     record_timestamp,
@@ -63,7 +64,7 @@ def _record_errors(spike: str, record: dict, derived: str) -> list[str]:
 
 
 def _current_for(root: Path, spike: str, lock) -> SpikeVerdict:
-    entries = [e for e in lock if e.file.startswith(f"{spike}.")]
+    entries = [e for e in lock if (parse_criteria_filename(e.file) or ("", 0))[0] == spike]
     if not entries:
         return SpikeVerdict(spike)
     current = max(entries, key=lambda e: e.version)

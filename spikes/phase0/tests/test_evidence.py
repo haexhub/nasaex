@@ -106,6 +106,29 @@ def test_member_hashes_are_those_of_the_sanitised_bytes(tmp_path):
     assert result.members["driver.log"] == hashlib.sha256(stored).hexdigest()
 
 
+def test_symlinks_are_excluded_even_when_the_target_is_outside_staging(tmp_path):
+    staging = stage(tmp_path, {"driver.log": "kept"})
+    link = staging / "journal" / "outside.log"
+    link.parent.mkdir()
+    link.symlink_to(tmp_path / "secret.log")
+    (tmp_path / "secret.log").write_text("secret", encoding="utf-8")
+
+    result = build_evidence(staging, tmp_path / "out", SANITISER, passing=set())
+
+    assert "journal/outside.log" in result.excluded
+    assert "journal/outside.log" not in members(result.path)
+
+
+def test_sanitised_member_names_do_not_leak_host_names_or_collide(tmp_path):
+    staging = stage(tmp_path, {"journal/buildbox.log": "one", "journal/<host>.log": "two"})
+
+    result = build_evidence(staging, tmp_path / "out", SANITISER, passing=set())
+    archived = members(result.path)
+
+    assert set(archived) == {"journal/<host>.log", "journal/<host>.log~2"}
+    assert result.members.keys() == archived.keys()
+
+
 def test_packing_twice_gives_identical_bytes(tmp_path):
     staging = stage(tmp_path, {"driver.log": "a" * 1000, "environment.json": "{}"})
 

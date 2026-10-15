@@ -15,6 +15,7 @@ HOST_PATH_PATTERNS = (
     re.compile(rf"(?<![\w.])/Users/{_PATH_END}+"),
     re.compile(rf"[A-Za-z]:\\Users\\{_PATH_END}+"),
     re.compile(rf"(?<![\w/.~])~/{_PATH_END}*"),
+    re.compile(rf"(?<![\w/.~])/tmp/{_PATH_END}+"),
 )
 
 

@@ -43,6 +43,13 @@ def test_guest_paths_survive():
     assert SANITISER.sanitise(text) == text
 
 
+def test_host_temporary_paths_are_removed_without_hiding_guest_paths():
+    out = SANITISER.sanitise("host /tmp/phase0-run/status.log, guest /mnt/archive/disk0")
+
+    assert "/tmp/" not in out
+    assert "/mnt/archive/disk0" in out
+
+
 def test_sanitising_is_idempotent_and_leaves_nothing_the_verifier_would_flag():
     text = "/home/alice/a ~/b C:\\Users\\carol\\c /srv/work/nasaex/d and alice-laptop"
 

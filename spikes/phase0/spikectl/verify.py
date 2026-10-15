@@ -217,7 +217,12 @@ def _is_prefix(older: list[str], newer: list[str]) -> bool:
 
 
 def _check_git(root: Path, base_ref: str | None) -> list[Finding]:
-    if not (root / ".git").exists():
+    membership = _git(root, "rev-parse", "--is-inside-work-tree")
+    if membership.returncode != 0:
+        # A standalone tree is valid for the criteria/records/hygiene checks.  A
+        # broken repository marker, however, must not silently skip git checks.
+        if (root / ".git").exists():
+            return [Finding("git", f"cannot inspect git history from {root}")]
         return []
     findings = _check_lock_append_only(root, base_ref)
     return findings + _check_criteria_before_records(root)
@@ -309,7 +314,7 @@ def _check_record_order(root: Path, path: Path, lock: list[LockEntry]) -> list[F
 
 def _tracked_files(root: Path) -> list[str]:
     """Repository-relative paths: tracked files in a git work tree, else everything."""
-    if (root / ".git").exists():
+    if _git(root, "rev-parse", "--is-inside-work-tree").returncode == 0:
         listed = _git(root, "ls-files", "-z")
         return sorted(p for p in listed.stdout.split("\0") if p)
     return sorted(

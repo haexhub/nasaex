@@ -136,6 +136,34 @@ def test_a_scenario_started_after_the_deadline_is_an_error_and_is_not_run():
     assert "budget" in by_id(rec)["S1.1"]["notes"]
 
 
+def test_a_scenario_finishing_after_the_deadline_is_an_error():
+    clock = Clock()
+    rec = Recorder(deadline=100.0, clock=clock)
+
+    def work():
+        clock.now = 101.0
+
+    rec.run("S1.1", work)
+
+    assert by_id(rec)["S1.1"]["outcome"] == "error"
+    assert "after it finished" in by_id(rec)["S1.1"]["notes"]
+
+
+def test_case_generation_failure_records_observed_cases_and_scenario_error():
+    rec = Recorder()
+
+    def cases():
+        yield Recorder.case("S1.1:a", "kill", "pre:M1")
+        raise RuntimeError("case source failed")
+
+    rec.run_cases("S1.1", cases(), lambda case: None)
+
+    scenario = by_id(rec)["S1.1"]
+    assert scenario["outcome"] == "error"
+    assert [case["id"] for case in scenario["cases"]] == ["S1.1:a"]
+    assert "case source failed" in scenario["notes"]
+
+
 def test_scenarios_unfinished_at_the_budget_become_errors():
     rec = Recorder()
     rec.run("S1.1", lambda: None)

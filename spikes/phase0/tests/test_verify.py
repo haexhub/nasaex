@@ -201,8 +201,7 @@ def test_x1_records_are_never_required(root):
     write_criteria(root, spike="X1")
     freeze(root, "X1")
 
-    assert verify(root) == [] or checks(verify(root)) <= {"ancestry"}
-    assert "record-missing" not in checks(verify(root))
+    assert verify(root) == []
 
 
 def test_an_x1_record_that_claims_to_gate_is_detected(root):

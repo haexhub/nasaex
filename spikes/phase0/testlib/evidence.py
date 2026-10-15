@@ -63,8 +63,20 @@ def build_evidence(
     """Write out_dir/evidence.tar.xz from the staging directory."""
     kept: dict[str, bytes] = {}
     excluded = []
-    for path in sorted(p for p in staging.rglob("*") if p.is_file()):
+    staging_root = staging.resolve()
+    for path in sorted(staging.rglob("*")):
         rel = path.relative_to(staging).as_posix()
+        if path.is_symlink():
+            excluded.append(rel)
+            continue
+        if not path.is_file():
+            continue
+        try:
+            source = path.resolve(strict=True)
+            source.relative_to(staging_root)
+        except (OSError, ValueError):
+            excluded.append(rel)
+            continue
         try:
             text = path.read_bytes().decode("utf-8") if _keep(rel, passing) else None
         except UnicodeDecodeError:
@@ -72,7 +84,17 @@ def build_evidence(
         if text is None:
             excluded.append(rel)
         else:
-            kept[rel] = sanitiser.sanitise(text).encode("utf-8")
+            member = sanitiser.sanitise(rel)
+            member_path = Path(member)
+            if member_path.is_absolute() or ".." in member_path.parts:
+                excluded.append(rel)
+                continue
+            if member in kept:
+                suffix = 2
+                while f"{member}~{suffix}" in kept:
+                    suffix += 1
+                member = f"{member}~{suffix}"
+            kept[member] = sanitiser.sanitise(text).encode("utf-8")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     archive_path = out_dir / "evidence.tar.xz"
