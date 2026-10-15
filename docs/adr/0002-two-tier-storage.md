@@ -1,6 +1,6 @@
 # ADR-0002: Two-tier storage
 
-Status: proposed, pending spikes S1 to S5 · Date: 2026-10-15
+Status: proposed, pending spikes S1 to S4 · Date: 2026-10-15
 
 ## Context
 

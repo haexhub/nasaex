@@ -24,7 +24,7 @@ Spike identifiers used throughout: **S1** stacked share filesystem, **S2** parit
 - **Binary verdict.** A spike ends as **PASS** or **FAIL**. There is no partial pass: a spike passes only if every one of its scenarios passes. A scenario that could not be executed, was skipped or is flaky counts as failed.
 - **Recorded result.** Every run produces a result record kept in version control next to the criteria: spike, criteria version, environment revision, date, per-scenario outcome, evidence reference, verdict, and, on FAIL, the fallback decision.
 - **Re-runs.** After a documented design correction a spike may be re-run. A failed run is never deleted; the new run is a new record that references the earlier one.
-- **ADR gate.** ADR-0002 moves from proposed to accepted only when S1, S2, S3 and S4 all PASS. ADR-0005 moves from proposed to accepted only when S5 PASSES. If a gating spike FAILS, the ADR stays proposed until the documented fallback has been adopted and the ADR text updated to say so. The ADR-0002 header currently lists S1 to S5; this spec treats S5 as gating ADR-0005 only [NEEDS CLARIFICATION: does S5 also gate ADR-0002? Recommended: no, correct the ADR-0002 header to S1 to S4].
+- **ADR gate.** ADR-0002 moves from proposed to accepted only when S1, S2, S3 and S4 all PASS. ADR-0005 moves from proposed to accepted only when S5 PASSES. If a gating spike FAILS, the ADR stays proposed until the documented fallback has been adopted and the ADR text updated to say so.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -38,8 +38,8 @@ A maintainer needs evidence that the share (a read-only archive pool underneath,
 
 **Acceptance Scenarios**:
 
-1. **Given** the share is mounted with the documented stacking setting, **When** a client lists, reads and checksums files that exist only in the archive, **Then** names, sizes, timestamps, permissions and content are identical to a reference copy of the archive data.
-2. **Given** the stacking setting is deliberately removed, **When** the share is mounted, **Then** the outcome (mount refused or broken behaviour) is recorded and confirms that the setting is required. If the stack works without it, the finding is recorded and the setting is re-judged.
+1. **Given** the share is mounted with `passthrough.max-stack-depth=1`, **When** a client lists, reads and checksums files that exist only in the archive, **Then** names, sizes, timestamps, permissions and content are identical to a reference copy of the archive data.
+2. **Given** `passthrough.max-stack-depth=1` is deliberately removed, **When** the share is mounted, **Then** the outcome (mount refused or broken behaviour) is recorded and confirms that the setting is required. If the stack works without it, the finding is recorded and the setting is re-judged.
 3. **Given** a file that exists only in the archive, **When** a client modifies it, **Then** the modified version exists in the pool layer, the client sees the new content, and the archive copy remains byte-identical to before (verified by checksum of the archive side).
 4. **Given** a file that exists only in the archive, **When** a client deletes it, **Then** it disappears from the share, a whiteout exists in the pool layer, and the archive copy is untouched.
 5. **Given** a deleted archive file, **When** a client creates a new file with the same name, **Then** the new content is shown and the old archived content never reappears. The same holds for a deleted-then-recreated directory: no entries from the old archived directory appear in the new one.
@@ -70,6 +70,19 @@ A maintainer needs to know exactly what a disk failure does to recoverability in
 6. **Given** read-only gating is active after a disk failure, **When** a sync, scrub or any mover action is attempted by any route (scheduled, manual, automatic), **Then** the attempt is refused and the archive content and parity are unchanged (verified by checksum), and a subsequent recovery restores 100% of the synced data bit-exact.
 7. **Given** the documented safe sequence (detect failure, lock, replace disk, recover, verify, resynchronise, unlock), **When** it is executed verbatim by the test, **Then** every step has an explicit check, the final state passes a full verification, and the sequence is saved as a written procedure in the result record.
 8. **Given** two data disks fail with a single parity level configured, **When** recovery is attempted, **Then** the limit is recorded: which files are lost and that the system reports the condition instead of claiming success.
+
+**Recoverability predictions** (frozen before the first S2 run):
+
+| Scenario | Expected recoverability |
+| --- | --- |
+| S2.1: failure after a complete sync with no later changes | Every file present on the failed disk at the last completed sync is recoverable bit-for-bit. |
+| S2.2: changes on surviving disks after the last sync | Files on the failed disk unchanged since the last completed sync are recoverable; files first written or last changed on the failed disk after that sync are not. Changes on surviving disks are reported separately and are not counted as recovered failed-disk data. |
+| S2.3: files written to the failed disk after the last sync | Those files are not recoverable; all files covered by the last completed sync remain subject to the S2.1 prediction. |
+| S2.4: device failure or process kill during sync | Files whose parity blocks were completed and verified before the interruption are recoverable; files in blocks not completed and verified are expected to be listed as unrecoverable. The result record maps this prediction to each file. |
+| S2.5: sync before recovery of a replaced disk | Files that were present only on the failed disk before the premature sync are expected to be unrecoverable. |
+| S2.6: read-only gating after failure | All files covered by the last completed sync are recoverable; the refused actions leave the prediction and the parity content unchanged. |
+| S2.7: documented safe sequence | All files covered by the last completed sync are recoverable after the sequence and final verification. |
+| S2.8: two data disks with single parity | Recovery is not claimed for files whose content cannot be reconstructed; the result lists those files and reports the parity limit. |
 
 ---
 
@@ -102,6 +115,15 @@ A maintainer needs evidence that each degraded state (pool degraded, archive deg
 **Why this priority**: The degraded rules are what keep a single failure from becoming data loss, but they only matter once S1 to S3 show the base model works.
 
 **Independent Test**: In a VM test, fail pool devices and archive disks in every order (and simultaneously), then exercise reads, writes and maintenance actions through the share and the management routes, and compare with the state table in the criteria.
+
+**Degraded-state criteria**:
+
+| State | Status and warning | Read | Write through share | Sync | Scrub | Mover | Direct archive write |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Healthy | Healthy; no warning | Allowed | Allowed | Allowed | Allowed | Allowed | Refused; archive changes use the controlled mover/sync path |
+| Pool degraded | Pool degraded; repair required | Allowed | Allowed | Allowed | Allowed | Allowed | Refused; archive changes use the controlled mover/sync path |
+| Archive degraded | Archive degraded; archive maintenance locked | Available data only; failed-disk reads report a defined error | Allowed to the pool | Refused | Refused | Refused | Refused |
+| Both degraded | Pool and archive degraded; share read-only and maintenance locked | Available data only; failed-disk reads report a defined error | Refused with a clear error | Refused | Refused | Refused | Refused |
 
 **Acceptance Scenarios**:
 
@@ -255,8 +277,8 @@ A maintainer reading the result needs, for each ADR, a recorded and reproducible
 - **SC-006**: S2 recovers 100% of the files predicted as recoverable bit-exact in every scenario, and the set of files reported lost equals the predicted set exactly (no more, no fewer).
 - **SC-007**: S4 covers all transitions in the state table (healthy to each degraded state, both-degraded in both orders and simultaneously, and repair back) and 100% of lockout attempts are refused with archive and parity unchanged.
 - **SC-008**: S5 reports rebuild duration (median and worst case over at least 5 warm runs per change class, plus one cold run) and 100% of failed builds and failed activations leave the running system equal to the last known-good generation.
-- **SC-009**: The full suite starts with one command, runs without manual steps on a KVM-capable machine, and completes within 2 hours on the project's CI reference runner.
-- **SC-010**: At the end of Phase 0 the repository contains test, specification and decision artifacts only; 0 lines of product code (backend, UI, container or VM management) were added for the sake of the spikes.
+- **SC-009**: The full suite starts with one command, runs without manual steps on the reference environment, and completes within 2 hours on the project's reference runner.
+- **SC-010**: At the end of Phase 0 the repository contains test, specification and decision artifacts only; no product code was added for the sake of the spikes.
 
 ## Out of Scope
 
@@ -286,4 +308,4 @@ A maintainer reading the result needs, for each ADR, a recorded and reproducible
 
 ## Open Questions
 
-The three decisions that could not be settled from the design are marked inline with their recommended answers: (1) whether S5 also gates ADR-0002 (Verdict model), (2) the acceptable rebuild duration (S5 scenario 1), (3) the fallback for a failed S5 (FR-031).
+The two decisions that could not be settled from the design are marked inline with their recommended answers: (1) the acceptable rebuild duration (S5 scenario 1), and (2) the fallback for a failed S5 (FR-031).
