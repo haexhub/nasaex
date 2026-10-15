@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "nasaex/phase0/result-record.schema.json",
   "title": "Phase 0 result record",
-  "description": "docs/phase0/results/<spike>/<record-id>/record.json. Immutable once committed. Contains identifiers and hashes only; no absolute host paths, user names or host names.",
+  "description": "docs/phase0/results/<spike>/<record-id>/record.json (spike S1 to S5, or the optional non-gating X1). Immutable once committed. Contains identifiers and hashes only; no absolute host paths, user names or host names.",
   "type": "object",
   "required": [
     "record_id", "kind", "spike", "criteria_version", "criteria_sha256", "environment",
@@ -12,11 +12,15 @@
   "properties": {
     "record_id": {
       "type": "string",
-      "pattern": "^(S[1-5]|repro-S[1-5])-[0-9]{8}T[0-9]{6}Z-v[0-9]+$",
+      "pattern": "^((S[1-5]|X1)|repro-(S[1-5]|X1))-[0-9]{8}T[0-9]{6}Z-v[0-9]+$",
       "description": "<spike>-<UTC timestamp, basic format>-v<criteria version>; repro records use the repro- prefix."
     },
     "kind": { "enum": ["spike-run", "repro"] },
-    "spike": { "enum": ["S1", "S2", "S3", "S4", "S5"] },
+    "spike": { "enum": ["S1", "S2", "S3", "S4", "S5", "X1"] },
+    "gating": {
+      "type": "boolean",
+      "description": "False for X1 records: the experiment never gates an ADR. Required for X1, absent otherwise."
+    },
     "criteria_version": { "type": "integer", "minimum": 1 },
     "criteria_sha256": {
       "type": "string",
@@ -54,7 +58,7 @@
     },
     "required_settings": {
       "type": "object",
-      "description": "Mount or share settings found necessary (FR-013), the verified refresh procedure for archive and pool layer changes (S1.10), the written recovery procedure of S2.7.",
+      "description": "Mount or share settings found necessary (FR-013), the create policy, branch modes and out-of-space settings (S1.2, S1.9), the verified procedure for branch changes made directly by the mover (S1.10), the written recovery procedure of S2.7.",
       "additionalProperties": true
     },
     "residual_risk": {
@@ -65,7 +69,7 @@
     },
     "supersedes": {
       "type": "string",
-      "pattern": "^(S[1-5]|repro-S[1-5])-[0-9]{8}T[0-9]{6}Z-v[0-9]+$",
+      "pattern": "^((S[1-5]|X1)|repro-(S[1-5]|X1))-[0-9]{8}T[0-9]{6}Z-v[0-9]+$",
       "description": "Earlier record that this run re-runs after a documented design correction. The earlier record is never deleted."
     },
     "repro_runs": {
@@ -91,6 +95,10 @@
       "then": { "required": ["fallback_decision"] }
     },
     {
+      "if": { "properties": { "spike": { "const": "X1" } }, "required": ["spike"] },
+      "then": { "required": ["gating"], "properties": { "gating": { "const": false } } }
+    },
+    {
       "if": { "properties": { "kind": { "const": "repro" } }, "required": ["kind"] },
       "then": { "required": ["repro_runs"] }
     }
@@ -104,7 +112,7 @@
         "repo_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "flake_lock_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "nixpkgs_rev": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-        "profile": { "enum": ["large", "small", "s5"] },
+        "profile": { "enum": ["large", "small", "s5", "x1"] },
         "disks": {
           "type": "array",
           "items": {
@@ -130,13 +138,15 @@
             "mergerfs": { "type": "string" },
             "snapraid": { "type": "string" },
             "btrfs_progs": { "type": "string" },
+            "snapper": { "type": "string" },
+            "snapraid_btrfs": { "type": "string", "description": "Pinned revision of the snapshot tooling, if used." },
             "samba": { "type": "string" },
             "nix": { "type": "string" }
           }
         },
         "kernel_config": {
           "type": "object",
-          "description": "Pre-flight results, for example CONFIG_FUSE_PASSTHROUGH and CONFIG_OVERLAY_FS_REDIRECT_DIR as read from the running kernel.",
+          "description": "Pre-flight results as read from the running kernel (for X1: CONFIG_FUSE_PASSTHROUGH and CONFIG_OVERLAY_FS_REDIRECT_DIR; for S1 to S4: btrfs and FUSE support).",
           "additionalProperties": { "type": "string" }
         },
         "host": {
@@ -164,7 +174,7 @@
       "required": ["id", "outcome"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^S[1-5]\\.[0-9]+$" },
+        "id": { "type": "string", "pattern": "^(S[1-5]|X1)\\.[0-9]+$" },
         "outcome": { "enum": ["pass", "fail", "error", "skipped", "flaky"] },
         "duration_s": { "type": "number", "minimum": 0 },
         "cases": {
