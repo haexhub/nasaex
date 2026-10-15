@@ -1,0 +1,4 @@
+# spaex-generated copies of content that is already represented elsewhere
+.agents/
+.spaex/constitution.d/
+.specify/integrations/
