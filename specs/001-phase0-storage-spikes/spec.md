@@ -22,7 +22,7 @@ Spike identifiers used throughout: **S1** tiered-cache share, **S2** parity reco
 
 - **Criteria first.** The acceptance criteria of a spike are written down and committed before the spike is run for the first time. The criteria of a spike are frozen at that point. Changing them later is allowed only as a recorded amendment that states the reason, and any verdict obtained under the old wording is void.
 - **Binary verdict.** A spike ends as **PASS** or **FAIL**. There is no partial pass: a spike passes only if every one of its scenarios passes. A scenario that could not be executed, was skipped or is flaky counts as failed.
-- **Recorded result.** Every run produces a result record kept in version control next to the criteria: spike, criteria version, environment revision, date, per-scenario outcome, evidence reference, verdict, and, on FAIL, the fallback decision.
+- **Recorded result.** Every run produces a result record kept in version control next to the criteria: spike, criteria version, environment revision, date, per-scenario outcome, evidence reference and verdict. A failed S1 to S5 record also carries the applicable fallback decision; X1 has no fallback.
 - **Re-runs.** After a documented design correction a spike may be re-run. A failed run is never deleted; the new run is a new record that references the earlier one.
 - **ADR gate.** ADR-0002 moves from proposed to accepted only when S1, S2, S3 and S4 all PASS. ADR-0005 moves from proposed to accepted only when S5 PASSES. If a gating spike FAILS, the ADR stays proposed until the documented fallback has been adopted and the ADR text updated to say so. X1 never gates an ADR: it may be run or skipped, and neither its verdict nor its absence changes any ADR status.
 
@@ -104,7 +104,7 @@ A maintainer needs proof that the mover (the component that migrates cold data f
 4. **Given** each interruption point, **When** a single device is then failed (a pool device, or the archive disk holding the file) and the recovery procedure of S2 is applied, **Then** every live file is recovered intact. This proves "every moved file is protected by the mirror or by parity at all times", not just "readable".
 5. **Given** a mover variant that follows the stock pattern (copy, then delete the source immediately, as `rsync --remove-source-files` does, before any sync), **When** the S3 checks run against it as a negative control, **Then** the checks flag it as a violation of the rule "no pool copy is removed before its archive copy is checksum-verified and parity-covered". This scenario passes only if the stock variant is flagged FAIL; if the checks do not flag it, S3 FAILS and the checks are considered broken.
 6. **Given** a fault is injected in each of copy, checksum comparison (corrupted archive copy), sync (failed parity write) and verification, **When** the mover runs, **Then** it stops, reports which step failed, and the pool copy is left in place.
-7. **Given** a file is modified in the pool after the mover has copied or checksummed it, **When** the mover continues, **Then** the newer pool version is not deleted and not replaced by the stale archive copy; it is picked up by a later run.
+7. **Given** a client modifies a file in the pool after the mover has copied or checksummed it, using the same source-version lock as the mover, **When** the mover continues, **Then** the client write waits through M5, the newer pool version remains available, and it is not deleted or hidden by the stale archive copy; it is picked up by a later run.
 8. **Given** the archive already holds an older version of a file at the same path and the pool holds a modified one, **When** the mover replaces the archived version and is killed during the replacement, **Then** a reader of the share sees either the complete old or the complete new version, never a partial or mixed one.
 9. **Given** archive disks run out of space during the copy step, **When** the mover runs, **Then** it fails cleanly at that step with all pool copies intact.
 
@@ -173,7 +173,7 @@ A maintainer reading the result needs, for each ADR, a recorded and reproducible
 1. **Given** the spikes have not been run, **When** the history is reviewed, **Then** frozen criteria for all five spikes exist and the first result record is committed after them (and, if X1 is run, its criteria precede its record in the same way).
 2. **Given** all five spikes have run, **When** the results are reviewed, **Then** each spike has a PASS or FAIL record that names its scenarios, evidence and environment revision. An X1 record, if present, is marked non-gating and no ADR cites it as a condition.
 3. **Given** S1 to S4 are PASS, **When** ADR-0002 is updated, **Then** its status is accepted and references the result records. Given S5 is PASS, ADR-0005 is accepted the same way.
-4. **Given** a spike FAILED, **When** the gate is applied, **Then** the ADR is not accepted, the fallback decision is recorded, and the ADR text and the design document are updated to reflect the fallback.
+4. **Given** a gating spike S1 to S5 FAILED, **When** the gate is applied, **Then** the ADR is not accepted, the fallback decision is recorded, and the ADR text and the design document are updated to reflect the fallback.
 5. **Given** a clean machine with KVM and the pinned inputs, **When** the full suite (S1 to S5) is started with one command, **Then** it runs unattended to completion and produces the same verdicts as the recorded ones. X1 runs only when asked for explicitly.
 
 ---
@@ -228,7 +228,7 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 - **FR-004**: A criteria amendment after a first run MUST be recorded with its reason and MUST invalidate the verdict obtained under the earlier wording.
 - **FR-005**: Each result record MUST identify the exact environment inputs (the pinned revisions of the operating system and tools) so the run can be reproduced.
 - **FR-006**: ADR-0002 MUST NOT be marked accepted unless S1, S2, S3 and S4 all have a PASS record; ADR-0005 MUST NOT be marked accepted unless S5 has a PASS record. The accepted ADR MUST reference those records.
-- **FR-007**: For each spike that FAILS, the result record MUST state which fallback applies, and the affected ADR and the design document MUST be updated accordingly.
+- **FR-007**: For each gating spike S1 to S5 that FAILS, the result record MUST state which fallback applies, and the affected ADR and the design document MUST be updated accordingly. X1 has no fallback and does not update an ADR.
 
 **Environment**
 
@@ -273,9 +273,9 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 
 **Fallbacks**
 
-- **FR-031**: The spike criteria MUST state the fallback for each spike, as follows, and the result records MUST apply it on FAIL:
+- **FR-031**: The spike criteria MUST state the fallback for each gating spike S1 to S5, as follows, and the result records MUST apply it on FAIL. X1 has no fallback:
   - **S1 FAIL**: the tiered-cache share is abandoned; ADR-0002 falls back to direct archive access, read-only when degraded (the fallback already written in ADR-0002). The merged share is dropped; how the pool is exposed in that case, and whether the mover design survives, is decided in the ADR update.
-  - **S2 FAIL** (recovery or gating does not behave as ADR-0002 assumes): the same ADR-0002 fallback applies, and the safe-sequence assumptions in the ADR are corrected before any further decision. If only the snapshot scenario (S2 scenario 9) fails, ADR-0002 stays proposed and the model is amended so that archived files are no longer changed in place (for example a read-only archive with changes taken into the pool, which is what X1 would provide) before S2 is re-run.
+  - **S2 FAIL** (recovery or gating does not behave as ADR-0002 assumes): the same ADR-0002 fallback applies, and the safe-sequence assumptions in the ADR are corrected before any further decision. If only the snapshot scenario (S2 scenario 9) fails, ADR-0002 stays proposed and the model is amended so that archived files are no longer changed in place (for example a read-only archive with changes taken into the pool, which is what X1 would provide) before S2 is re-run (confirmed by the maintainer 2026-10-15).
   - **S3 FAIL**: the mover sequence is corrected and S3 is re-run. If no sequence is found that satisfies all invariants, the tiered model is dropped and the ADR-0002 fallback applies.
   - **S4 FAIL**: the lock design is corrected and S4 is re-run. Both the tiered model and the fallback need the lockouts, so S4 has no fallback of its own: ADR-0002 stays proposed until S4 passes.
   - **S5 FAIL** (decided 2026-10-15): ADR-0005 stays proposed, the decision is amended (for example build and test before switching) and S5 is re-run. Writing the configuration files directly, without rebuilds, is adopted only if no amendment passes.
@@ -292,7 +292,7 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 - **Spike**: one of S1 to S5, or the optional experiment X1; has a name, frozen criteria, scenarios, and zero or more result records. Only S1 to S5 can gate an ADR.
 - **Acceptance scenario**: a precondition, an action and an observable expected outcome with a stable identifier; judged pass or fail automatically.
 - **Criteria version**: the frozen wording of a spike's scenarios; amendments create a new version and void earlier verdicts.
-- **Result record**: the outcome of one run of one spike: criteria version, environment revision, date, per-scenario outcome, evidence reference, verdict, fallback decision.
+- **Result record**: the outcome of one run of one spike: criteria version, environment revision, date, per-scenario outcome, evidence reference and verdict; failed S1 to S5 records also carry a fallback decision.
 - **Verdict**: PASS or FAIL for a spike, derived only from its scenario outcomes.
 - **ADR gate**: the rule linking spike verdicts to an ADR status change (proposed to accepted, or fallback adopted).
 - **Environment**: the VM topology (disks, client), pinned inputs, and fault-injection points used by a run.
@@ -305,7 +305,7 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 
 - **SC-001**: All five spikes have a recorded PASS or FAIL verdict (5 of 5), each traceable to a result record naming its criteria version and environment revision.
 - **SC-002**: For 5 of 5 spikes, the criteria are committed before the first result record; for 0 spikes does a verdict stand that was obtained under criteria later amended.
-- **SC-003**: 0 ADR status changes happen without a matching verdict record: ADR-0002 is accepted only with 4 of 4 PASS (S1 to S4), ADR-0005 only with S5 PASS, and each failed spike has its fallback decision recorded and applied to the ADR text.
+- **SC-003**: 0 ADR status changes happen without a matching verdict record: ADR-0002 is accepted only with 4 of 4 PASS (S1 to S4), ADR-0005 only with S5 PASS, and each failed gating spike has its fallback decision recorded and applied to the ADR text. X1 never produces an ADR fallback.
 - **SC-004**: Every acceptance scenario is automated, and 100% of scenarios return the same verdict on 3 consecutive clean runs.
 - **SC-005**: S3 kills the mover at 100% of the enumerated step boundaries and mid-step points, each in both kill modes, and records the number of crash points covered; the result is zero lost live files and zero premature pool-copy removals, and the stock-pattern negative control is flagged as a failure.
 - **SC-006**: S2 recovers 100% of the files predicted as recoverable bit-exact in every scenario, and the set of files reported lost equals the predicted set exactly (no more, no fewer).

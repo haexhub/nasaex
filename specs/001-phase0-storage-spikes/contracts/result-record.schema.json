@@ -49,7 +49,7 @@
     "fallback_decision": {
       "type": "string",
       "minLength": 1,
-      "description": "Required when verdict is FAIL: the fallback that applies (spec FR-007, FR-031)."
+      "description": "Required on FAIL for S1 to S5: the fallback that applies (spec FR-007, FR-031); omitted for X1, which has no fallback."
     },
     "coverage": {
       "type": "object",
@@ -91,7 +91,13 @@
   },
   "allOf": [
     {
-      "if": { "properties": { "verdict": { "const": "FAIL" } }, "required": ["verdict"] },
+      "if": {
+        "properties": {
+          "verdict": { "const": "FAIL" },
+          "spike": { "enum": ["S1", "S2", "S3", "S4", "S5"] }
+        },
+        "required": ["verdict", "spike"]
+      },
       "then": { "required": ["fallback_decision"] }
     },
     {

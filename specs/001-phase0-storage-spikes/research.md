@@ -390,8 +390,8 @@ The oracle is host-side Python (`spikes/phase0/testlib`) that determines expecte
   - **Criteria file**: YAML (readable, comments allowed); schema `contracts/criteria.schema.json`.
     Each scenario has a stable id (`S3.2`), precondition, action, observable and an automated
     check name; matrix scenarios declare their case generator (for example the enumerated mover
-    crash points). Each file carries `criteria_version`, `status` (`draft` or `frozen`) and
-    the spike's fallback (FR-031).
+    crash points). Each S1 to S5 file carries `criteria_version`, `status` (`draft` or `frozen`)
+    and the spike's fallback (FR-031); X1 has no fallback.
   - **Freeze**: `spikectl freeze <spike>` computes the SHA-256 of the file bytes and
     **appends** `<file> <version> <sha256>` to `frozen.lock`. A frozen version file is
     never edited. `spikectl verify` (run in CI) fails if a locked file's hash differs from
@@ -451,16 +451,17 @@ The oracle is host-side Python (`spikes/phase0/testlib`) that determines expecte
      eligibility). It is advisory.
   4. A **separate, reviewed docs-only PR** changes the ADR `Status:` line and references the
      record paths. ADR-0002 may say `accepted` only with PASS for S1, S2, S3 and S4;
-     ADR-0005 only with PASS for S5. On a FAIL record, the same kind of PR adopts the
-     fallback named in the criteria, updates the ADR text and the design document (FR-007)
-     and the ADR stays `proposed` until it does.
+     ADR-0005 only with PASS for S5. On a gating S1 to S5 FAIL record, the same kind of PR
+     adopts the fallback named in the criteria, updates the ADR text and the design document
+     (FR-007) and the ADR stays `proposed` until it does.
   5. X1 is never an input of the gate: `spikectl verdict` lists it separately as "non-gating", and
      `spikectl verify` rejects an ADR that cites an X1 record as a condition, and does not
      require X1 records.
   6. `spikectl verify` runs in CI on every PR that touches `docs/adr/` or
      `docs/phase0/`: if ADR-0002 or ADR-0005 claims `accepted`, the required PASS records
-     for the **current** criteria versions must exist and be referenced; a FAIL record
-     without a recorded fallback decision is an error (FR-006, FR-007, SC-003).
+     for the **current** criteria versions must exist and be referenced; an S1 to S5 FAIL record
+     without a recorded fallback decision is an error (FR-006, FR-007, SC-003). X1 FAIL records
+     intentionally have no fallback decision.
 - **Rationale**: the constitution requires a PR for everything on `main` and review of
   decisions; keeping the ADR edit as a separate human act preserves the spec's "ADR gate"
   as a decision, while the check removes the possibility of an unnoticed inconsistency.

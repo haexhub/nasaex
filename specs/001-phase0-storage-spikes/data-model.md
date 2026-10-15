@@ -18,7 +18,7 @@ One of `S1` (tiered-cache share), `S2` (parity recovery), `S3` (mover crash safe
 | `id` | `S1` .. `S5`, `X1` |
 | `name` | Short title from the spec |
 | `gates` | The ADR it contributes to: `S1`-`S4` gate ADR-0002, `S5` gates ADR-0005, `X1` gates `none` |
-| `fallback` | Fallback text from FR-031, carried in the criteria file |
+| `fallback` | Fallback text from FR-031 for S1 to S5, carried in the criteria file; X1 has none |
 | `criteria_versions` | Ordered list of Criteria versions; the last is the **current** one |
 | `records` | Zero or more Result records |
 
@@ -51,11 +51,11 @@ The frozen wording of one spike's scenarios.
 
 | Field | Description / validation |
 | --- | --- |
-| `spike` | `S1` .. `S5` |
+| `spike` | `S1` .. `S5`, or optional non-gating `X1` |
 | `criteria_version` | Integer >= 1 |
 | `status` | `draft` or `frozen`. Only `frozen` versions can be named by a record |
 | `scenarios` | List of Acceptance scenarios; ids unique; at least the scenarios required by the FRs listed per spike in the spec (FR-012, FR-015, FR-018, FR-023, FR-027; FR-033 for X1) |
-| `fallback` | Fallback decision text (FR-031) |
+| `fallback` | Fallback decision text for S1 to S5 (FR-031); X1 has no fallback |
 | `amends`, `reason`, `date` | Required for versions >= 2: previous version, why, when (FR-004) |
 | `tables` | Data tables the checks read: S2 recoverability predictions (plain and snapshot variant), S4 degraded-state table, S3 crash-point list (19 points) |
 | `changelog` | Pre-freeze edit notes (plan open item O2) |
@@ -78,7 +78,7 @@ The outcome of one run of one spike. Immutable once committed. Fields (full sche
 | `date` | UTC start and end |
 | `scenarios` | Per scenario: `id`, `outcome`, `cases` (id, outcome, fault point, kill mode), `evidence` (paths inside the evidence archive, SHA-256), `notes` |
 | `verdict` | `PASS` or `FAIL`; derived only from scenario outcomes |
-| `fallback_decision` | Required when verdict is `FAIL`: which fallback applies (FR-007) |
+| `fallback_decision` | Required on `FAIL` for S1 to S5: which fallback applies (FR-007); omitted for X1, which has no fallback |
 | `coverage` | Counts for SC-005 (crash points enumerated, executed, per kill mode; 19 points, 38 cases as currently enumerated), prediction comparisons for SC-006, transitions for SC-007, durations for SC-008 |
 | `required_settings` | Mount or share settings found necessary (FR-013: create policy, branch modes, out-of-space settings, rename setting), the procedure for branch changes made directly by the mover (S1.10), written recovery procedure reference (S2.7) |
 | `residual_risk` | Fixed statements, at least: device-level volatile caches not emulated, virtual disks stand in for real disks |
@@ -170,7 +170,7 @@ Spike verdict (derived):
 ```text
 no record for current version --> none
 record for current version, all scenarios pass --> PASS
-record for current version, any other outcome --> FAIL (fallback_decision required)
+record for current version, any other outcome --> FAIL (fallback_decision required for S1 to S5)
 new criteria version frozen --> none (old verdicts void)
 ```
 

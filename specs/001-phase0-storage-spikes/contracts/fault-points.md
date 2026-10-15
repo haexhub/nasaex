@@ -21,7 +21,7 @@ implementation tasks (research section 6).
 | `enospc` | Filler file leaves a defined number of free bytes on the target filesystem | `ENOSPC` on the next large write | Deterministic; no special device. For S1 scenario 9 the share's `minfreespace` is set below the free bytes left, so that the write reaches the pool branch and fails there (research F10) |
 | `kill-sync-at-position` | Wait until the `snapraid -l` log shows `run:pos:<block>` with block >= K, then `kill` | A SnapRAID sync dies after at least K blocks were processed | Flush frequency of the log lines UNVERIFIED; the S2.4 prediction is evaluated against what the kill left (research 3.4), separately for the plain and the snapshot variant; with the snapshot tooling the kill also leaves an incomplete snapshot set whose handling is part of the result (research 7.3) |
 | `sync-limited` | `snapraid sync -S <start> -B <count>` | A sync that processes only a block range and ends normally | Deterministic stand-in for "stopped after K blocks" |
-| `concurrent-modify` | Guest-side append or rewrite of a pool file at a hook | The file changes between mover steps | Used by S3.7 |
+| `concurrent-modify` | Client-side append or rewrite of a pool file at a hook, acquiring the mover's source-version lock first | The write waits for the mover's lock, then creates a newer pool version | Used by S3.7; direct writes that bypass the lock are outside the baseline contract |
 
 ## Point namespaces
 

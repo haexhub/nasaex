@@ -101,8 +101,8 @@ is the default and changes nothing: no ADR, no S1 to S5 verdict and no suite bud
 
 Run a spike against a deliberately broken input (a known-bad mover variant from `controls/`, for example the
 stock mover that deletes its source right after the copy). Expected:
-the affected scenario is `fail`, the verdict is `FAIL`, the record carries the fallback decision named in
-the criteria, the evidence archive contains the oracle's expected and observed manifests, and
+the affected scenario is `fail`, the verdict is `FAIL`, and for S1 to S5 the record carries the fallback
+decision named in the criteria. The evidence archive contains the oracle's expected and observed manifests, and
 `spikectl verify` refuses an ADR change to `accepted` while that record is the current one.
 
 ## Scenario 7: from verdict to ADR
@@ -110,8 +110,8 @@ the criteria, the evidence archive contains the oracle's expected and observed m
 1. Commit the record directories in a PR (`docs(phase0): record S1-S4 results`).
 2. Run `nix run ./spikes/phase0#spikectl -- verdict` and read the gate matrix.
 3. In a separate reviewed docs-only PR change the `Status:` line of ADR-0002 (S1 to S4 all PASS) or
-   ADR-0005 (S5 PASS) and reference the record paths. On a FAIL, adopt the fallback from the criteria and
-   update the ADR and the design document in that PR (FR-007).
+   ADR-0005 (S5 PASS) and reference the record paths. On a gating S1 to S5 FAIL, adopt the fallback from the
+   criteria and update the ADR and the design document in that PR (FR-007).
 4. CI runs `spikectl verify` on the PR; it fails if the ADR claims more than the records support.
 
 ## Debugging
