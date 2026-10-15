@@ -1,0 +1,57 @@
+{
+  description = "Phase 0 storage spikes: throwaway scaffolding (no product code)";
+
+  # One pin for all of Phase 0 (research D1): full revision of branch nixos-26.05.
+  # The committed flake.lock (narHash) is the reproducibility anchor.
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/a033e66ab94a6bedf2c3d58d93a36319d3cbbbaf";
+
+  outputs = { self, nixpkgs }:
+    let
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system};
+      inherit (pkgs) lib;
+
+      pythonEnv = pkgs.python3.withPackages (ps: [ ps.pytest ps.pyyaml ps.jsonschema ]);
+      spikectlSrc = lib.fileset.toSource {
+        root = ./.;
+        fileset = lib.fileset.unions [ ./spikectl ./testlib ];
+      };
+
+      profiles = import ./nix/profiles.nix { inherit lib; };
+      snapraidBtrfs = import ./nix/snapraid-btrfs.nix { inherit pkgs; };
+      guestScripts = import ./nix/guest-scripts.nix { inherit pkgs; };
+      mkSpike = import ./nix/mkspike.nix { inherit pkgs profiles snapraidBtrfs guestScripts; };
+      apps = import ./nix/apps.nix { inherit pkgs pythonEnv spikectlSrc; };
+
+      # Probe-only VM tests: they never write records.
+      probeFaults = import ./vm-tests/probes/faults.nix { inherit mkSpike; };
+
+      app = pkg: { type = "app"; program = lib.getExe pkg; };
+      placeholders = lib.genAttrs
+        [ "s1" "s2" "s3" "s4" "s5" "x1" "controls" "suite" ]
+        apps.placeholder;
+    in
+    {
+      checks.${system} = import ./nix/checks.nix {
+        inherit pkgs pythonEnv spikectlSrc;
+        src = ./.;
+        repoRoot = ../..;
+      };
+
+      apps.${system} = lib.mapAttrs (_: app) (placeholders // {
+        spikectl = apps.spikectl;
+        probe-faults = apps.runDriver "probe-faults" probeFaults.driver;
+      });
+
+      packages.${system} = {
+        driver-probe-faults = probeFaults.driver;
+      }
+      # Cached test drivers of the spikes; US1 to US5 and X1 replace these placeholders.
+      // lib.genAttrs
+        [ "driver-s1" "driver-s2" "driver-s3" "driver-s4" "driver-s5" "driver-x1" ]
+        apps.placeholder;
+
+      devShells.${system}.default = import ./nix/devshell.nix { inherit pkgs pythonEnv; };
+      formatter.${system} = pkgs.nixpkgs-fmt;
+    };
+}
