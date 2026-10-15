@@ -29,6 +29,7 @@ from spikectl.model import (
     schema_errors,
     sha256_hex,
 )
+from testlib.sanitiser import HOST_PATH_PATTERNS
 
 GROUPS = ("criteria", "records", "git", "hygiene")
 
@@ -49,12 +50,6 @@ SPIKES_REFERENCE_ALLOWED = (
 # Generic account and host names that are words in prose (CI users, VM host names).
 GENERIC_NAMES = {"runner", "root", "localhost", "nixos", "ubuntu", "github", "build"}
 
-HOST_PATH_PATTERNS = (
-    re.compile(r"(?<![\w.])/home/[\w.-]+"),
-    re.compile(r"(?<![\w.])/Users/[\w.-]+"),
-    re.compile(r"[A-Za-z]:\\Users\\"),
-    re.compile(r"(?<![\w/.~])~/"),
-)
 SELF_REFERENCE_PATTERNS = (
     re.compile(r"\bClaude\b"),
     re.compile(r"\bAnthropic\b"),
