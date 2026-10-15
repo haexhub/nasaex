@@ -1,0 +1,22 @@
+{
+  "compounds": [
+    {
+      "molecules": [
+        "com.github.haexmas.atoms.ast-grep",
+        "com.github.haexmas.atoms.coding-guideline-go",
+        "com.github.haexmas.atoms.coding-guideline-javascript-typescript",
+        "com.github.haexmas.atoms.general-coding",
+        "com.github.haexmas.atoms.graphify-first-authoring",
+        "com.github.haexmas.atoms.nix-devshell-base",
+        "com.github.haexmas.atoms.nix-nodejs",
+        "com.github.haexmas.atoms.ponytail",
+        "com.github.haexmas.atoms.spaex-constitution",
+        "com.github.haexmas.atoms.speckit"
+      ],
+      "revision": "d7af7c89e88098e083fa7cc838582252c8397b86",
+      "source": "https://github.com/haexmas/atoms"
+    }
+  ],
+  "identity": "com.github.haexhub.nasaex",
+  "spaex_version": "4"
+}
