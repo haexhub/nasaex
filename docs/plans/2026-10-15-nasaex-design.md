@@ -27,7 +27,8 @@ and VMs, and is managed from a web UI.
 ## Components
 
 1. **NixOS flake** with a module that turns the configuration into `snapraid.conf`,
-   mergerfs and overlayfs mounts, Samba, `smartd` and timers.
+   mergerfs and overlayfs mounts, Samba, `smartd` and timers. The mergerfs mount
+   must explicitly support stacking overlayfs on top of it (`passthrough.max-stack-depth=1`).
 2. **Configuration**: one JSON file in a git repository on the system disk. Every UI
    change is a commit.
 3. **Backend (Go)**: applies a configuration (write JSON, commit, rebuild, stream the
@@ -45,7 +46,10 @@ and VMs, and is managed from a web UI.
   layer and a pool subvolume as the upper layer. Writes copy up into the pool; deletes
   become whiteouts in the pool.
 - **Mover** (per share, by age or fill level): copy to the archive with a checksum, run
-  `snapraid sync`, verify, apply whiteouts, delete from the pool. Every file is
+  `snapraid sync`, and verify before removing the pool copy. Applying whiteouts is a
+  separate archive mutation: after deleting the archived files, run and verify another
+  `snapraid sync` before removing the whiteouts. If copy, checksum, sync or verification
+  fails, the pool copy and whiteout remain in place for retry. Every live file is
   protected by the mirror or by parity at all times.
 - **Degraded modes**: pool degraded keeps working with a warning; archive degraded is
   read-only with sync, scrub and mover locked, writes continue into the pool; both
@@ -64,8 +68,23 @@ unlike Unraid, which emulates the disk. This is accepted.
 
 Phase n+1 starts only when phase n passes its tests.
 
+### Phase 0 spikes
+
+- **S1 — stacked share filesystem**: verify overlayfs over a read-only mergerfs
+  archive, including the required stacking option, xattrs, whiteouts, SMB access,
+  renames and large files.
+- **S2 — SnapRAID recovery**: exercise a disk failure before and during `sync`, and
+  document the safe `fix` and resynchronisation sequence.
+- **S3 — mover crash safety**: interrupt the mover between copy, checksum, sync,
+  verification, archive deletion and cleanup; prove that retry never loses the pool
+  copy and that archive deletions are synced before whiteouts are removed.
+- **S4 — degraded modes**: verify transitions for pool, archive and simultaneous
+  degradation, including that archive writes, sync, scrub and mover actions are locked
+  when required.
+- **S5 — declarative rebuild**: measure rebuild duration and test failed builds,
+  failed activation and explicit generation rollback without confusing Git history
+  with the active NixOS generation.
+
 ## Open questions
 
-- Does overlayfs over mergerfs behave under Samba, renames and large files? (spike S1)
-- Which behaviours of SnapRAID after a disk failure are real? (spike S2)
 - Licence for the project. None is set yet.
