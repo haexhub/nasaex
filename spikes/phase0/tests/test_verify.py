@@ -311,6 +311,14 @@ def test_a_forbidden_name_inside_a_longer_word_is_not_a_hit(root):
     assert verify(root, only=("hygiene",), forbidden_names=("mallory",)) == []
 
 
+def test_a_forbidden_name_inside_a_hyphenated_name_is_not_a_hit(root):
+    init_repo(root)
+    write_doc(root, "docs/notes.md", "uses @mallory-space/ui\n")
+    commit_all(root)
+
+    assert verify(root, only=("hygiene",), forbidden_names=("mallory",)) == []
+
+
 def test_guest_paths_survive_the_scan(root):
     init_repo(root)
     write_doc(root, "docs/notes.md", "files live in /mnt/archive/disk0 and /var/lib/snapraid\n")

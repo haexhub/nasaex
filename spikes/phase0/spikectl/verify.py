@@ -29,7 +29,7 @@ from spikectl.model import (
     schema_errors,
     sha256_hex,
 )
-from testlib.sanitiser import HOST_PATH_PATTERNS
+from testlib.sanitiser import HOST_PATH_PATTERNS, name_pattern
 
 GROUPS = ("criteria", "records", "git", "hygiene")
 
@@ -353,7 +353,7 @@ def _scan(label: str, text: str, patterns, check: str, what: str) -> list[Findin
 
 
 def _check_hygiene(root: Path, forbidden_names: tuple[str, ...]) -> list[Finding]:
-    name_patterns = tuple(re.compile(rf"(?<!\w){re.escape(n)}(?!\w)") for n in forbidden_names)
+    name_patterns = tuple(name_pattern(n) for n in forbidden_names)
     findings = []
     for rel in _tracked_files(root):
         path = root / rel
@@ -367,10 +367,8 @@ def _check_hygiene(root: Path, forbidden_names: tuple[str, ...]) -> list[Finding
                 findings += _scan(
                     label, text, HOST_PATH_PATTERNS, "host-paths", "absolute host path"
                 )
-                for name_pattern in name_patterns:
-                    findings += _scan(
-                        label, text, (name_pattern,), "host-paths", "user or host name"
-                    )
+                for forbidden in name_patterns:
+                    findings += _scan(label, text, (forbidden,), "host-paths", "user or host name")
                 findings += _scan(
                     label,
                     text,

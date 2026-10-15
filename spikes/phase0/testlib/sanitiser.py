@@ -18,8 +18,10 @@ HOST_PATH_PATTERNS = (
 )
 
 
-def _word(name: str) -> re.Pattern:
-    return re.compile(rf"(?<!\w){re.escape(name)}(?!\w)")
+def name_pattern(name: str) -> re.Pattern:
+    """A user or host name as a whole token: not inside a longer word or a hyphenated name such
+    as a package scope (`@alice-space/ui` is not the user `alice`)."""
+    return re.compile(rf"(?<![\w-]){re.escape(name)}(?![\w-])")
 
 
 class Sanitiser:
@@ -34,8 +36,8 @@ class Sanitiser:
             re.compile(re.escape(root.rstrip("/")) + rf"(?:/{_PATH_END}*)?")
             for root in sorted(host_roots, key=len, reverse=True)
         ]
-        self._users = [_word(n) for n in sorted(user_names, key=len, reverse=True)]
-        self._hosts = [_word(n) for n in sorted(host_names, key=len, reverse=True)]
+        self._users = [name_pattern(n) for n in sorted(user_names, key=len, reverse=True)]
+        self._hosts = [name_pattern(n) for n in sorted(host_names, key=len, reverse=True)]
 
     def sanitise(self, text: str) -> str:
         for pattern in (*self._roots, *HOST_PATH_PATTERNS):
