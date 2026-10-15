@@ -147,7 +147,7 @@ A maintainer needs to know how long applying a configuration change takes, what 
 
 **Acceptance Scenarios**:
 
-1. **Given** a healthy system, **When** a representative set of changes is applied (no-op re-apply, adding a share, changing a storage parameter), **Then** the duration of each is measured over at least 5 runs on a warm store (and once on a cold store), and the median and worst case are recorded together with the environment. The values are judged against the duration threshold fixed in the criteria [NEEDS CLARIFICATION: acceptable rebuild duration is not defined by the design; recommended: median at most 5 minutes for a typical change on a warm store, FAIL above 15 minutes].
+1. **Given** a healthy system, **When** a representative set of changes is applied (no-op re-apply, adding a share, changing a storage parameter), **Then** the duration of each is measured over at least 5 runs on a warm store (and once on a cold store), and the median and worst case are recorded together with the environment. The values are judged against the duration threshold fixed in the criteria (decided 2026-10-15): a median of at most 5 minutes for a typical change on a warm store is a PASS; above 5 minutes and up to 15 minutes is still a PASS, but the Phase 1 plan MUST then include asynchronous apply with streamed progress; above 15 minutes is a FAIL. The thresholds are an initial target and are not derived from measurements.
 2. **Given** a valid configuration change, **When** it is applied, **Then** the system runs the new configuration, a new generation exists, and the configuration repository contains exactly one new commit for the change.
 3. **Given** a configuration that cannot be built (invalid content, evaluation error, or failing build), **When** apply is attempted, **Then** the running system and the active generation are unchanged, the failure is reported with the build log, and the failed commit stays in history for diagnosis (it is not reverted).
 4. **Given** a configuration that builds but fails during activation (for example a mount or service that cannot start), **When** apply is attempted, **Then** the failure is reported, the previous known-good generation is restored as the running system, services are back in their previous state, and the failed commit is kept.
@@ -251,7 +251,7 @@ A maintainer reading the result needs, for each ADR, a recorded and reproducible
   - **S2 FAIL** (recovery or gating does not behave as ADR-0002 assumes): the same ADR-0002 fallback applies, and the safe-sequence assumptions in the ADR are corrected before any further decision.
   - **S3 FAIL**: the mover sequence is corrected and S3 is re-run. If no sequence is found that satisfies all invariants, the stacked model is dropped and the ADR-0002 fallback applies.
   - **S4 FAIL**: the lock design is corrected and S4 is re-run. Both the stacked model and the fallback need the lockouts, so S4 has no fallback of its own: ADR-0002 stays proposed until S4 passes.
-  - **S5 FAIL**: ADR-0005 has no documented fallback [NEEDS CLARIFICATION: what happens on S5 FAIL? Recommended: ADR-0005 stays proposed, the decision is amended and S5 re-run; direct file writes only if no amendment passes].
+  - **S5 FAIL** (decided 2026-10-15): ADR-0005 stays proposed, the decision is amended (for example build and test before switching) and S5 is re-run. Writing the configuration files directly, without rebuilds, is adopted only if no amendment passes.
 
 ### Key Entities
 
@@ -308,4 +308,4 @@ A maintainer reading the result needs, for each ADR, a recorded and reproducible
 
 ## Open Questions
 
-The two decisions that could not be settled from the design are marked inline with their recommended answers: (1) the acceptable rebuild duration (S5 scenario 1), and (2) the fallback for a failed S5 (FR-031).
+None. The two decisions that could not be settled from the design were resolved on 2026-10-15 and are recorded inline: (1) the acceptable rebuild duration (S5 scenario 1), and (2) the fallback for a failed S5 (FR-031). S5 gates ADR-0005 only; ADR-0002 is gated by S1 to S4.

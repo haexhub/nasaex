@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nasaex/phase0/criteria.schema.json",
+  "title": "Phase 0 spike criteria file",
+  "description": "Schema of docs/phase0/criteria/S<n>.yaml (and S<n>.v<k>.yaml) after YAML parsing. A frozen file is immutable; its identity is the (file, version, SHA-256) tuple in frozen.lock.",
+  "type": "object",
+  "required": ["spike", "criteria_version", "status", "name", "gates", "fallback", "scenarios"],
+  "additionalProperties": false,
+  "properties": {
+    "spike": { "enum": ["S1", "S2", "S3", "S4", "S5"] },
+    "criteria_version": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["draft", "frozen"] },
+    "name": { "type": "string", "minLength": 1 },
+    "gates": { "enum": ["ADR-0002", "ADR-0005"] },
+    "fallback": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Fallback decision applied on FAIL (spec FR-031)."
+    },
+    "amends": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Version this file amends. Required when criteria_version >= 2."
+    },
+    "reason": { "type": "string", "minLength": 1 },
+    "date": { "type": "string", "format": "date" },
+    "changelog": {
+      "type": "array",
+      "description": "Pre-freeze edit notes (plan open item O2). Not used after freeze.",
+      "items": { "type": "string" }
+    },
+    "tables": {
+      "type": "object",
+      "description": "Data tables read by the checks, for example S2 recoverability predictions, the S3 crash-point rule, the S4 degraded-state table.",
+      "additionalProperties": true
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/scenario" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "criteria_version": { "minimum": 2 } }, "required": ["criteria_version"] },
+      "then": { "required": ["amends", "reason", "date"] }
+    },
+    {
+      "if": { "properties": { "spike": { "const": "S1" } }, "required": ["spike"] },
+      "then": {
+        "properties": {
+          "gates": { "const": "ADR-0002" },
+          "scenarios": { "items": { "properties": { "id": { "pattern": "^S1\\.[0-9]+$" } } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "spike": { "const": "S2" } }, "required": ["spike"] },
+      "then": {
+        "properties": {
+          "gates": { "const": "ADR-0002" },
+          "scenarios": { "items": { "properties": { "id": { "pattern": "^S2\\.[0-9]+$" } } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "spike": { "const": "S3" } }, "required": ["spike"] },
+      "then": {
+        "properties": {
+          "gates": { "const": "ADR-0002" },
+          "scenarios": { "items": { "properties": { "id": { "pattern": "^S3\\.[0-9]+$" } } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "spike": { "const": "S4" } }, "required": ["spike"] },
+      "then": {
+        "properties": {
+          "gates": { "const": "ADR-0002" },
+          "scenarios": { "items": { "properties": { "id": { "pattern": "^S4\\.[0-9]+$" } } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "spike": { "const": "S5" } }, "required": ["spike"] },
+      "then": {
+        "properties": {
+          "gates": { "const": "ADR-0005" },
+          "scenarios": { "items": { "properties": { "id": { "pattern": "^S5\\.[0-9]+$" } } } }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "scenario": {
+      "type": "object",
+      "required": ["id", "title", "precondition", "action", "observable"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^S[1-5]\\.[0-9]+$" },
+        "title": { "type": "string", "minLength": 1 },
+        "precondition": { "type": "string", "minLength": 1 },
+        "action": { "type": "string", "minLength": 1 },
+        "observable": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Checkable expected outcome; decidable without interpretation."
+        },
+        "check": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Name of the automated check in the spike's test script. Required unless review is true."
+        },
+        "review": {
+          "type": "boolean",
+          "default": false,
+          "description": "True only for the written recovery procedure of S2.7 (spec FR-002)."
+        },
+        "cases": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "Case generator name for matrix scenarios, for example mover-crash-points. Case ids are <scenario id>:<case>."
+        },
+        "prediction": {
+          "type": "string",
+          "description": "S2 only: reference to a key under tables that predicts recoverable and unrecoverable items at block granularity (spec FR-016)."
+        }
+      },
+      "allOf": [
+        {
+          "if": { "not": { "properties": { "review": { "const": true } }, "required": ["review"] } },
+          "then": { "required": ["check"] }
+        }
+      ]
+    }
+  }
+}
