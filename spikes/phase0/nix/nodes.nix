@@ -1,0 +1,167 @@
+# The `server` and `client` VM nodes of the spikes (scaffolding, not product code).
+#
+# server: btrfs RAID1 pool with a pool subvolume, one btrfs filesystem per archive disk with a
+#   `data` subvolume and a separate, never-snapshotted `content` subvolume, the SnapRAID parity
+#   file on ext4, and the tools under test. The disks start blank; `spike-mkfs` formats them
+#   on demand, never at boot, so a blank replacement disk stays blank until a scenario acts.
+#   Mounts are `nofail` and resolve by label, so a missing disk degrades instead of blocking boot.
+# client: the SMB client VM of S1.
+#
+# No network access inside the VMs: the test vlan only connects the nodes with each other.
+{ pkgs, lib, profile, snapraidBtrfs, guestScripts, vmSizing }:
+
+let
+  disks = profile.disks;
+  byRole = role: lib.filter (d: d.role == role) disks;
+  pool = byRole "pool";
+  archive = byRole "archive";
+  parity = lib.head (byRole "parity");
+
+  # emptyDiskImages entry i is the file empty<i>.qcow2 of the machine state directory; the
+  # host swaps it to simulate a replaced disk (fault kind device-failed-at-boot).
+  diskTable = lib.imap0 (idx: d: d // { image = "empty${toString idx}.qcow2"; }) disks;
+
+  diskImage = d: {
+    size = d.sizeMiB;
+    driveConfig.deviceExtraOpts = {
+      inherit (d) serial;
+      id = "disk-${d.serial}";
+    };
+  };
+
+  byId = serial: "/dev/disk/by-id/virtio-${serial}";
+  mountOptions = [ "nofail" "x-systemd.device-timeout=10s" ];
+
+  spikeMkfs = pkgs.writeShellApplication {
+    name = "spike-mkfs";
+    runtimeInputs = [ pkgs.btrfs-progs pkgs.e2fsprogs pkgs.util-linux pkgs.coreutils ];
+    text = ''
+      # spike-mkfs pool|archive|parity|all : format blank disks of the topology.
+      # Refuses to touch a disk that already carries a filesystem signature.
+      refuse_if_formatted() {
+        if blkid -p "$1" >/dev/null 2>&1; then
+          echo "spike-mkfs: $1 already carries a filesystem" >&2
+          exit 1
+        fi
+      }
+      subvolumes() { # <label> <subvolume>...
+        local tmp
+        tmp=$(mktemp -d)
+        mount "/dev/disk/by-label/$1" "$tmp"
+        shift
+        for sv in "$@"; do btrfs subvolume create "$tmp/$sv" >/dev/null; done
+        umount "$tmp"
+        rmdir "$tmp"
+      }
+      do_pool() {
+        ${lib.concatMapStringsSep "\n" (d: ''refuse_if_formatted ${byId d.serial}'') pool}
+        mkfs.btrfs -q -f -L spikepool -d raid1 -m raid1 ${lib.concatMapStringsSep " " (d: byId d.serial) pool}
+        udevadm settle
+        subvolumes spikepool pool
+      }
+      do_archive() {
+        ${lib.concatMapStringsSep "\n" (d: ''
+          refuse_if_formatted ${byId d.serial}
+          mkfs.btrfs -q -f -L ${d.serial} ${byId d.serial}
+          udevadm settle
+          subvolumes ${d.serial} data content
+        '') archive}
+      }
+      do_parity() {
+        refuse_if_formatted ${byId parity.serial}
+        mkfs.ext4 -q -F -L ${parity.serial} ${byId parity.serial}
+        udevadm settle
+      }
+      case "''${1:-all}" in
+        pool) do_pool ;;
+        archive) do_archive ;;
+        parity) do_parity ;;
+        all) do_pool; do_archive; do_parity ;;
+        *) echo "usage: spike-mkfs pool|archive|parity|all" >&2; exit 2 ;;
+      esac
+    '';
+  };
+
+  # Test VMs replace `fileSystems` with `virtualisation.fileSystems`, so the mounts go there.
+  fileSystems = {
+    "/mnt/pool" = {
+      device = "/dev/disk/by-label/spikepool";
+      fsType = "btrfs";
+      options = [ "subvol=pool" ] ++ mountOptions;
+    };
+    "/mnt/parity" = {
+      device = "/dev/disk/by-label/${parity.serial}";
+      fsType = "ext4";
+      options = mountOptions;
+    };
+  }
+  // lib.listToAttrs (map
+    (d: {
+      name = "/mnt/archive/${d.serial}";
+      value = {
+        device = "/dev/disk/by-label/${d.serial}";
+        fsType = "btrfs";
+        options = [ "subvol=data" ] ++ mountOptions;
+      };
+    })
+    archive)
+  // lib.listToAttrs (map
+    (d: {
+      name = "/mnt/archive-content/${d.serial}";
+      value = {
+        device = "/dev/disk/by-label/${d.serial}";
+        fsType = "btrfs";
+        options = [ "subvol=content" ] ++ mountOptions;
+      };
+    })
+    archive);
+
+  common = {
+    # No network access inside the VMs: the host-facing user network is isolated, only the
+    # test vlan between the nodes remains.
+    virtualisation.restrictNetwork = true;
+    boot.supportedFilesystems = [ "btrfs" "ext4" ];
+    environment.systemPackages = [ pkgs.python3 ];
+  };
+
+  server = { ... }: {
+    imports = [ common ./tiered-cache.nix ];
+    spike.tieredCache.archiveBranches = lib.mkDefault (map (d: "/mnt/archive/${d.serial}") archive);
+    virtualisation = vmSizing.server // {
+      emptyDiskImages = map diskImage disks;
+      inherit fileSystems;
+    };
+
+    # systemd creates mount points for its own mount units only; tests also mount by hand.
+    systemd.tmpfiles.rules = map (mountPoint: "d ${mountPoint} 0755 root root -")
+      (lib.attrNames fileSystems);
+
+    boot.kernelModules = [ "fuse" ];
+    system.fsPackages = [ pkgs.mergerfs ];
+
+    environment.systemPackages = [
+      spikeMkfs
+      guestScripts
+      pkgs.mergerfs
+      pkgs.snapraid
+      pkgs.btrfs-progs
+      pkgs.e2fsprogs
+      pkgs.snapper
+      snapraidBtrfs
+      pkgs.samba
+      pkgs.rsync
+      pkgs.util-linux
+      pkgs.coreutils
+    ];
+  };
+
+  client = { ... }: {
+    imports = [ common ];
+    virtualisation = vmSizing.client;
+    boot.supportedFilesystems = [ "cifs" ];
+    environment.systemPackages = [ pkgs.cifs-utils pkgs.samba ];
+  };
+in
+{
+  inherit server client diskTable spikeMkfs;
+}
