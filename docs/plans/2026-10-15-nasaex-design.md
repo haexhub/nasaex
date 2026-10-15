@@ -56,10 +56,10 @@ The earlier idea of stacking overlayfs on top of mergerfs is not part of the bas
 - **Shares**: two mergerfs pools. The **base pool** contains only the archive disks. The
   **cache pool** lists the pool branch first and the archive disks after it; the share is
   the cache pool. New files are created on the pool branch (create policy `ff` or `lus`,
-  see open questions; archive branches are set to no-create so that a full pool produces
-  an out-of-space error instead of an unprotected write to an archive disk). An archived
-  file is read, modified and deleted in place on its archive disk. There is no overlayfs,
-  no copy-up and no whiteout.
+  see open questions; archive branches are set to no-create and `moveonenospc=false`, so
+  a full pool produces an out-of-space error instead of an unprotected write to an archive
+  disk). An archived file is read, modified and deleted in place on its archive disk.
+  There is no overlayfs, no copy-up and no whiteout.
 - **Mover** (per share, by age or fill level): follows the documented pattern (move files
   from the cache branch, not from the pool, into the base pool) with one safety rule that
   the stock scripts do not have. The stock scripts use `rsync --remove-source-files`, which

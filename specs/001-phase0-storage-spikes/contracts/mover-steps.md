@@ -88,8 +88,13 @@ after its copy, before M3). The control is a separate mover variant, not a point
 3. An armed hook writes `reached/<point>` and then blocks reading the FIFO `go/<point>`. It never calls
    `sync` or touches any disk.
 4. The host waits for `reached/<point>`, then does one of: kill the mover process (`kill`), power the
-   machine off (`poweroff`), fail a device, modify a file (`inject:`), or write to the FIFO (no
-   interruption; the run continues).
+   machine off (`poweroff`), fail a device, request a client write (`inject:`), or write to the FIFO
+   (no interruption; the run continues). For `inject:modify-pool-after:M2`, the client write acquires
+   the same source-version lock before opening or replacing the path. The host starts that write
+   asynchronously, verifies that it is waiting for the lock, and releases `go/<point>`; the mover then
+   completes M3 through M5 and releases the lock, after which the client write creates the newer pool
+   version. The check must verify that the write waited through M5 and that the newer version remains
+   available in the pool rather than being deleted or hidden by the stale archive copy.
 5. After `kill` or `poweroff` the machine is restarted and the check sequence below runs.
 
 ## Check sequence after every interruption (the oracle, FR-019, FR-020)

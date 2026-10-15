@@ -4,7 +4,7 @@
   "title": "Phase 0 spike criteria file",
   "description": "Schema of docs/phase0/criteria/S<n>.yaml and X1.yaml (and the .v<k> amendment files) after YAML parsing. X1 is the optional, non-gating overlayfs experiment. A frozen file is immutable; its identity is the (file, version, SHA-256) tuple in frozen.lock.",
   "type": "object",
-  "required": ["spike", "criteria_version", "status", "name", "gates", "fallback", "scenarios"],
+  "required": ["spike", "criteria_version", "status", "name", "gates", "scenarios"],
   "additionalProperties": false,
   "properties": {
     "spike": { "enum": ["S1", "S2", "S3", "S4", "S5", "X1"] },
@@ -15,7 +15,7 @@
     "fallback": {
       "type": "string",
       "minLength": 1,
-      "description": "Fallback decision applied on FAIL (spec FR-031)."
+      "description": "Fallback decision applied on FAIL for gating spikes S1 to S5 (spec FR-031); X1 has no fallback."
     },
     "amends": {
       "type": "integer",
@@ -41,6 +41,10 @@
     }
   },
   "allOf": [
+    {
+      "if": { "properties": { "spike": { "enum": ["S1", "S2", "S3", "S4", "S5"] } }, "required": ["spike"] },
+      "then": { "required": ["fallback"] }
+    },
     {
       "if": { "properties": { "criteria_version": { "minimum": 2 } }, "required": ["criteria_version"] },
       "then": { "required": ["amends", "reason", "date"] }
@@ -87,7 +91,8 @@
         "properties": {
           "gates": { "const": "none" },
           "scenarios": { "items": { "properties": { "id": { "pattern": "^X1\\.[0-9]+$" } } } }
-        }
+        },
+        "not": { "required": ["fallback"] }
       }
     },
     {
