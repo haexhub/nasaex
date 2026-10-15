@@ -2,16 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "nasaex/phase0/criteria.schema.json",
   "title": "Phase 0 spike criteria file",
-  "description": "Schema of docs/phase0/criteria/S<n>.yaml (and S<n>.v<k>.yaml) after YAML parsing. A frozen file is immutable; its identity is the (file, version, SHA-256) tuple in frozen.lock.",
+  "description": "Schema of docs/phase0/criteria/S<n>.yaml and X1.yaml (and the .v<k> amendment files) after YAML parsing. X1 is the optional, non-gating overlayfs experiment. A frozen file is immutable; its identity is the (file, version, SHA-256) tuple in frozen.lock.",
   "type": "object",
   "required": ["spike", "criteria_version", "status", "name", "gates", "fallback", "scenarios"],
   "additionalProperties": false,
   "properties": {
-    "spike": { "enum": ["S1", "S2", "S3", "S4", "S5"] },
+    "spike": { "enum": ["S1", "S2", "S3", "S4", "S5", "X1"] },
     "criteria_version": { "type": "integer", "minimum": 1 },
     "status": { "enum": ["draft", "frozen"] },
     "name": { "type": "string", "minLength": 1 },
-    "gates": { "enum": ["ADR-0002", "ADR-0005"] },
+    "gates": { "enum": ["ADR-0002", "ADR-0005", "none"], "description": "The ADR the spike gates; none for X1, which never gates." },
     "fallback": {
       "type": "string",
       "minLength": 1,
@@ -82,6 +82,15 @@
       }
     },
     {
+      "if": { "properties": { "spike": { "const": "X1" } }, "required": ["spike"] },
+      "then": {
+        "properties": {
+          "gates": { "const": "none" },
+          "scenarios": { "items": { "properties": { "id": { "pattern": "^X1\\.[0-9]+$" } } } }
+        }
+      }
+    },
+    {
       "if": { "properties": { "spike": { "const": "S5" } }, "required": ["spike"] },
       "then": {
         "properties": {
@@ -97,7 +106,7 @@
       "required": ["id", "title", "precondition", "action", "observable"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^S[1-5]\\.[0-9]+$" },
+        "id": { "type": "string", "pattern": "^(S[1-5]|X1)\\.[0-9]+$" },
         "title": { "type": "string", "minLength": 1 },
         "precondition": { "type": "string", "minLength": 1 },
         "action": { "type": "string", "minLength": 1 },
