@@ -11,3 +11,7 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# NixOS test scripts run inside the driver, which provides the machines and helpers as globals.
+"vm-tests/**" = ["F821"]

@@ -8,5 +8,6 @@ pkgs.mkShell {
     pkgs.nixpkgs-fmt
     pkgs.qemu_kvm
     pkgs.ruff
+    pkgs.shellcheck
   ];
 }

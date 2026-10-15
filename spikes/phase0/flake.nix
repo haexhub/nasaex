@@ -9,13 +9,48 @@
     let
       system = "x86_64-linux";
       pkgs = nixpkgs.legacyPackages.${system};
+      inherit (pkgs) lib;
+
       pythonEnv = pkgs.python3.withPackages (ps: [ ps.pytest ps.pyyaml ps.jsonschema ]);
+      spikectlSrc = lib.fileset.toSource {
+        root = ./.;
+        fileset = lib.fileset.unions [ ./spikectl ./testlib ];
+      };
+
+      profiles = import ./nix/profiles.nix { inherit lib; };
+      snapraidBtrfs = import ./nix/snapraid-btrfs.nix { inherit pkgs; };
+      guestScripts = import ./nix/guest-scripts.nix { inherit pkgs; };
+      mkSpike = import ./nix/mkspike.nix { inherit pkgs profiles snapraidBtrfs guestScripts; };
+      apps = import ./nix/apps.nix { inherit pkgs pythonEnv spikectlSrc; };
+
+      # Probe-only VM tests: they never write records.
+      probeFaults = import ./vm-tests/probes/faults.nix { inherit mkSpike; };
+
+      app = pkg: { type = "app"; program = lib.getExe pkg; };
+      placeholders = lib.genAttrs
+        [ "s1" "s2" "s3" "s4" "s5" "x1" "controls" "suite" ]
+        apps.placeholder;
     in
     {
-      # Placeholders; later tasks fill in the remaining checks, apps and packages.
-      checks.${system} = import ./nix/checks.nix { inherit pkgs; src = ./.; };
-      apps.${system} = { };
-      packages.${system} = { };
+      checks.${system} = import ./nix/checks.nix {
+        inherit pkgs pythonEnv spikectlSrc;
+        src = ./.;
+        repoRoot = ../..;
+      };
+
+      apps.${system} = lib.mapAttrs (_: app) (placeholders // {
+        spikectl = apps.spikectl;
+        probe-faults = apps.runDriver "probe-faults" probeFaults.driver;
+      });
+
+      packages.${system} = {
+        driver-probe-faults = probeFaults.driver;
+      }
+      # Cached test drivers of the spikes; US1 to US5 and X1 replace these placeholders.
+      // lib.genAttrs
+        [ "driver-s1" "driver-s2" "driver-s3" "driver-s4" "driver-s5" "driver-x1" ]
+        apps.placeholder;
+
       devShells.${system}.default = import ./nix/devshell.nix { inherit pkgs pythonEnv; };
       formatter.${system} = pkgs.nixpkgs-fmt;
     };
