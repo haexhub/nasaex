@@ -1,0 +1,16 @@
+# VM state is scratch and never committed (plan "Storage").
+state/
+scratch/
+shakedown/
+*.qcow2
+*.qcow2.*
+*.img
+*.raw
+
+# Nix and Python build products.
+result
+result-*
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/

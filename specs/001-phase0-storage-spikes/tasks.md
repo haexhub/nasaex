@@ -36,12 +36,12 @@
 
 **Purpose**: Layout, pinned flake, tool packaging. Nothing here runs a VM.
 
-- [ ] T001 Create the directory layout of the plan with a `.gitkeep` in each initially empty directory: `spikes/phase0/{nix,vm-tests,testlib,guest,controls,spikectl,tests}/`, `docs/phase0/criteria/`, `docs/phase0/results/`
-- [ ] T002 Create `spikes/phase0/flake.nix` with nixpkgs pinned by full revision `a033e66ab94a6bedf2c3d58d93a36319d3cbbbaf` (branch `nixos-26.05`, research D1) and commit the generated `spikes/phase0/flake.lock`; do not touch the repository-root `flake.nix`; outputs are empty placeholders for now (depends on T001)
-- [ ] T003 [P] Package `snapraid-btrfs` (not in nixpkgs, plan O15, decided 2026-10-15) by pinned upstream revision `6492a45ad55c389c0301075dcc8bc8784ef3e274` of `automorphism88/snapraid-btrfs` as `spikes/phase0/nix/snapraid-btrfs.nix`, with its runtime needs (bash, `snapper` 0.13.1, `snapraid`); fixed-output hash recorded, no floating reference (depends on T002)
-- [ ] T004 [P] Define `devShells.default` (nix, Python with `pytest`, `pyyaml`, `jsonschema`, QEMU tools) in `spikes/phase0/nix/devshell.nix` and the pytest/ruff configuration in `spikes/phase0/pyproject.toml` (depends on T002)
-- [ ] T005 [P] Add `spikes/phase0/.gitignore` so VM state (qcow2 images), the state directory and shakedown scratch output can never be committed (plan Storage: "VM state is scratch and never committed")
-- [ ] T006 [P] Define `checks.formatting` (nix formatter, Python formatter and lint) in `spikes/phase0/nix/checks.nix`; wiring into the flake happens in T033 (depends on T002)
+- [x] T001 Create the directory layout of the plan with a `.gitkeep` in each initially empty directory: `spikes/phase0/{nix,vm-tests,testlib,guest,controls,spikectl,tests}/`, `docs/phase0/criteria/`, `docs/phase0/results/`
+- [x] T002 Create `spikes/phase0/flake.nix` with nixpkgs pinned by full revision `a033e66ab94a6bedf2c3d58d93a36319d3cbbbaf` (branch `nixos-26.05`, research D1) and commit the generated `spikes/phase0/flake.lock`; do not touch the repository-root `flake.nix`; outputs are empty placeholders for now (depends on T001)
+- [x] T003 [P] Package `snapraid-btrfs` (not in nixpkgs, plan O15, decided 2026-10-15) by pinned upstream revision `6492a45ad55c389c0301075dcc8bc8784ef3e274` of `automorphism88/snapraid-btrfs` as `spikes/phase0/nix/snapraid-btrfs.nix`, with its runtime needs (bash, `snapper` 0.13.1, `snapraid`); fixed-output hash recorded, no floating reference (depends on T002)
+- [x] T004 [P] Define `devShells.default` (nix, Python with `pytest`, `pyyaml`, `jsonschema`, QEMU tools) in `spikes/phase0/nix/devshell.nix` and the pytest/ruff configuration in `spikes/phase0/pyproject.toml` (depends on T002)
+- [x] T005 [P] Add `spikes/phase0/.gitignore` so VM state (qcow2 images), the state directory and shakedown scratch output can never be committed (plan Storage: "VM state is scratch and never committed")
+- [x] T006 [P] Define `checks.formatting` (nix formatter, Python formatter and lint) in `spikes/phase0/nix/checks.nix`; wiring into the flake happens in T033 (depends on T002)
 
 ---
 

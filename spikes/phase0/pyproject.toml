@@ -1,0 +1,13 @@
+# Tool configuration only: spikectl and testlib are throwaway scaffolding that
+# runs from this directory, they are not an installable distribution.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
