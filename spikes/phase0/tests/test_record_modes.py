@@ -47,8 +47,9 @@ def root(tmp_path):
 
 
 @pytest.fixture
-def kvm(tmp_path):
-    path = tmp_path / "kvm-device"
+def kvm(tmp_path_factory):
+    # outside the repository root, which must stay clean
+    path = tmp_path_factory.mktemp("device") / "kvm-device"
     path.write_text("")
     return path
 
