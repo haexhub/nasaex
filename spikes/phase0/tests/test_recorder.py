@@ -189,5 +189,6 @@ def test_recorder_output_fits_the_result_record_schema(tmp_path):
     doc = record_doc("S1", 1, "0" * 64)
     doc["scenarios"] = rec.scenarios()
     doc["verdict"] = "FAIL"
+    doc["fallback_decision"] = "Adopt the documented fallback."
 
     assert schema_errors(root, "result-record.schema.json", doc) == []
