@@ -14,7 +14,7 @@
 ## Requirement Completeness
 
 - [x] No [NEEDS CLARIFICATION] markers remain
-- [ ] Requirements are testable and unambiguous (open 2026-10-16: findings A1 to A5, I8, I10, I13, I14, I16 in analysis-2026-10-16.md)
+- [x] Requirements are testable and unambiguous (resolved 2026-10-16 in the clarification session: findings A1 to A5, I8, I10, I13, I14, I16 in analysis-2026-10-16.md; S3.7 stays with T081)
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
 - [x] All acceptance scenarios are defined
@@ -25,9 +25,9 @@
 
 ## Feature Readiness
 
-- [ ] All functional requirements have clear acceptance criteria (open 2026-10-16: FR-008, FR-009, FR-010 have none; FR-014 and FR-032 conflict with other text, see G2, I10, I14)
+- [x] All functional requirements have clear acceptance criteria (resolved 2026-10-16: FR-008, FR-009, FR-010 and the last clause of FR-034 carry a "verified by" reference, FR-014 and FR-032 no longer conflict, see G2, I10, I14; FR-019 to FR-022 stay with T081)
 - [x] User scenarios cover primary flows
-- [ ] Feature meets measurable outcomes defined in Success Criteria (open 2026-10-16: SC-004 contradicts the reviewed S2.7 deliverable, S5 threshold class undefined, SC-009 runner not defined in the spec, see I8, A3, I4)
+- [ ] Feature meets measurable outcomes defined in Success Criteria (open 2026-10-16: SC-004 and the S5 threshold class are resolved (I8, A3); SC-009 still names a reference runner that the spec does not define, see I4)
 - [x] No implementation details leak into specification
 
 ## Notes
@@ -43,3 +43,4 @@
 - **Re-validation after the storage baseline decision (2026-10-15)**: the maintainer decided that the documented mergerfs tiered-cache pattern is the baseline ("variant A") and that overlayfs on mergerfs is kept only as the optional, non-gating experiment X1 (research section 0 and section 7). Spec changes: S1 rewritten as the tiered-cache share (11 scenarios), S2 gains per-block predictions, the snapshot variant (scenario 9) and the clarified sync-after-failure hazard (9 scenarios), S3 loses all whiteout steps and gains the stock-mover negative control (9 scenarios), S4 and S5 are reworded (7 and 8 scenarios), X1 is added as User Story 7 (10 scenarios, not counted among the gating ones). Totals: 44 gating scenarios (11+9+9+7+8), 34 functional requirements (FR-001 to FR-034, with FR-032 to FR-034 new), 11 success criteria (SC-011 new). No new `[NEEDS CLARIFICATION]` markers; two baseline choices (snapshot tool, create policy) are plan open items with recommendations. The four items above that were unchecked before remain unchecked: this update did not verify them.
 - Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
 - **Verification 2026-10-16** (cross-artifact analysis, `analysis-2026-10-16.md`): the three open items were checked against spec, plan, research, data-model, contracts and tasks. Result: all three FAIL and stay unchecked. "Requirements are testable and unambiguous": scenarios and checks exist for all 44 gating scenarios, but A1 to A5 (variant verdict rule, S2.7 review outcome, S5 "typical change", unquantified error and time terms, untestable state-table cells) and the conflicts I8, I10, I13, I14, I16 remain. "All functional requirements have clear acceptance criteria": 31 of 34 have an acceptance reference; FR-008, FR-009 and FR-010 have none. "Feature meets measurable outcomes": 11 of 11 success criteria are mapped to tasks, but SC-004, SC-008 and SC-009 need spec fixes. Analysis totals: 35 findings (0 critical, 3 high, 20 medium, 12 low), 45 of 45 requirements covered by tasks, no constitution violation. The accepted deviation "Written for non-technical stakeholders" is unchanged.
+- **Clarification session 2026-10-16** (`spec.md`, section Clarifications): the maintainer decisions A1 to A5, I6, I8, I10, I12 to I14, I16 and G2 were applied to the spec and data model; no scenario, FR or SC was added or removed (still 44 gating scenarios: 11+9+9+7+8; 34 FR; 11 SC; 10 X1 scenarios). Re-evaluated: "Requirements are testable and unambiguous" and "All functional requirements have clear acceptance criteria" now PASS and are ticked (2 newly passing, no regression); "Feature meets measurable outcomes" stays open only for SC-009 (I4, not part of this session); "Written for non-technical stakeholders" is unchanged (accepted deviation). Pass count: 13/17 before, 15/17 after. Not decided here and still open: S3.7 and the mover contracts (T081), G1 edge-case coverage, I4/I5 (runner, CI).
