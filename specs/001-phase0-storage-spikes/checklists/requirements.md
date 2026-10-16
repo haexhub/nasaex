@@ -32,7 +32,7 @@
 
 ## Notes
 
-- Validation iteration 1 of max 3. Four items remain unchecked: "Written for non-technical stakeholders" is an accepted deviation (see below); "Requirements are testable and unambiguous", "All functional requirements have clear acceptance criteria" and "Feature meets measurable outcomes" have not been verified yet and are to be checked before implementation.
+- Validation iteration 1 of max 3. Four items remain incomplete: "Written for non-technical stakeholders" is an accepted deviation (see below); the other three open items were checked on 2026-10-16 and failed, so they remain unchecked pending spec updates.
 - **Written for non-technical stakeholders (open, accepted deviation)**: the audience of a Phase 0 spec is the project maintainers deciding on ADR-0002 and ADR-0005. The spikes are about storage failure behaviour and cannot be described without naming it; the spec stays outcome-oriented but is not aimed at non-technical readers.
 - **No implementation details (checked, with caveat)**: the technologies named (pool filesystem, union filesystem used as a tiered cache, parity tool with btrfs snapshots, NixOS, and for the optional experiment X1 an overlay filesystem) are the subject under test fixed by ADR-0002 and ADR-0005, not implementation choices. How the VM tests, fault injection and result records are built is left to the plan.
 - **Success criteria technology-agnostic (checked, with caveat)**: success criteria SC-001 to SC-011 are phrased as counts, percentages and durations; SC-008 uses the term "generation" because it is the unit ADR-0005 reasons about.
