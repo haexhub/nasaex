@@ -231,6 +231,13 @@ def _check_review(root: Path, path: Path, record: dict) -> list[Finding]:
                 "record-review", f"{rel}: reviewed record {record['reviewed_record']} not found"
             )
         ]
+    if reviewed.get("kind") != "spike-run" or reviewed.get("spike") != "S2":
+        return [
+            Finding(
+                "record-review",
+                f"{rel}: reviewed record {record['reviewed_record']} is not an S2 spike-run",
+            )
+        ]
     pair = ("criteria_version", "criteria_sha256")
     if any(reviewed.get(key) != record[key] for key in pair):
         return [
