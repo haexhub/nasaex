@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "nasaex/phase0/result-record.schema.json",
   "title": "Phase 0 result record",
-  "description": "docs/phase0/results/<spike>/<record-id>/record.json (spike S1 to S5, or the optional non-gating X1). Immutable once committed. Contains identifiers and hashes only; no absolute host paths, user names or host names. Three kinds: spike-run and repro (the outcome of runs) and review (the reviewed judgement of S2.7, see the kind review rule below). The status pending is never stored: the verdict of a spike-run record stays PASS or FAIL, and the S2 status pending is derived only when automated S2.7 checks pass and no review record exists (data-model.md, Acceptance scenario).",
+  "description": "docs/phase0/results/<spike>/<record-id>/record.json (spike S1 to S5, or the optional non-gating X1). Immutable once committed. Contains identifiers and hashes only; no absolute host paths, user names or host names. Three kinds: spike-run and repro (the outcome of runs) and review (the reviewed judgement of S2.7, see the kind review rule below). The status pending is never stored: the verdict of a spike-run record stays PASS or FAIL, and the S2 status pending is derived only when every other S2 scenario passed, the automated S2.7 checks pass and no review record names the newest spike-run under the current criteria version; a review of an older run does not affect this status (data-model.md, Acceptance scenario).",
   "type": "object",
   "required": ["record_id", "kind", "spike", "criteria_version", "criteria_sha256"],
   "additionalProperties": false,
@@ -41,7 +41,7 @@
     },
     "verdict": {
       "enum": ["PASS", "FAIL"],
-      "description": "PASS iff every scenario of the named criteria version is present with outcome pass. A missing scenario counts as fail. Never pending. In an S2 spike-run record the S2.7 outcome is that of its automated step checks, so a failed step check makes the verdict FAIL; the S2 status is pending only when those checks pass and no review record exists, and is never read from this field alone."
+      "description": "PASS iff every scenario of the named criteria version is present with outcome pass. A missing scenario counts as fail. Never pending. In an S2 spike-run record the S2.7 outcome is that of its automated step checks, so a failed step check makes the verdict FAIL; the S2 status is pending only when those checks pass, every other S2 scenario passed and no review record names the newest spike-run under the current criteria version; a review of an older run does not affect this status. Any other failed scenario makes the verdict FAIL regardless of review. The status is never read from this field alone."
     },
     "fallback_decision": {
       "type": "string",
