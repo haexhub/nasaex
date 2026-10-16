@@ -12,7 +12,7 @@ import json
 import os
 import shutil
 import subprocess
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 
 from spikectl.model import (
@@ -183,13 +183,63 @@ def build_record(
     return record
 
 
-def write_record(root: Path, record: dict, evidence_path: Path, mode: str) -> Path:
+def build_review_record(
+    *,
+    reviewed_record: dict,
+    criteria: dict,
+    outcome: str,
+    reviewer: str,
+    when: datetime.datetime,
+    evidence: Sequence[dict],
+    notes: str | None = None,
+) -> dict:
+    """Assemble the review record of S2.7: it names the reviewed S2 spike-run and carries its
+    criteria version and hash, but no run fields. The evidence entries are paths inside the
+    reviewed record's archive with their SHA-256."""
+    if reviewed_record.get("kind") != "spike-run" or reviewed_record.get("spike") != "S2":
+        raise RecordError("only an S2 spike-run record can be reviewed")
+    if outcome not in ("pass", "fail"):
+        raise RecordError(f"review outcome must be pass or fail, got {outcome!r}")
+    if not reviewer:
+        raise RecordError("a review names its reviewer")
+    if not evidence:
+        raise RecordError("a review lists the evidence it read")
+    version = reviewed_record["criteria_version"]
+    review = {
+        "scenario": "S2.7",
+        "outcome": outcome,
+        "reviewer": reviewer,
+        "date": _utc(when),
+        "evidence": list(evidence),
+    }
+    if notes:
+        review["notes"] = notes
+    record = {
+        "record_id": f"review-{make_record_id('S2', version, when)}",
+        "kind": "review",
+        "spike": "S2",
+        "criteria_version": version,
+        "criteria_sha256": reviewed_record["criteria_sha256"],
+        "reviewed_record": reviewed_record["record_id"],
+        "review": review,
+    }
+    if outcome == "fail":
+        record["fallback_decision"] = criteria["fallback"]
+    return record
+
+
+def write_record(root: Path, record: dict, evidence_path: Path | None, mode: str) -> Path:
     """Write record.json and evidence.tar.xz; record mode into the results tree, shakedown
-    into scratch. An existing record directory is never touched."""
+    into scratch. An existing record directory is never touched. A review record has no
+    evidence archive of its own (evidence_path is None): it pins entries of the reviewed one."""
     problems = schema_errors(root, "result-record.schema.json", record)
     if problems:
         raise RecordError("record does not validate against the schema: " + "; ".join(problems))
-    if sha256_hex(evidence_path.read_bytes()) != record["evidence_archive"]["sha256"]:
+    if (record["kind"] == "review") != (evidence_path is None):
+        raise RecordError("a review record has no evidence archive, every other record needs one")
+    if evidence_path is not None and (
+        sha256_hex(evidence_path.read_bytes()) != record["evidence_archive"]["sha256"]
+    ):
         raise RecordError("evidence archive does not match the hash named in the record")
     base = root / (
         RESULTS_DIR / record["spike"] if mode == "record" else SCRATCH_DIR / record["spike"]
@@ -199,7 +249,8 @@ def write_record(root: Path, record: dict, evidence_path: Path, mode: str) -> Pa
         raise RecordError(f"{target.relative_to(root)} exists; records are never overwritten")
     target.mkdir(parents=True)
     (target / "record.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-    shutil.copyfile(evidence_path, target / "evidence.tar.xz")
+    if evidence_path is not None:
+        shutil.copyfile(evidence_path, target / "evidence.tar.xz")
     return target
 
 
@@ -209,6 +260,7 @@ __all__ = [
     "PreflightError",
     "RecordError",
     "build_record",
+    "build_review_record",
     "configured_ram_budget_mib",
     "make_record_id",
     "preflight",
