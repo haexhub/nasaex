@@ -135,7 +135,7 @@ def _current_for(root: Path, spike: str, lock) -> SpikeVerdict:
     result.errors += _record_errors(spike, newest, derive_verdict(criteria, newest))
     if review is not None:
         result.review_id = review["record_id"]
-        failed = review.get("review", {}).get("outcome") == "fail"
+        failed = review.get("review", {}).get("outcome") != "pass"
         if failed and not review.get("fallback_decision"):
             result.errors.append(f"{review['record_id']}: FAIL review without fallback_decision")
     return result

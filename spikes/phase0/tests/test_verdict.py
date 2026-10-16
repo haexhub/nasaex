@@ -472,6 +472,18 @@ def test_a_failing_review_without_fallback_decision_is_an_error(root):
     assert any("fallback_decision" in e for e in verdict.errors)
 
 
+def test_a_non_pass_review_without_fallback_decision_is_an_error(root):
+    entry = frozen_s2(root)
+    run = s2_run(root, entry)
+    review = review_doc(run, "pass")
+    review["review"]["outcome"] = "unexpected"
+    write_review(root, review)
+
+    verdict = s2(root)
+
+    assert any("fallback_decision" in e for e in verdict.errors)
+
+
 def test_a_stored_pending_verdict_is_an_error(root):
     entry = frozen_s2(root)
     doc = record_doc("S2", entry.version, entry.sha256, S2_OUTCOMES)
