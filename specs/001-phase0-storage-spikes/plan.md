@@ -107,10 +107,10 @@ to a Phase 0 consisting of docs, Nix, Python and shell are listed once.
 | No secrets in git; no committed paths that assume one OS layout (home-directory style paths of any OS) | Pass | Contracts forbid host paths, user names and host names in records; the sanitiser strips them from evidence; `spikectl verify` scans committed docs and records for them. Guest paths (`/mnt/...`) are VM-internal. |
 | Cross-repo references use repository + full commit SHA + path | Pass | Upstream sources in research are pinned by SHA (research section 1); nixpkgs by full SHA and lock. Living documents (btrfs docs, SnapRAID manual URL) are cited as such and cross-checked with the pinned source where possible. |
 | Phasing discipline: later phases not implemented before prerequisites | Pass | Only Phase 0; no backend, API, UI or module code. The mover, lock and apply scripts are scaffolding and say so. |
-| Design decisions materially affecting a Core Principle need an ADR | Pass | No Core Principle of this constitution is affected by plan decisions. The storage baseline change of 2026-10-15 is recorded in ADR-0002 (same PR). The ADR-affecting outcomes (accept or fallback) are produced by the gate, not by the plan. |
+| Design decisions materially affecting a Core Principle need an ADR | Pass | The storage baseline and the client-delete trash decision are recorded in ADR-0002. The ADR-affecting outcomes (accept or fallback) are produced by the gate, not by the plan. |
 | `/speckit-plan` checks the plan against the constitution; conflicts resolved by changing the plan | Pass | This section; no conflict found; no exception granted. |
 | Follow the workflow `.specify/workflows/speckit/workflow.yml` | Pass | Specify, review-spec, plan done; stops at the `review-plan` gate; tasks and implement not run. The baseline change is a review-fix response on the open PR #4, for which freehand edits of the documents are permitted; no tasks were generated and no code was written. |
-| Add or update tests with behavior changes; run formatter, static checks and relevant tests; report what was run | Pass at implementation | `checks.oracle-unit`, `checks.formatting`, `checks.criteria`, `checks.records` and the negative controls exist for exactly this. Nothing is runnable at plan stage; this plan changes only Markdown and JSON schemas. |
+| Add or update tests with behavior changes; run formatter, static checks and relevant tests; report what was run | Pass at implementation | This contract-only amendment has no runtime implementation to test. The new oracle tests, concurrent-delete probe and S3 checks are scheduled before the harness tasks that rely on them (`T018a`, `T019a`, `T037c`, `T098a`); `spikectl verify` is the runnable check for this docs change. |
 | Test code in files separate from production code | Pass | There is no production code. Inside `spikes/phase0/`, test scripts, oracle, fixtures and in-VM scaffolding are separate files. |
 | Hand-maintained file clearly over 500 LoC must be split or justified | Pass at implementation | Layout splits per spike and per concern; implementation tasks must keep files under the bound. `spec.md` and `research.md` are documents. |
 | Graphify-first authoring before new named functions, classes, modules, CLI commands | Applies at implementation | The plan authors no code. Every implementation task that introduces a named function, module or CLI command (`spikectl` subcommands, `spikelib` modules) must first consult `graphify` and record the candidates evaluated. The current graph is docs-only, so the expected outcome is "no candidate". |
@@ -234,7 +234,8 @@ No constitution violation; nothing to justify.
 ## Post-design Constitution re-check
 
 After `data-model.md`, `contracts/` and `quickstart.md`, and again after the baseline change of
-2026-10-15: no new principle is engaged. The record schema
+2026-10-15 and the client-delete trash amendment: the new data-safety decision is recorded in
+ADR-0002. The record schema
 excludes host paths, user names and host names by construction (fields hold identifiers and hashes);
 the sanitiser and verifier enforce it for free text. The plan adds no abstraction beyond `spikectl`'s
 four verbs, and the mover and lock scripts are explicitly scaffolding. **PASS.**
