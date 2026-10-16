@@ -18,8 +18,8 @@ plan from the on-disk state (pool branch, archive branches, SnapRAID content and
 shows whether that is sufficient. If a journal turns out to be necessary, that is an S3 finding and a
 correction of this list, not a silent addition.
 
-Concurrency rule: **the mover takes no lock that clients would have to honour, and no client write waits
-through any step, in particular not through the sync step M3.** A lock held by the mover cannot bind SMB
+Concurrency rule: **the mover takes no lock that clients would have to honour, and no client write is
+required to wait through the sync step M3.** A lock held by the mover cannot bind SMB
 clients, so safety against a client write that races the mover rests on three things only: the selection
 rule (idle files, no open handles), the identity comparison at M2 and M5 (a changed file keeps its pool
 copy) and the named residual-window fault point of M5 that measures what that comparison cannot close

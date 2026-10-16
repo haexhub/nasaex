@@ -59,8 +59,9 @@ same hook is a separate crash case (`S3.2:mid:M5:item-validated:<mode>`) and is 
 
 1. **Named, not timed.** A fault point is reached because a guest process says so (hook marker), because
    a log line says so, or because a scenario step finished. `sleep` is not a trigger.
-2. **One fault, one record entry.** Each case in a record names its fault kind and point; coverage counts
-   (SC-005) are computed from them.
+2. **One fault, one record entry.** Each case in a record names its fault kind and point. SC-005 coverage
+   counts are computed from the enumerated crash points and kill modes; named fault and injection points are
+   recorded separately and are not included in those counts.
 3. **Hooks do not sync.** The hook client never calls `sync`, `fsync` or drops caches, so a `poweroff` at a
    point sees exactly the effects of the steps before it.
 4. **Guest-local state is not trusted.** The oracle never reads a hook marker, a mover log or SnapRAID's
