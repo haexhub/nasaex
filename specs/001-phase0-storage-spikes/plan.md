@@ -51,10 +51,11 @@ Hosts without KVM are unsupported (spec FR-011 assumption).
 
 **Project Type**: test, specification and decision artifacts (no product component).
 
-**Performance Goals**: full suite within 2 hours on the reference runner (SC-009, initial target);
-S5 rebuild-duration thresholds apply to each named change class separately: if every warm-store median
-is <= 5 min the result is PASS, if any median is > 5 min and none is > 15 min the result is PASS with
-an asynchronous-apply requirement, and if any median is > 15 min the result is FAIL.
+**Performance Goals**: full suite within 2 hours on the reference runner (SC-009, initial target; the
+reference runner is defined in the spec, section "Reference runner"); S5 rebuild-duration thresholds
+apply to each named change class separately and the worst class median decides: if every warm-store
+median is <= 5 min the result is PASS, if any median is > 5 min and none is > 15 min the result is PASS
+with an asynchronous-apply requirement, and if any median is > 15 min the result is FAIL.
 
 **Constraints**: no network inside VMs; clean machine state on every run; no verdict from a cached
 build; deterministic fault points only (FR-010); no committed host paths, secrets or personal data;
@@ -85,7 +86,7 @@ Rationale, alternatives and sources for each are in [research.md](research.md) (
 | Degraded locks | Kernel-enforced read-only remount of archive and parity filesystems plus a status/refusal layer [D11] |
 | Layout and flake | Scaffolding only under `spikes/phase0/`; decisions under `docs/phase0/`; apps `suite`, `s1..s5`, `x1` (optional), `controls`, `spikectl`; cheap `checks` without KVM [D12] |
 | Entry point | `nix run ./spikes/phase0#suite -- --mode record [--repeat 3] [--include-x1]`; `shakedown` mode never records [D13] |
-| CI | `static` (no KVM), `suite` (KVM, dispatch/label), `repro` (three chained clean jobs); actions pinned by SHA; budget table in research (adjusted 2026-10-15, S3 has 38 cases instead of 68), S3 sharded [D14] |
+| CI | `static` (no KVM), `suite` (KVM runner where one exists, dispatch/label, shakedown by default), `repro` (optional, three chained clean jobs); record runs are local on the reference runner (spec, "Reference runner"); actions pinned by SHA; budget table in research (adjusted 2026-10-15, S3 has 38 cases instead of 68), S3 sharded [D14] |
 | Reproducibility | `--repeat 3` from clean state, per-scenario comparison, any difference is `flaky` = FAIL [D13] |
 
 ## Constitution Check
@@ -170,8 +171,9 @@ spikes/phase0/                        # THROWAWAY scaffolding; never imported by
 
 **Structure Decision**: Everything that exists only to run the spikes is under `spikes/phase0/` with
 its own flake and lock, so that deleting or archiving it after Phase 0 leaves the repository intact and
-no product directory can accidentally depend on it (`spikectl verify` fails if a file outside `spikes/`
-and `docs/` references `spikes/`). Everything the ADRs will cite (criteria, records, evidence) is under
+no product directory can accidentally depend on it (`spikectl verify` fails if a file outside `spikes/`, `docs/`, `specs/`, `.specify/`, `.claude/`,
+`.agents/`, `.spaex/` and `.github/workflows/phase0.yml` references `spikes/`; the last five are the
+spec tooling and the CI workflow, and the feature's own documents live in `specs/`). Everything the ADRs will cite (criteria, records, evidence) is under
 `docs/phase0/`. The spaex-delivered root `flake.nix` is not modified. Product code of later phases
 never lives under `spikes/`.
 
@@ -205,7 +207,7 @@ never lives under `spikes/`.
 
 | ID | Open item | Recommendation |
 | --- | --- | --- |
-| O1 | The "reference runner" of SC-009 is not defined; KVM on GitHub standard runners is observed, not guaranteed, and their disk may be too small for the `large` profile (UNVERIFIED). | Define it as a runner with >= 8 vCPU, >= 32 GiB RAM, >= 100 GiB free disk, KVM, state directory on disk. Use a self-hosted or larger runner for `suite`/`repro`; keep `static` on standard runners. Decide before the first record run. **Decided 2026-10-15: the reference runner is the maintainer's workstation (KVM, 24 logical CPUs, about 31 GiB RAM of which only about 10 to 12 GiB were available when measured, about 265 GiB free disk). The suite MUST NOT assume 32 GiB: the default budget is at most 8 GiB RAM for all test VMs together (configurable), with the state directory on disk and at least 100 GiB free; `spikectl` preflight refuses to start when the budget is not available, and S3 shards run with a bounded number of parallel VMs. Record runs are local `nix run` runs on this workstation; no self-hosted GitHub runner is registered for this public repository. The 2-hour suite budget (SC-009) may not hold under the RAM cap and is revisited after the shakedown.** |
+| O1 | The "reference runner" of SC-009 was not defined; KVM on GitHub standard runners is observed, not guaranteed, and their disk may be too small for the `large` profile (UNVERIFIED). | **Decided 2026-10-15 and defined in the spec (section "Reference runner", Clarifications of 2026-10-16); not repeated here.** Record runs are local on the maintainer's workstation within an 8 GiB VM budget; CI keeps `static` and KVM shakedown runs; no self-hosted runner is registered. The 2-hour target is revisited after the shakedown. |
 | O2 | Spec says criteria are frozen "before the spike is run for the first time". The harness needs shakedown runs, and the S2 block-allocation model and the S1 view-consistency finding (scenario 10) need observation before criteria can be written precisely. | Interpret "run" as a run that can produce a record. `shakedown` mode never writes records and is allowed before the freeze; criteria edits after shakedown are normal pre-freeze edits recorded in the criteria file's changelog. Expected values come from documentation, and a later mismatch is a FAIL, never a silent re-prediction. Maintainers confirm this reading. **Confirmed 2026-10-15.** |
 | O3 | Findings F1-F4 contradicted or sharpened the first spec. **Resolved by the maintainer decision of 2026-10-15**: the tiered-cache pattern is the baseline; F1, F4 and F6 apply to experiment X1 only; F2 (per-block predictions) and F3 (how the sync-after-failure hazard is reached) are built into S2; F5 into S5. Spec, design and ADR-0002 were edited accordingly. | Nothing further, except that the S2 block-allocation model stays UNVERIFIED until shakedown (O2). |
 | O4 | Size of evidence in git. | Target <= 2 MiB per record, no Git LFS. Revisit if the first records exceed it. |
@@ -213,14 +215,14 @@ never lives under `spikes/`.
 | O6 | The degraded lock mechanism is a design choice that S4 itself tests. | Start with read-only remount of archive and parity filesystems plus a status layer (D11); a different mechanism after a FAIL is an S4 re-run. |
 | O7 | nixpkgs channel. | `nixos-26.05` (stable) at the committed lock; unstable is the alternative. The stable branch moving on does not affect the pin. |
 | O8 | S5 harness feasibility (tmpfs root, bootloader, local writable store, offline rebuild). | First S5 task is a feasibility probe; the documented fallback records which part of ADR-0004 was reproduced. |
-| O9 | Which mergerfs `passthrough.io` and cache settings the S1 criteria test; the spec names only the create policy, branch modes and out-of-space behaviour. | Baseline `passthrough.io=off` and `cache.files=off` (defaults); informational variants with `passthrough.io=rw` and `cache.files=auto-full` for the large-file and rename scenarios, so the product module can choose with evidence. Only the baseline gates S1. X1 additionally tests the FUSE stacking depth at its default, `0` and `2`. |
+| O9 | Which mergerfs `passthrough.io` and cache settings the S1 criteria test; the spec names only the create policy, branch modes and out-of-space behaviour. | Baseline `passthrough.io=off` and `cache.files=off` (defaults); informational variants with `passthrough.io=rw` and `cache.files=auto-full` for the large-file and rename scenarios, so the product module can choose with evidence. Only the baseline gates S1; the non-baseline variants are informational (recorded with `gating: false`, never changing a scenario outcome). X1 additionally tests the FUSE stacking depth at its default, `0` and `2`. |
 | O10 | PR #3 is already merged (rebase merge, head `f256c54`); the branch contains the rebased clarification commit and the remaining plan commit. | Keep PR #4 as the delivery vehicle for these commits; no rebase/cherry-pick or second PR is needed. |
 | O11 | `.specify/memory/constitution.md` is an unfilled template (finding F8). | Either fill it (`/speckit-constitution`) or state that the spaex constitution is the only gate. |
 | O12 | SMB client details (which commands expose DOS attributes and xattrs, smb.conf keys) are UNVERIFIED. | Settled in the S1 criteria task through a shakedown, recorded as required settings (FR-013). |
 | O13 | Third-party GitHub Actions need full-SHA pins. | Resolve at implementation. |
 | O14 | Fidelity of power-off: device-level volatile write caches are not emulated. | Accepted as residual risk, stated in every record. Optional hardening later: replay-based crash testing (for example `dm-log-writes`) as a separate, later spike. |
 | O15 | Snapshot tooling for the archive: `snapraid-btrfs` (with `snapper`, external, works with SnapRAID 14.x, not in nixpkgs at the pin), `btrfssnapraid` (external, last push 2023-12-13), or the native `snapshot` option of SnapRAID 15.0 (release candidate `v15.0rc2`, not at the pin). All UNVERIFIED in practice (research 7.3, F12). | Default: `snapraid-btrfs` with `snapper` at the pinned SnapRAID 14.x, fetched by pinned upstream revision (flake input) and wrapped by the harness's sync/fix helper. Re-judge the native v15 option after v15 is released; S2 scenario 9 measures whichever is selected. The choice is a plan decision, not a spec change; a switch before the S2 criteria are frozen is a normal pre-freeze edit. **Decided 2026-10-15: the default is adopted.** |
-| O16 | Create policy and cache pool settings: `ff` or `lus` (mergerfs names `ff`, `lus` and `lfs` for a cache pool), whether archive branches are `NC`, `moveonenospc`, `minfreespace` (research F10, 7.2). | Default: `ff`, archive branches `NC`, `moveonenospc=false`, explicit low `minfreespace`. S1 scenario 2 tries `ff` and `lus`; S1 scenarios 2 and 9 record what is required (FR-013). With only one create-eligible branch the two policies behave the same, so `lus` only matters if `NC` is dropped. **Decided 2026-10-15: the default is adopted.** |
+| O16 | Create policy and cache pool settings: `ff` or `lus` (mergerfs names `ff`, `lus` and `lfs` for a cache pool), whether archive branches are `NC`, `moveonenospc`, `minfreespace` (research F10, 7.2). | Default: `ff`, archive branches `NC`, `moveonenospc=false`, explicit low `minfreespace`. S1 scenario 2 gates on `ff`, and `lus` is an informational variant (`gating: false`); S1 scenarios 2 and 9 record what is required (FR-013). With only one create-eligible branch the two policies behave the same, so `lus` only matters if `NC` is dropped. **Decided 2026-10-15: the default is adopted.** |
 
 ## Complexity Tracking
 

@@ -12,9 +12,10 @@ real in the implementation phase. Contracts: [criteria schema](contracts/criteri
 - A Linux x86_64 machine with hardware virtualisation: `/dev/kvm` exists and is readable and writable for
   your user. Without KVM the suite refuses to run (no emulated fallback).
 - Nix with the `nix-command` and `flakes` features enabled.
-- Free disk space for the state directory (reference runner: >= 100 GiB, on a disk, not a tmpfs) and
-  enough available RAM for the configured aggregate VM budget (8 GiB by default). The budget is
-  configurable and the runner refuses to overcommit it; sizing is documented in plan open item O1.
+- Free disk space for the state directory (>= 100 GiB, on a disk, not a tmpfs) and enough available RAM
+  for the configured aggregate VM budget (at most 8 GiB for all test VMs together by default; 32 GiB of
+  RAM are not required). The budget is configurable and the run refuses to start rather than overcommit
+  it. These are the properties of the reference runner defined in the spec (section "Reference runner").
 - No network is needed inside the VMs; the host needs access to the pinned inputs once.
 
 ## Scenario 1: static checks (no KVM, seconds to minutes)
@@ -27,7 +28,7 @@ nix run ./spikes/phase0#spikectl -- verify
 Expected: criteria files validate against the schema; every frozen file matches its line in
 `frozen.lock` and the lock is append-only; every record names a locked (version, hash); criteria precede
 records in git history; ADR status lines are consistent with the verdicts; no committed file contains
-absolute host paths, user names or host names; no file outside `spikes/` and `docs/` references `spikes/`.
+absolute host paths, user names or host names; no file outside `spikes/`, `docs/`, `specs/`, `.specify/`, `.claude/`, `.agents/`, `.spaex/` and `.github/workflows/phase0.yml` references `spikes/`.
 The oracle unit tests and the negative-control definitions pass.
 
 ## Scenario 2: shakedown of one spike (KVM; never records)
@@ -56,14 +57,15 @@ criteria and the lock, merge through a PR, **then** run record mode. Editing a f
 nix run ./spikes/phase0#suite -- --mode record
 ```
 
-Expected, unattended, on the reference runner within the 2-hour target (SC-009):
+Expected, unattended, on the reference runner (the maintainer's workstation within the 8 GiB VM budget) within the 2-hour initial target (SC-009):
 
 1. `/dev/kvm` is checked; the five drivers are built.
 2. Spikes run on the schedule of D13 (S5 parallel to S1; then S2 and S4; S3 sharded), each from a fresh
    machine state, each under its budget. X1 is not part of this run.
 3. The negative controls run and every known-bad mover variant, including the stock
-   `--remove-source-files` mover, is flagged `fail` (otherwise the harness is reported as invalid and no
-   record is written).
+   `--remove-source-files` mover, is flagged `fail`. A flagged stock control is a precondition of the S3
+   record, not a scenario outcome: if it is not flagged, the harness is reported as invalid and no
+   record is written.
 4. For each spike, `docs/phase0/results/<spike>/<record-id>/` gains `record.json` and `evidence.tar.xz`.
 5. The verdict matrix is printed:
 
@@ -84,7 +86,7 @@ nix run ./spikes/phase0#suite -- --mode record --repeat 3
 
 Expected: three full suite runs in sequence, each from clean state; one `repro` record per spike lists the
 three run ids and the per-scenario matrix. Any scenario whose outcome differs between the runs is `flaky`,
-which counts as FAIL (spec edge case). In CI the same is done by three chained jobs on clean runners.
+which counts as FAIL (spec edge case). The committed reproducibility record comes from this local run on the reference runner; CI offers the same only as an optional chain of three jobs where a runner offers KVM.
 
 ## Scenario 5a: the optional overlayfs experiment X1
 
@@ -104,8 +106,9 @@ Run a spike against a deliberately broken input (a known-bad mover variant from 
 mandatory stock negative control). Expected: the affected scenario is `fail`, the verdict is `FAIL`, and for
 S1 to S5 the record carries the fallback decision named in the criteria. The evidence archive contains the
 oracle's expected and observed manifests, and `spikectl verify` refuses an ADR change to `accepted` while
-that record is the current one. If the mandatory stock control is not flagged `fail`, the run is instead
-invalid: no record is written and S3 has no verdict.
+that record is the current one. This scenario never turns the mandatory stock control into a FAIL record: a
+stock control that the harness does not flag as `fail` is a broken precondition, so the S3 run is invalid,
+no record is written and S3 has no verdict.
 
 ## Scenario 7: from verdict to ADR
 

@@ -636,6 +636,18 @@ Flake outputs (system `x86_64-linux`):
   fixture. The plan may revise the target with a recorded reason (spec assumption); that
   happens after shakedown measurements, not before.
 
+  **Note 2026-10-16 (reference runner decided; the text above is the 2026-10-15 recommendation and
+  stays as written).** The reference runner is defined in the spec (section "Reference runner"):
+  record-mode runs are local on the maintainer's workstation (KVM, 24 logical CPUs, about 31 GiB
+  RAM of which only about 10 to 12 GiB were available when measured, about 265 GiB free disk), with
+  a VM memory budget of at most 8 GiB for all test VMs together and a state directory on disk with
+  at least 100 GiB free. No self-hosted runner is registered for this public repository, so CI
+  covers the `static` job and shakedown runs where a runner offers KVM. The "recommended runner"
+  (>= 32 GiB RAM) of the estimate above is therefore not the runner that is used: the 8 GiB cap
+  limits how many VMs, and so how many S3 shards, run in parallel, and the 80-100 min estimate may
+  not hold. It is revisited after the shakedown measurements with a recorded reason (spec
+  Assumptions, SC-009).
+
 ---
 
 ## 3. Technical findings with sources

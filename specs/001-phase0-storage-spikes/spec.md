@@ -35,6 +35,7 @@ Decisions taken by the maintainer on 2026-10-16 (no open questions were asked; e
 - Q: Which scenarios must be automated? → A: Every acceptance scenario except the review judgement of S2.7, whose step checks are automated (I8; FR-002, SC-004).
 - Q: What happens if the stock-mover negative control is not flagged as FAIL? → A: The S3 run is invalid (a harness defect), no record is written and the spike has no verdict; a flagged control is a precondition for a record, not a scenario outcome (I10; Verdict model, S3.5, FR-032).
 - Q: How are FR-008, FR-009, FR-010 and the last clause of FR-034 evidenced? → A: Each names an explicit "verified by" reference (task ids or record fields) (G2; the four requirements).
+- Q: What is the project's reference runner, and how is the CI clause of FR-011 met? → A: Record-mode runs are executed locally on the maintainer's workstation (KVM, a VM memory budget of at most 8 GiB for all test VMs together, state directory on disk with at least 100 GiB free). CI covers the `static` job and shakedown runs where a runner offers KVM; no self-hosted runner is registered for this public repository. The unattended-CI clause therefore applies to those static and shakedown validations; the local record run is not described as a CI run. The 2-hour budget of SC-009 is an initial target measured on that workstation and revisited after the shakedown with a recorded reason (I4, I5; Reference runner, FR-011, SC-009, Assumptions).
 
 ## Verdict model *(applies to every spike)*
 
@@ -51,6 +52,17 @@ Decisions taken by the maintainer on 2026-10-16 (no open questions were asked; e
 - **Recorded result.** Every valid record-mode run produces a result record kept in version control next to the criteria: spike, criteria version, environment revision, date, per-scenario outcome, evidence reference and verdict. Shakedown runs and invalid runs caused by a harness defect produce no record. A failed S1 to S5 record also carries the applicable fallback decision; X1 has no fallback.
 - **Re-runs.** After a documented design correction a spike may be re-run. A failed run is never deleted; the new run is a new record that references the earlier one.
 - **ADR gate.** ADR-0002 moves from proposed to accepted only when S1, S2, S3 and S4 all PASS. ADR-0005 moves from proposed to accepted only when S5 PASSES. If a gating spike FAILS, the ADR stays proposed until the documented fallback has been adopted and the ADR text updated to say so. While a gating spike's verdict is `pending` or `none`, no ADR gate may be applied. X1 never gates an ADR: it may be run or skipped, and neither its verdict nor its absence changes any ADR status.
+
+## Reference runner *(applies to FR-011 and SC-009)*
+
+The **reference runner** is the environment on which the verdicts of record-mode runs are produced and on which the time budget of SC-009 is measured. It is defined by these checkable properties:
+
+- **Where record mode runs.** Record-mode runs (see the **Run** rule of the verdict model) are executed locally on the maintainer's workstation, with hardware virtualisation (KVM) and by the single documented command. A run without KVM is refused, with no emulated fallback.
+- **Memory.** The VM memory budget is at most 8 GiB for all test VMs of a run together. The budget is configurable, and a run refuses to start when it is not available instead of overcommitting.
+- **Disk.** The state directory is on a disk, not on a tmpfs, with at least 100 GiB free.
+- **CI.** CI covers the `static` job (no KVM) and shakedown runs on runners that offer KVM. Shakedown runs never write a record. No self-hosted runner is registered for this public repository, and KVM and disk of hosted runners are not assumed.
+
+The run preflight checks these properties. The record fields `environment.kvm`, `environment.host`, `environment.profile` and `environment.vm_resources` expose the recorded execution context; the budget and state-directory capacity checks are retained in the run evidence without recording host paths.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -261,7 +273,7 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 - **FR-008**: All spikes MUST run as reproducible tests in virtual machines using virtual disks only, with hardware acceleration, from a clean state on every run, with no dependence on physical disks, network services outside the test, or state left by an earlier run. *Verified by*: T032 (a missing `/dev/kvm` is a hard error, no emulated fallback), T138 (fresh state directory per run) and the record fields `environment.kvm` and `environment.profile`.
 - **FR-009**: The test environment MUST provide archive disks of different sizes (each its own btrfs filesystem), at least one parity disk, and at least two pool devices, and a separate SMB client for S1. *Verified by*: T026 and T027 (topology profiles and nodes), T041 (client VM) and the record fields `environment.disks` and `environment.vms`.
 - **FR-010**: Fault injection (device failure, process kill, power-off, injected write or checksum faults, out-of-space) MUST be deterministic and triggered at named points of the procedure under test, not by timing. *Verified by*: T035, T063 and T083 (host-side fault kinds, no sleep triggers) and the fault kind and fault point recorded for every case of a record.
-- **FR-011**: The suite MUST run unattended in CI and by a single documented command locally on a machine with KVM, and every scenario MUST give the same verdict on three consecutive runs from clean state.
+- **FR-011**: Validation MUST run without manual steps: record mode runs by a single documented command on the reference runner (locally), while CI runs the `static` job and shakedown runs on runners that offer KVM (see Reference runner). Every scenario MUST give the same verdict on three consecutive record-mode runs from clean state on the reference runner. The local record run is not a CI run; the unattended-CI validation is provided by the static and shakedown jobs.
 
 **S1 tiered-cache share**
 
@@ -337,7 +349,7 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 - **SC-006**: S2 recovers 100% of the files predicted as recoverable bit-exact in every scenario, and the set of files reported lost equals the predicted set exactly (no more, no fewer).
 - **SC-007**: S4 covers all transitions in the state table (healthy to each degraded state, both-degraded in both orders and simultaneously, and repair back) and 100% of lockout attempts are refused with archive and parity unchanged.
 - **SC-008**: S5 reports rebuild duration (median and worst case over at least 5 warm runs per change class, plus one cold run, judged by the worst class median) and 100% of failed builds and failed activations leave the running system equal to the last known-good generation.
-- **SC-009**: The full suite (S1 to S5, without X1) starts with one command, runs without manual steps on the reference environment, and completes within 2 hours on the project's reference runner.
+- **SC-009**: The full suite (S1 to S5, without X1) starts with one command, runs without manual steps, and completes within 2 hours of wall time in one record-mode run on the reference runner (see Reference runner: the maintainer's workstation within the 8 GiB VM memory budget). The 2 hours are an initial target; they are revisited after the shakedown, with the reason recorded.
 - **SC-010**: At the end of Phase 0 the repository contains test, specification and decision artifacts only; no product code was added for the sake of the spikes.
 - **SC-011**: If X1 is run, it has a recorded PASS or FAIL verdict traceable to its own frozen criteria; 0 ADR status changes, fallbacks or Phase 1 decisions depend on whether it was run or on its verdict.
 
@@ -356,7 +368,7 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 ## Assumptions
 
 - The audience is the project maintainers. Because the spikes exist to test named technologies chosen in the ADRs (a pool filesystem, a union filesystem with a tiered-cache pattern, a parity tool with btrfs snapshots, NixOS, and for X1 an overlay filesystem), those names appear where they are the subject under test; this is not a choice of implementation made by this spec.
-- Tests run as NixOS VM tests on a host with hardware virtualisation. A KVM-capable CI runner is available; without it, the CI requirement (FR-011) cannot be met and that is escalated rather than waived.
+- Tests run as NixOS VM tests on a host with hardware virtualisation. Record-mode runs happen on the reference runner (the maintainer's workstation, see Reference runner). CI offers the `static` job and shakedown runs only where a runner offers KVM; no KVM runner is assumed. Where no runner offers KVM, the unattended-in-CI clause of FR-011 is met by the `static` job and the local record run, as recorded in the Reference runner definition.
 - Virtual disks stand in for real disks. Failures, crashes and power-off are injected from the host side. Findings that depend on real hardware behaviour are out of scope and noted as residual risk in the result records.
 - Operating system and tool revisions are pinned for the whole phase, so a verdict is tied to a known environment.
 - The S1 large-file size (above 4 GiB) is chosen to cross common 32-bit limits; the pool and archive virtual disks are sized to allow it.
@@ -371,7 +383,7 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 - The recovery procedure produced by S2 and the mover step list used by S3 are the same artifacts the product will later implement; a change to either after Phase 0 reopens the corresponding spike.
 - Phase 0 deliverables land on `main` through pull requests under the project's workflow, like all other changes.
 - Phase 1 does not start until all five verdicts are recorded and each ADR is either accepted or its fallback adopted (design rule: phase n+1 starts only when phase n passes its tests).
-- The 2-hour suite budget (SC-009) is an initial target; the plan may revise it with a recorded reason if large-file and crash-point coverage need more. X1 is outside this budget.
+- The 2-hour suite budget (SC-009) is an initial target measured on the reference runner under its 8 GiB VM memory budget, which limits how many VMs run in parallel. It is revisited after the shakedown, and the plan may revise it with a recorded reason if large-file and crash-point coverage need more. X1 is outside this budget.
 
 ## Open Questions
 
