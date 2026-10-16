@@ -3,8 +3,10 @@
 Scaffolding for the Phase 0 spikes, not product code. Check groups:
 
 - criteria: schema, lock hashes, frozen status matches the lock
-- records: schema, record-to-lock pairing, layout, evidence hash
-- git: append-only lock history, criteria commit before record commit (needs a git work tree)
+- records: schema, record-to-lock pairing, layout, evidence hash; a review record (S2.7) has no
+  archive of its own and is checked against the record it reviews instead
+- git: append-only lock history, criteria commit before record commit, reviewed record before
+  its review (needs a git work tree)
 - hygiene: host paths, user and host names, authoring-tool self-references, spikes/ references
 """
 
@@ -189,6 +191,8 @@ def _check_record(root: Path, path: Path, lock: list[LockEntry]) -> list[Finding
         findings.append(
             Finding("record-lock", f"{rel}: {pair[0]} v{pair[1]} with this hash is not in the lock")
         )
+    if record["kind"] == "review":
+        return findings + _check_review(root, path, record)
     archive = path.parent / record["evidence_archive"]["path"]
     if (
         not archive.exists()
@@ -198,6 +202,54 @@ def _check_record(root: Path, path: Path, lock: list[LockEntry]) -> list[Finding
             Finding("record-evidence", f"{rel}: evidence archive missing or hash differs")
         )
     return findings
+
+
+def _reviewed_path(path: Path, record: dict) -> Path:
+    """record.json of the record a review names (reviews sit in the same group directory)."""
+    return path.parent.parent / record["reviewed_record"] / "record.json"
+
+
+def _archive_member_sha256(archive: Path, name: str) -> str | None:
+    try:
+        with tarfile.open(archive, mode="r:*") as tar:
+            extracted = tar.extractfile(tar.getmember(name))
+            return sha256_hex(extracted.read()) if extracted else None
+    except (KeyError, tarfile.TarError, EOFError, OSError):
+        return None
+
+
+def _check_review(root: Path, path: Path, record: dict) -> list[Finding]:
+    """A review is judged against the record it reviews: same criteria version and hash, and
+    its evidence entries are pinned entries of that record's archive."""
+    rel = path.relative_to(root)
+    reviewed_path = _reviewed_path(path, record)
+    try:
+        reviewed = load_record(reviewed_path)
+    except (ModelError, OSError):
+        return [
+            Finding(
+                "record-review", f"{rel}: reviewed record {record['reviewed_record']} not found"
+            )
+        ]
+    pair = ("criteria_version", "criteria_sha256")
+    if any(reviewed.get(key) != record[key] for key in pair):
+        return [
+            Finding(
+                "record-review",
+                f"{rel}: criteria version or hash differ from the reviewed record "
+                f"{record['reviewed_record']}",
+            )
+        ]
+    archive = reviewed_path.parent / reviewed.get("evidence_archive", {}).get("path", "")
+    return [
+        Finding(
+            "record-evidence",
+            f"{rel}: evidence {entry['path']} is not in the archive of "
+            f"{record['reviewed_record']} or its hash differs",
+        )
+        for entry in record["review"]["evidence"]
+        if _archive_member_sha256(archive, entry["path"]) != entry["sha256"]
+    ]
 
 
 # --- git history ------------------------------------------------------------
@@ -306,6 +358,27 @@ def _check_record_order(root: Path, path: Path, lock: list[LockEntry]) -> list[F
     ancestor = _git(root, "merge-base", "--is-ancestor", lock_commit, record_commit)
     if ancestor.returncode != 0:
         return [Finding("ancestry", f"the lock commit of {entry.file} is not an ancestor of {rel}")]
+    if record.get("kind") == "review":
+        return _check_review_order(root, path, record, record_commit)
+    return []
+
+
+def _check_review_order(root: Path, path: Path, record: dict, review_commit: str) -> list[Finding]:
+    """The reviewed record is committed before its review (a review is a later, additive PR)."""
+    rel = path.relative_to(root)
+    reviewed_rel = _reviewed_path(path, record).relative_to(root)
+    reviewed_commit = _first_commit(root, "--diff-filter=A", "--", str(reviewed_rel))
+    if reviewed_commit is None:
+        return []  # a missing record is reported as record-review, an uncommitted one as ancestry
+    if reviewed_commit == review_commit:
+        return [Finding("ancestry", f"{rel} and the record it reviews are in one commit")]
+    ancestor = _git(root, "merge-base", "--is-ancestor", reviewed_commit, review_commit)
+    if ancestor.returncode != 0:
+        return [
+            Finding(
+                "ancestry", f"the commit of the record reviewed by {rel} is not an ancestor of it"
+            )
+        ]
     return []
 
 
