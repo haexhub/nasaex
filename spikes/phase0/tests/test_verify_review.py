@@ -2,10 +2,12 @@
 its pinned evidence entries and commit order."""
 
 import io
+import json
 import tarfile
 
 import pytest
 from helpers import (
+    RESULTS,
     S2_OUTCOMES,
     commit_all,
     criteria_doc,
@@ -125,6 +127,21 @@ def test_a_review_of_a_record_that_does_not_exist_is_detected(root):
     s2_with_review(root, reviewed_record="S2-20250101T000000Z-v1")
 
     assert "record-review" in checks(verify(root, only=("records",)))
+
+
+def test_a_review_of_a_non_spike_run_record_is_detected(root):
+    entry = frozen_s2(root)
+    run = s2_run_with_procedure(root, entry)
+    run_path = root / RESULTS / "S2" / run["record_id"] / "record.json"
+    run = json.loads(run_path.read_text())
+    run["kind"] = "repro"
+    run["repro_runs"] = ["run-a"]
+    run_path.write_text(json.dumps(run), encoding="utf-8")
+    write_review(root, review_doc(run, evidence=procedure_evidence()))
+
+    findings = verify(root, only=("records",))
+
+    assert any(f.check == "record-review" and "S2 spike-run" in f.message for f in findings)
 
 
 def test_a_review_naming_a_different_criteria_version_than_the_reviewed_record_is_detected(root):
