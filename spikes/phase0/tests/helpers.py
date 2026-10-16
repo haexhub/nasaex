@@ -36,7 +36,8 @@ def make_root(path: Path) -> Path:
     return path
 
 
-def criteria_doc(spike="S1", version=1, status="draft", scenarios=2):
+def criteria_doc(spike="S1", version=1, status="draft", scenarios=2, review=False):
+    """`review=True` marks S2.7 as the reviewed scenario (spike S2 with at least 7 scenarios)."""
     doc = {
         "spike": spike,
         "criteria_version": version,
@@ -59,6 +60,9 @@ def criteria_doc(spike="S1", version=1, status="draft", scenarios=2):
         }
         for n in range(1, scenarios + 1)
     ]
+    if review:
+        reviewed = doc["scenarios"][6]
+        reviewed.update(review=True, review_kind="review")
     return doc
 
 
@@ -113,6 +117,40 @@ def record_doc(spike="S1", version=1, sha="0" * 64, outcomes=None, stamp="202610
     if doc["verdict"] == "FAIL" and spike != "X1":
         doc["fallback_decision"] = "Adopt the documented fallback."
     return doc
+
+
+S2_OUTCOMES = {f"S2.{n}": "pass" for n in range(1, 8)}
+
+
+def review_doc(reviewed: dict, outcome="pass", stamp="20261023T120000Z", evidence=None):
+    """A review record for `reviewed` (an S2 spike-run record dict)."""
+    doc = {
+        "record_id": f"review-S2-{stamp}-v{reviewed['criteria_version']}",
+        "kind": "review",
+        "spike": "S2",
+        "criteria_version": reviewed["criteria_version"],
+        "criteria_sha256": reviewed["criteria_sha256"],
+        "reviewed_record": reviewed["record_id"],
+        "review": {
+            "scenario": "S2.7",
+            "outcome": outcome,
+            "reviewer": "maintainer",
+            "date": "2026-10-23T12:00:00Z",
+            "evidence": evidence or [{"path": "procedure.txt", "sha256": "b" * 64}],
+        },
+    }
+    if outcome == "fail":
+        doc["fallback_decision"] = "Adopt the documented fallback."
+    return doc
+
+
+def write_review(root: Path, doc: dict) -> Path:
+    """Write a review record: record.json only, its evidence lives in the reviewed archive."""
+    rec_dir = root / RESULTS / doc["spike"] / doc["record_id"]
+    rec_dir.mkdir(parents=True, exist_ok=True)
+    path = rec_dir / "record.json"
+    path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def write_record(root: Path, doc: dict, evidence: bytes = b"evidence") -> Path:

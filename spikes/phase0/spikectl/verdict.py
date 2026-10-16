@@ -27,8 +27,9 @@ class SpikeVerdict:
     spike: str
     criteria_version: int | None = None
     criteria_sha256: str | None = None
-    verdict: str = "none"  # PASS, FAIL or none
+    verdict: str = "none"  # PASS, FAIL, pending (derived, never stored) or none
     record_id: str | None = None
+    review_id: str | None = None
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -37,16 +38,36 @@ class SpikeVerdict:
 
 
 def _scenario_passes(scenario: dict | None) -> bool:
+    """Only gating cases count: `gating: false` is informational, an absent flag gates."""
     if scenario is None or scenario.get("outcome") != "pass":
         return False
-    return all(case.get("outcome") == "pass" for case in scenario.get("cases", []))
+    return all(
+        case.get("outcome") == "pass"
+        for case in scenario.get("cases", [])
+        if case.get("gating", True)
+    )
 
 
 def derive_verdict(criteria: dict, record: dict) -> str:
-    """PASS iff every scenario of the criteria appears in the record and passes."""
+    """The automated verdict: PASS iff every scenario of the criteria appears in the record and
+    passes (for S2.7 its automated step checks). This is what a spike-run record stores."""
     results = {scenario["id"]: scenario for scenario in record.get("scenarios", [])}
     ok = all(_scenario_passes(results.get(s["id"])) for s in criteria["scenarios"])
     return "PASS" if ok else "FAIL"
+
+
+def derive_status(criteria: dict, record: dict, review: dict | None) -> str:
+    """Spike status of one spike-run: the automated verdict combined with the review record.
+
+    A scenario with `review: true` (S2.7) needs a review record once the automated verdict is PASS:
+    `pending` while none names the run, else the review outcome. An automated FAIL (a failed
+    step check or any other failed scenario) stays FAIL: no review can overturn it."""
+    verdict = derive_verdict(criteria, record)
+    if verdict == "FAIL" or not any(s.get("review") for s in criteria["scenarios"]):
+        return verdict
+    if review is None:
+        return "pending"
+    return "PASS" if review.get("review", {}).get("outcome") == "pass" else "FAIL"
 
 
 def _record_errors(spike: str, record: dict, derived: str) -> list[str]:
@@ -63,6 +84,20 @@ def _record_errors(spike: str, record: dict, derived: str) -> list[str]:
     return errors
 
 
+def _review_for(run_id: str, reviews: list[dict], errors: list[str]) -> dict | None:
+    """The review record that applies to a run. Reviews of other runs do not apply; when several
+    name the run, a failing one stands (a failing review carries an immutable fallback_decision)."""
+    named = sorted(
+        (r for r in reviews if r.get("reviewed_record") == run_id),
+        key=lambda r: record_timestamp(r["record_id"]),
+    )
+    if len(named) > 1:
+        ids = ", ".join(r["record_id"] for r in named)
+        errors.append(f"{run_id}: more than one review record names it ({ids})")
+    failing = next((r for r in named if r.get("review", {}).get("outcome") != "pass"), None)
+    return failing or (named[-1] if named else None)
+
+
 def _current_for(root: Path, spike: str, lock) -> SpikeVerdict:
     entries = [e for e in lock if (parse_criteria_filename(e.file) or ("", 0))[0] == spike]
     if not entries:
@@ -70,33 +105,39 @@ def _current_for(root: Path, spike: str, lock) -> SpikeVerdict:
     current = max(entries, key=lambda e: e.version)
     result = SpikeVerdict(spike, current.version, current.sha256)
 
-    candidates = []
+    runs, reviews = [], []
     for path in record_paths(root):
         try:
             record = load_record(path)
         except ModelError as error:
             result.errors.append(str(error))
             continue
-        if record.get("kind") != "spike-run" or record.get("spike") != spike:
+        if record.get("kind") not in ("spike-run", "review") or record.get("spike") != spike:
             continue
         if record.get("criteria_version") != current.version:
             continue
         if record.get("criteria_sha256") != current.sha256:
             result.errors.append(f"{record['record_id']}: hash differs from the lock line")
             continue
-        candidates.append(record)
-    if not candidates:
+        (runs if record["kind"] == "spike-run" else reviews).append(record)
+    if not runs:
         return result
 
-    newest = max(candidates, key=lambda r: record_timestamp(r["record_id"]))
+    newest = max(runs, key=lambda r: record_timestamp(r["record_id"]))
     try:
         criteria = load_criteria(root / CRITERIA_DIR / current.file)
     except (ModelError, OSError) as error:
         result.errors.append(f"{current.file}: {error}")
         return result
+    review = _review_for(newest["record_id"], reviews, result.errors)
     result.record_id = newest["record_id"]
-    result.verdict = derive_verdict(criteria, newest)
-    result.errors += _record_errors(spike, newest, result.verdict)
+    result.verdict = derive_status(criteria, newest, review)
+    result.errors += _record_errors(spike, newest, derive_verdict(criteria, newest))
+    if review is not None:
+        result.review_id = review["record_id"]
+        failed = review.get("review", {}).get("outcome") != "pass"
+        if failed and not review.get("fallback_decision"):
+            result.errors.append(f"{review['record_id']}: FAIL review without fallback_decision")
     return result
 
 
@@ -126,6 +167,12 @@ def format_matrix(verdicts: dict[str, SpikeVerdict]) -> str:
     lines.append(
         "X1 not run (optional, non-gating)" if x1 == "none" else f"X1 {x1} (optional, non-gating)"
     )
+    for verdict in verdicts.values():
+        if verdict.verdict == "pending":
+            lines.append(
+                f"{verdict.spike} pending: automated checks pass, the review record is missing; "
+                "no ADR gate may be applied"
+            )
     for verdict in verdicts.values():
         lines += [f"ERROR {verdict.spike}: {error}" for error in verdict.errors]
     return "\n".join(lines)
