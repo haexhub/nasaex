@@ -62,8 +62,9 @@ build; deterministic fault points only (FR-010); no committed host paths, secret
 no product code.
 
 **Scale/Scope**: 5 gating spikes and the optional X1; 44 gating acceptance scenarios (11+9+9+7+8)
-plus 10 optional X1 scenarios; S3 enumerates 19 crash points (contracts/mover-steps.md), each in 2
-kill modes (38 cases); topology profiles `large` (S1) and `small` (S2-S4), one single-machine
+plus 10 optional X1 scenarios; S3 enumerates 19 crash points (6 boundaries and 13 mid-step points, listed in
+contracts/mover-steps.md), each in 2 kill modes (38 cases), plus 8 named fault and injection points that are not
+crash points; topology profiles `large` (S1) and `small` (S2-S4), one single-machine
 topology for S5, and the `x1` profile (the `large` disks with the overlay stack) for X1.
 
 ## Decisions at a glance
@@ -78,7 +79,7 @@ Rationale, alternatives and sources for each are in [research.md](research.md) (
 | Disks | `emptyDiskImages` with stable serials; `large` profile (S1: pool 2x8 GiB, archive 6/10/4 GiB btrfs, parity 12 GiB ext4) and `small` profile (S2-S4); sparse qcow2 [D3] |
 | SMB client | Second VM with `mount.cifs` plus `smbclient`; minimal smb.conf [D4] |
 | Fault injection | `machine.crash()` (QEMU process termination; host-power-loss semantics unverified), in-guest `kill -9` while blocked at a hook, QEMU `device_del`/`drive_del` for device failure, filler file for out-of-space, guest-side byte flips for corruption; all at named points [D5] |
-| Mover hooks | Throwaway reference mover (five steps, 19 points) calls blocking `spike_hook <point>`; host kills at the point; every durable effect is a point; the stock `rsync --remove-source-files` mover is a mandatory negative control [D6, D7] |
+| Mover hooks | Throwaway reference mover (five steps, 19 points; idle-file selection, no lock that clients must honour, compare-and-delete at M5) calls blocking `spike_hook <point>`; host kills at the point or injects a client write; every durable effect is a point; the stock `rsync --remove-source-files` mover is a mandatory negative control [D6, D7] |
 | Oracle | Host-side seeded fixtures give expected manifests; observed state read from share and raw layers; parity coverage proven by device-failure drill on a copied machine state; S2 predictions at block granularity; negative controls validate the oracle [D7] |
 | Criteria and records | YAML in `docs/phase0/criteria/`, append-only `frozen.lock` (SHA-256), versioned amendments, JSON records plus `evidence.tar.xz` in `docs/phase0/results/<spike>/<record-id>/` [D8] |
 | ADR gate | Tool never edits ADRs; records land by PR; a separate reviewed docs PR changes ADR status; `spikectl verify` checks it in CI; X1 is never a gate input [D9] |
@@ -197,7 +198,8 @@ never lives under `spikes/`.
 - [contracts/criteria.schema.json](contracts/criteria.schema.json): schema of a criteria file.
 - [contracts/result-record.schema.json](contracts/result-record.schema.json): schema of a result record.
 - [contracts/mover-steps.md](contracts/mover-steps.md): the five mover steps (19 crash points,
-  38 cases), their durable effects, postconditions and the named hook points; the artifact the
+  38 cases, enumerated in the contract), selection, copy-time identity and metadata preservation, their durable
+  effects, postconditions and the named hook, fault and injection points; the artifact the
   product mover will later implement (spec assumption).
 - [contracts/fault-points.md](contracts/fault-points.md): the fault kinds, how each is
   triggered and what the harness guarantees about each.

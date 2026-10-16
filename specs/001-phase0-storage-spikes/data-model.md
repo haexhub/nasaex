@@ -84,7 +84,7 @@ The frozen wording of one spike's scenarios.
 | `scenarios` | List of Acceptance scenarios; ids unique; at least the scenarios required by the FRs listed per spike in the spec (FR-012, FR-015, FR-018, FR-023, FR-027; FR-033 for X1) |
 | `fallback` | Fallback decision text for S1 to S5 (FR-031); X1 has no fallback |
 | `amends`, `reason`, `date` | Required for versions >= 2: previous version, why, when (FR-004) |
-| `tables` | Data tables the checks read: S2 recoverability predictions (plain and snapshot variant), S4 degraded-state table, S3 crash-point list (19 points) |
+| `tables` | Data tables the checks read: S2 recoverability predictions (plain and snapshot variant), S4 degraded-state table, S3 crash-point list (19 points, enumerated in the mover contract) and the minimum-age parameter of the mover's selection |
 | `changelog` | Pre-freeze edit notes (plan open item O2) |
 
 Frozen identity: the triple (`file`, `version`, SHA-256 of the file bytes) recorded as a line
@@ -104,14 +104,14 @@ The outcome of one run of one spike. Immutable once committed. Fields (full sche
 | `environment` | Environment revision: repository commit, `flake.lock` SHA-256, nixpkgs revision, tool versions observed inside the guest, topology profile, host class descriptor (CPU model class, vCPU count, memory), QEMU version, KVM yes/no, kernel config pre-flight results |
 | `date` | UTC start and end |
 | `scenarios` | Per scenario: `id`, `outcome`, `cases` (id, outcome, `gating` flag, fault point, kill mode), `evidence` (paths inside the evidence archive, SHA-256), `notes` |
-| `verdict` | `PASS` or `FAIL` for a run record; derived only from scenario outcomes. The S2 spike status can additionally be `pending` (derived, never stored) while its review sub-record is absent |
-| `fallback_decision` | Required on `FAIL` for S1 to S5: which fallback applies (FR-007); omitted for X1, which has no fallback |
-| `coverage` | Counts for SC-005 (crash points enumerated, executed, per kill mode; 19 points, 38 cases as currently enumerated), prediction comparisons for SC-006, transitions for SC-007, durations for SC-008 |
+| `verdict` | `PASS` or `FAIL` for a run record; derived only from scenario outcomes. The S2 spike status can additionally be `pending` (derived, never stored) only while automated S2.7 checks pass and its review sub-record is absent |
+| `fallback_decision` | Required on `FAIL` for S1 to S5, including a failing S2 review record: which fallback applies (FR-007); omitted for X1, which has no fallback |
+| `coverage` | Counts for SC-005 (crash points enumerated, executed, per kill mode; 19 points, 38 cases as enumerated in the mover contract; the named fault and injection points are not counted), prediction comparisons for SC-006, transitions for SC-007, durations for SC-008 |
 | `required_settings` | Mount or share settings found necessary (FR-013: create policy, branch modes, out-of-space settings, rename setting), the procedure for branch changes made directly by the mover (S1.10), written recovery procedure reference (S2.7) |
 | `residual_risk` | Fixed statements, at least: device-level volatile caches not emulated, virtual disks stand in for real disks |
 | `supersedes` | Optional record id of an earlier record this run re-runs after a documented design correction (never deletes the earlier one) |
 | `evidence_archive` | Path of `evidence.tar.xz` and its SHA-256 |
-| `reviewed_record`, `review` | `kind: review` only (`spike` is `S2`, `record_id` has the prefix `review-S2-`): `reviewed_record` is the id of the S2 `spike-run` record it judges; `review` holds `scenario` (`S2.7`), `outcome` (`pass` or `fail`), `reviewer`, `date`, `evidence` (entries of the reviewed record's evidence archive that were read, pinned by SHA-256) and optional `notes`. It carries the criteria version and hash of the reviewed record but none of the run fields (`environment`, `scenarios`, `verdict`, `evidence_archive`, ...) |
+| `reviewed_record`, `review` | `kind: review` only (`spike` is `S2`, `record_id` has the prefix `review-S2-`): `reviewed_record` is the id of the S2 `spike-run` record it judges; `review` holds `scenario` (`S2.7`), `outcome` (`pass` or `fail`), `reviewer`, `date`, `evidence` (entries of the reviewed record's evidence archive that were read, pinned by SHA-256) and optional `notes`. A failing review also carries `fallback_decision`. It carries the criteria version and hash of the reviewed record but none of the other run fields (`environment`, `scenarios`, `verdict`, `evidence_archive`, ...) |
 
 Validation rules: the criteria version named must be `frozen`; `verdict` equals `PASS` iff every
 scenario of that criteria version appears with outcome `pass` (variant cases with `gating: false` and the
@@ -171,7 +171,8 @@ write through share (new files and in-place changes to archived files), sync, sc
 
 The five steps (copy, checksum, sync, verification, pool copy removal) and their hook points; defined
 in [contracts/mover-steps.md](contracts/mover-steps.md); S3 enumerates crash points from it (19 points,
-38 cases). A change after Phase 0 reopens S3 (spec assumption). There are no whiteout steps in the
+38 cases). Beyond the five steps it defines the selection (minimum age, no open handle), the copy-time
+identity compared at M2 and M5, and no lock that clients must honour. A change after Phase 0 reopens S3 (spec assumption). There are no whiteout steps in the
 baseline.
 
 ## Relationships
@@ -201,7 +202,11 @@ Spike verdict (derived):
 
 ```text
 no record for current version --> none
-record for current version, all scenarios pass --> PASS (S2: pending until the S2.7 review sub-record exists)
+S2 record with a failed automated S2.7 check --> FAIL (a later review cannot override it)
+S2 record with automated S2.7 checks pass and no review --> pending
+S2 record with automated S2.7 checks pass and a passing review, all other scenarios pass --> PASS
+S2 record with automated S2.7 checks pass and a failing review --> FAIL (fallback_decision required)
+record for current version, all scenarios pass --> PASS
 record for current version, any other outcome --> FAIL (fallback_decision required for S1 to S5)
 new criteria version frozen --> none (old verdicts void)
 ```
