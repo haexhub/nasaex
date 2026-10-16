@@ -52,8 +52,9 @@ Hosts without KVM are unsupported (spec FR-011 assumption).
 **Project Type**: test, specification and decision artifacts (no product component).
 
 **Performance Goals**: full suite within 2 hours on the reference runner (SC-009, initial target);
-S5 rebuild-duration thresholds as fixed in the spec (median <= 5 min PASS, <= 15 min PASS with
-asynchronous-apply requirement, above FAIL).
+S5 rebuild-duration thresholds apply to each named change class separately: if every warm-store median
+is <= 5 min the result is PASS, if any median is > 5 min and none is > 15 min the result is PASS with
+an asynchronous-apply requirement, and if any median is > 15 min the result is FAIL.
 
 **Constraints**: no network inside VMs; clean machine state on every run; no verdict from a cached
 build; deterministic fault points only (FR-010); no committed host paths, secrets or personal data;
@@ -212,7 +213,7 @@ never lives under `spikes/`.
 | O6 | The degraded lock mechanism is a design choice that S4 itself tests. | Start with read-only remount of archive and parity filesystems plus a status layer (D11); a different mechanism after a FAIL is an S4 re-run. |
 | O7 | nixpkgs channel. | `nixos-26.05` (stable) at the committed lock; unstable is the alternative. The stable branch moving on does not affect the pin. |
 | O8 | S5 harness feasibility (tmpfs root, bootloader, local writable store, offline rebuild). | First S5 task is a feasibility probe; the documented fallback records which part of ADR-0004 was reproduced. |
-| O9 | Which mergerfs `passthrough.io` and cache settings the S1 criteria test; the spec names only the create policy, branch modes and out-of-space behaviour. | Baseline `passthrough.io=off` and `cache.files=off` (defaults); one additional S1 run with `passthrough.io=rw` and `cache.files=auto-full` for the large-file and rename scenarios, so the product module can choose with evidence. X1 additionally tests the FUSE stacking depth at its default, `0` and `2`. |
+| O9 | Which mergerfs `passthrough.io` and cache settings the S1 criteria test; the spec names only the create policy, branch modes and out-of-space behaviour. | Baseline `passthrough.io=off` and `cache.files=off` (defaults); informational variants with `passthrough.io=rw` and `cache.files=auto-full` for the large-file and rename scenarios, so the product module can choose with evidence. Only the baseline gates S1. X1 additionally tests the FUSE stacking depth at its default, `0` and `2`. |
 | O10 | PR #3 is already merged (rebase merge, head `f256c54`); the branch contains the rebased clarification commit and the remaining plan commit. | Keep PR #4 as the delivery vehicle for these commits; no rebase/cherry-pick or second PR is needed. |
 | O11 | `.specify/memory/constitution.md` is an unfilled template (finding F8). | Either fill it (`/speckit-constitution`) or state that the spaex constitution is the only gate. |
 | O12 | SMB client details (which commands expose DOS attributes and xattrs, smb.conf keys) are UNVERIFIED. | Settled in the S1 criteria task through a shakedown, recorded as required settings (FR-013). |

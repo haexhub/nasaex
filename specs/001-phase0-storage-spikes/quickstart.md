@@ -13,7 +13,8 @@ real in the implementation phase. Contracts: [criteria schema](contracts/criteri
   your user. Without KVM the suite refuses to run (no emulated fallback).
 - Nix with the `nix-command` and `flakes` features enabled.
 - Free disk space for the state directory (reference runner: >= 100 GiB, on a disk, not a tmpfs) and
-  >= 32 GiB RAM for the concurrent schedule. Sizing is a recommendation (plan open item O1).
+  enough available RAM for the configured aggregate VM budget (8 GiB by default). The budget is
+  configurable and the runner refuses to overcommit it; sizing is documented in plan open item O1.
 - No network is needed inside the VMs; the host needs access to the pinned inputs once.
 
 ## Scenario 1: static checks (no KVM, seconds to minutes)
@@ -67,7 +68,7 @@ Expected, unattended, on the reference runner within the 2-hour target (SC-009):
 5. The verdict matrix is printed:
 
 ```text
-S1 PASS  S2 PASS  S3 PASS  S4 PASS  S5 PASS
+S1 PASS  S2 pending  S3 PASS  S4 PASS  S5 PASS
 ADR-0002 eligible: yes (S1..S4 PASS)   ADR-0005 eligible: yes (S5 PASS)
 X1 not run (optional, non-gating)
 ```
@@ -99,11 +100,12 @@ is the default and changes nothing: no ADR, no S1 to S5 verdict and no suite bud
 
 ## Scenario 6: a FAIL is a result
 
-Run a spike against a deliberately broken input (a known-bad mover variant from `controls/`, for example the
-stock mover that deletes its source right after the copy). Expected:
-the affected scenario is `fail`, the verdict is `FAIL`, and for S1 to S5 the record carries the fallback
-decision named in the criteria. The evidence archive contains the oracle's expected and observed manifests, and
-`spikectl verify` refuses an ADR change to `accepted` while that record is the current one.
+Run a spike against a deliberately broken input (a known-bad mover variant from `controls/`, other than the
+mandatory stock negative control). Expected: the affected scenario is `fail`, the verdict is `FAIL`, and for
+S1 to S5 the record carries the fallback decision named in the criteria. The evidence archive contains the
+oracle's expected and observed manifests, and `spikectl verify` refuses an ADR change to `accepted` while
+that record is the current one. If the mandatory stock control is not flagged `fail`, the run is instead
+invalid: no record is written and S3 has no verdict.
 
 ## Scenario 7: from verdict to ADR
 

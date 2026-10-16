@@ -48,7 +48,7 @@ Decisions taken by the maintainer on 2026-10-16 (no open questions were asked; e
   - A **clear** or **defined error** is a named errno together with the corresponding SMB status as seen by the client: `ENOSPC` for out of space, `EROFS` for a refused write to a read-only layer, `EIO` where a device error is injected. The criteria name the SMB status of each case.
   - A **bounded time** (and "nothing hangs") is a numeric bound that the criteria MUST fix before the freeze. The initial defaults are 30 s for a client operation and 5 s for a client write during the mover's sync step; both are initial targets, not derived from measurements.
   - The **same view** means an identical manifest of path, type, size, mtime, mode and content hash before and after a mover run.
-- **Recorded result.** Every run produces a result record kept in version control next to the criteria: spike, criteria version, environment revision, date, per-scenario outcome, evidence reference and verdict. A failed S1 to S5 record also carries the applicable fallback decision; X1 has no fallback.
+- **Recorded result.** Every valid record-mode run produces a result record kept in version control next to the criteria: spike, criteria version, environment revision, date, per-scenario outcome, evidence reference and verdict. Shakedown runs and invalid runs caused by a harness defect produce no record. A failed S1 to S5 record also carries the applicable fallback decision; X1 has no fallback.
 - **Re-runs.** After a documented design correction a spike may be re-run. A failed run is never deleted; the new run is a new record that references the earlier one.
 - **ADR gate.** ADR-0002 moves from proposed to accepted only when S1, S2, S3 and S4 all PASS. ADR-0005 moves from proposed to accepted only when S5 PASSES. If a gating spike FAILS, the ADR stays proposed until the documented fallback has been adopted and the ADR text updated to say so. While a gating spike's verdict is `pending` or `none`, no ADR gate may be applied. X1 never gates an ADR: it may be run or skipped, and neither its verdict nor its absence changes any ADR status.
 
@@ -250,7 +250,7 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 
 - **FR-001**: The project MUST have written acceptance criteria for each of S1 to S5 (and for X1 if it is run), committed before the first run of that spike, with each scenario carrying a stable identifier, a precondition, an action and an observable, checkable expected outcome.
 - **FR-002**: Every acceptance scenario MUST be judged by an automated check that yields pass or fail without human interpretation. The only exception is the review judgement of the written recovery procedure of S2 scenario 7: its step checks are automated, and the judgement is carried by a separate reviewed sub-record (kind review, committed through a PR) that sets S2.7 to `pass` or `fail`. Until that sub-record exists the S2 verdict is `pending` and no ADR gate may be applied.
-- **FR-003**: Every spike MUST end in a PASS or FAIL verdict under the verdict model above, recorded in a result record kept in version control.
+- **FR-003**: Every valid record-mode run of a spike MUST produce a result record in version control. A completed spike MUST end in a PASS or FAIL verdict under the verdict model above; S2 is `pending` between its run record and the reviewed sub-record for S2.7, and an invalid run caused by a harness defect produces no verdict.
 - **FR-004**: A criteria amendment after a first run MUST be recorded with its reason and MUST invalidate the verdict obtained under the earlier wording.
 - **FR-005**: Each result record MUST identify the exact environment inputs (the pinned revisions of the operating system and tools) so the run can be reproduced.
 - **FR-006**: ADR-0002 MUST NOT be marked accepted unless S1, S2, S3 and S4 all have a PASS record; ADR-0005 MUST NOT be marked accepted unless S5 has a PASS record. The accepted ADR MUST reference those records.
@@ -316,7 +316,7 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 ### Key Entities
 
 - **Spike**: one of S1 to S5, or the optional experiment X1; has a name, frozen criteria, scenarios, and zero or more result records. Only S1 to S5 can gate an ADR.
-- **Acceptance scenario**: a precondition, an action and an observable expected outcome with a stable identifier; judged pass or fail automatically.
+- **Acceptance scenario**: a precondition, an action and an observable expected outcome with a stable identifier; judged pass or fail automatically, except for the reviewed judgement of S2.7 after its automated step checks.
 - **Criteria version**: the frozen wording of a spike's scenarios; amendments create a new version and void earlier verdicts.
 - **Result record**: the outcome of one record-mode run of one spike: criteria version, environment revision, date, per-scenario outcome (variant outcomes marked `gating: false` in the evidence and case list), evidence reference and verdict; failed S1 to S5 records also carry a fallback decision. The reviewed sub-record (kind review) of S2.7 is a separate record that references the S2 record.
 - **Verdict**: PASS or FAIL for a spike, derived only from its scenario outcomes; `pending` for S2 until the reviewed sub-record of S2.7 exists, `none` while no valid record exists.
