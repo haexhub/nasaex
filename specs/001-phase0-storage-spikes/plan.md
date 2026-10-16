@@ -62,8 +62,8 @@ build; deterministic fault points only (FR-010); no committed host paths, secret
 no product code.
 
 **Scale/Scope**: 5 gating spikes and the optional X1; 44 gating acceptance scenarios (11+9+9+7+8)
-plus 10 optional X1 scenarios; S3 enumerates 19 crash points (6 boundaries and 13 mid-step points, listed in
-contracts/mover-steps.md), each in 2 kill modes (38 cases), plus 8 named fault and injection points that are not
+plus 10 optional X1 scenarios; S3 enumerates 21 crash points (6 boundaries and 15 mid-step points, listed in
+contracts/mover-steps.md), each in 2 kill modes (42 cases), plus 10 named fault and injection points that are not
 crash points; topology profiles `large` (S1) and `small` (S2-S4), one single-machine
 topology for S5, and the `x1` profile (the `large` disks with the overlay stack) for X1.
 
@@ -79,7 +79,7 @@ Rationale, alternatives and sources for each are in [research.md](research.md) (
 | Disks | `emptyDiskImages` with stable serials; `large` profile (S1: pool 2x8 GiB, archive 6/10/4 GiB btrfs, parity 12 GiB ext4) and `small` profile (S2-S4); sparse qcow2 [D3] |
 | SMB client | Second VM with `mount.cifs` plus `smbclient`; minimal smb.conf [D4] |
 | Fault injection | `machine.crash()` (QEMU process termination; host-power-loss semantics unverified), in-guest `kill -9` while blocked at a hook, QEMU `device_del`/`drive_del` for device failure, filler file for out-of-space, guest-side byte flips for corruption; all at named points [D5] |
-| Mover hooks | Throwaway reference mover (five steps, 19 points; idle-file selection, no lock that clients must honour, compare-and-delete at M5) calls blocking `spike_hook <point>`; host kills at the point or injects a client write; every durable effect is a point; the stock `rsync --remove-source-files` mover is a mandatory negative control [D6, D7] |
+| Mover hooks | Throwaway reference mover (five steps, 21 points; idle-file selection, no lock that clients must honour, compare-and-delete at M5, and a trash move at M5 for a selected pool file that a client deleted: the archive copy goes into a trash directory beside the branch directory on the same archive disk, expected to be hidden from the pool view, UNVERIFIED) calls blocking `spike_hook <point>`; host kills at the point or injects a client write or delete; every durable effect is a point; the stock `rsync --remove-source-files` mover is a mandatory negative control [D6, D7] |
 | Oracle | Host-side seeded fixtures give expected manifests; observed state read from share and raw layers; parity coverage proven by device-failure drill on a copied machine state; S2 predictions at block granularity; negative controls validate the oracle [D7] |
 | Criteria and records | YAML in `docs/phase0/criteria/`, append-only `frozen.lock` (SHA-256), versioned amendments, JSON records plus `evidence.tar.xz` in `docs/phase0/results/<spike>/<record-id>/` [D8] |
 | ADR gate | Tool never edits ADRs; records land by PR; a separate reviewed docs PR changes ADR status; `spikectl verify` checks it in CI; X1 is never a gate input [D9] |
@@ -87,7 +87,7 @@ Rationale, alternatives and sources for each are in [research.md](research.md) (
 | Degraded locks | Kernel-enforced read-only remount of archive and parity filesystems plus a status/refusal layer [D11] |
 | Layout and flake | Scaffolding only under `spikes/phase0/`; decisions under `docs/phase0/`; apps `suite`, `s1..s5`, `x1` (optional), `controls`, `spikectl`; cheap `checks` without KVM [D12] |
 | Entry point | `nix run ./spikes/phase0#suite -- --mode record [--repeat 3] [--include-x1]`; `shakedown` mode never records [D13] |
-| CI | `static` (no KVM), `suite` (KVM runner where one exists, dispatch/label, shakedown by default), `repro` (optional, three chained clean jobs); record runs are local on the reference runner (spec, "Reference runner"); actions pinned by SHA; budget table in research (adjusted 2026-10-15, S3 has 38 cases instead of 68), S3 sharded [D14] |
+| CI | `static` (no KVM), `suite` (KVM runner where one exists, dispatch/label, shakedown by default), `repro` (optional, three chained clean jobs); record runs are local on the reference runner (spec, "Reference runner"); actions pinned by SHA; budget table in research (adjusted 2026-10-15 for an S3 matrix of 38 cases instead of 68; the matrix is now 42 cases, which the shakedown re-measures), S3 sharded [D14] |
 | Reproducibility | `--repeat 3` from clean state, per-scenario comparison, any difference is `flaky` = FAIL [D13] |
 
 ## Constitution Check
@@ -107,10 +107,10 @@ to a Phase 0 consisting of docs, Nix, Python and shell are listed once.
 | No secrets in git; no committed paths that assume one OS layout (home-directory style paths of any OS) | Pass | Contracts forbid host paths, user names and host names in records; the sanitiser strips them from evidence; `spikectl verify` scans committed docs and records for them. Guest paths (`/mnt/...`) are VM-internal. |
 | Cross-repo references use repository + full commit SHA + path | Pass | Upstream sources in research are pinned by SHA (research section 1); nixpkgs by full SHA and lock. Living documents (btrfs docs, SnapRAID manual URL) are cited as such and cross-checked with the pinned source where possible. |
 | Phasing discipline: later phases not implemented before prerequisites | Pass | Only Phase 0; no backend, API, UI or module code. The mover, lock and apply scripts are scaffolding and say so. |
-| Design decisions materially affecting a Core Principle need an ADR | Pass | No Core Principle of this constitution is affected by plan decisions. The storage baseline change of 2026-10-15 is recorded in ADR-0002 (same PR). The ADR-affecting outcomes (accept or fallback) are produced by the gate, not by the plan. |
+| Design decisions materially affecting a Core Principle need an ADR | Pass | The storage baseline and the client-delete trash decision are recorded in ADR-0002. The ADR-affecting outcomes (accept or fallback) are produced by the gate, not by the plan. |
 | `/speckit-plan` checks the plan against the constitution; conflicts resolved by changing the plan | Pass | This section; no conflict found; no exception granted. |
 | Follow the workflow `.specify/workflows/speckit/workflow.yml` | Pass | Specify, review-spec, plan done; stops at the `review-plan` gate; tasks and implement not run. The baseline change is a review-fix response on the open PR #4, for which freehand edits of the documents are permitted; no tasks were generated and no code was written. |
-| Add or update tests with behavior changes; run formatter, static checks and relevant tests; report what was run | Pass at implementation | `checks.oracle-unit`, `checks.formatting`, `checks.criteria`, `checks.records` and the negative controls exist for exactly this. Nothing is runnable at plan stage; this plan changes only Markdown and JSON schemas. |
+| Add or update tests with behavior changes; run formatter, static checks and relevant tests; report what was run | Pass at implementation | This contract-only amendment has no runtime implementation to test. The new oracle tests, concurrent-delete probe and S3 checks are scheduled before the harness tasks that rely on them (`T018a`, `T019a`, `T037c`, `T098a`); `spikectl verify` is the runnable check for this docs change. |
 | Test code in files separate from production code | Pass | There is no production code. Inside `spikes/phase0/`, test scripts, oracle, fixtures and in-VM scaffolding are separate files. |
 | Hand-maintained file clearly over 500 LoC must be split or justified | Pass at implementation | Layout splits per spike and per concern; implementation tasks must keep files under the bound. `spec.md` and `research.md` are documents. |
 | Graphify-first authoring before new named functions, classes, modules, CLI commands | Applies at implementation | The plan authors no code. Every implementation task that introduces a named function, module or CLI command (`spikectl` subcommands, `spikelib` modules) must first consult `graphify` and record the candidates evaluated. The current graph is docs-only, so the expected outcome is "no candidate". |
@@ -197,8 +197,8 @@ never lives under `spikes/`.
   Degraded-state table) with fields, validation rules and state transitions.
 - [contracts/criteria.schema.json](contracts/criteria.schema.json): schema of a criteria file.
 - [contracts/result-record.schema.json](contracts/result-record.schema.json): schema of a result record.
-- [contracts/mover-steps.md](contracts/mover-steps.md): the five mover steps (19 crash points,
-  38 cases, enumerated in the contract), selection, copy-time identity and metadata preservation, their durable
+- [contracts/mover-steps.md](contracts/mover-steps.md): the five mover steps (21 crash points,
+  42 cases, enumerated in the contract), selection, copy-time identity, the trash handling of client-deleted files and metadata preservation, their durable
   effects, postconditions and the named hook, fault and injection points; the artifact the
   product mover will later implement (spec assumption).
 - [contracts/fault-points.md](contracts/fault-points.md): the fault kinds, how each is
@@ -225,6 +225,7 @@ never lives under `spikes/`.
 | O14 | Fidelity of power-off: device-level volatile write caches are not emulated. | Accepted as residual risk, stated in every record. Optional hardening later: replay-based crash testing (for example `dm-log-writes`) as a separate, later spike. |
 | O15 | Snapshot tooling for the archive: `snapraid-btrfs` (with `snapper`, external, works with SnapRAID 14.x, not in nixpkgs at the pin), `btrfssnapraid` (external, last push 2023-12-13), or the native `snapshot` option of SnapRAID 15.0 (release candidate `v15.0rc2`, not at the pin). All UNVERIFIED in practice (research 7.3, F12). | Default: `snapraid-btrfs` with `snapper` at the pinned SnapRAID 14.x, fetched by pinned upstream revision (flake input) and wrapped by the harness's sync/fix helper. Re-judge the native v15 option after v15 is released; S2 scenario 9 measures whichever is selected. The choice is a plan decision, not a spec change; a switch before the S2 criteria are frozen is a normal pre-freeze edit. **Decided 2026-10-15: the default is adopted.** |
 | O16 | Create policy and cache pool settings: `ff` or `lus` (mergerfs names `ff`, `lus` and `lfs` for a cache pool), whether archive branches are `NC`, `moveonenospc`, `minfreespace` (research F10, 7.2). | Default: `ff`, archive branches `NC`, `moveonenospc=false`, explicit low `minfreespace`. S1 scenario 2 gates on `ff`, and `lus` is an informational variant (`gating: false`); S1 scenarios 2 and 9 record what is required (FR-013). With only one create-eligible branch the two policies behave the same, so `lus` only matters if `NC` is dropped. **Decided 2026-10-15: the default is adopted.** |
+| O17 | Where the mover puts the archive copy of a pool file that a client deleted after selection (maintainer decision 2026-10-16/17): the stale archive copy would make the file reappear through the share, and deleting it would lose a file that vanished through a device error. | Trash directory on the same archive disk, beside the branch directory inside the data subvolume, so that it is outside every pool branch (expected hidden from both pool views, UNVERIFIED) and a rename into it stays in one subvolume (a rename across btrfs subvolumes is not expected to work, UNVERIFIED). S1 scenario 1 proves the exclusion, S3 scenario 7 (e) the move; the retention period is an S3 criteria parameter and purging is out of Phase 0. Known limits (a visible window until the trash move, a crash before the move is durable) are recorded as S3 findings, see the mover contract. If the exclusion or the rename does not hold, the layout is corrected before the S1 and S3 criteria freeze. |
 
 ## Complexity Tracking
 
@@ -233,7 +234,8 @@ No constitution violation; nothing to justify.
 ## Post-design Constitution re-check
 
 After `data-model.md`, `contracts/` and `quickstart.md`, and again after the baseline change of
-2026-10-15: no new principle is engaged. The record schema
+2026-10-15 and the client-delete trash amendment: the new data-safety decision is recorded in
+ADR-0002. The record schema
 excludes host paths, user names and host names by construction (fields hold identifiers and hashes);
 the sanitiser and verifier enforce it for free text. The plan adds no abstraction beyond `spikectl`'s
 four verbs, and the mover and lock scripts are explicitly scaffolding. **PASS.**
