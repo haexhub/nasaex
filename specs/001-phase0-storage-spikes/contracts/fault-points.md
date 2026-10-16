@@ -21,17 +21,39 @@ implementation tasks (research section 6).
 | `enospc` | Filler file leaves a defined number of free bytes on the target filesystem | `ENOSPC` on the next large write | Deterministic; no special device. For S1 scenario 9 the share's `minfreespace` is set below the free bytes left, so that the write reaches the pool branch and fails there (research F10) |
 | `kill-sync-at-position` | Wait until the `snapraid -l` log shows `run:pos:<block>` with block >= K, then `kill` | A SnapRAID sync dies after at least K blocks were processed | Flush frequency of the log lines UNVERIFIED; the S2.4 prediction is evaluated against what the kill left (research 3.4), separately for the plain and the snapshot variant; with the snapshot tooling the kill also leaves an incomplete snapshot set whose handling is part of the result (research 7.3) |
 | `sync-limited` | `snapraid sync -S <start> -B <count>` | A sync that processes only a block range and ends normally | Deterministic stand-in for "stopped after K blocks" |
-| `concurrent-modify` | Client-side append or rewrite of a pool file at a hook, acquiring the mover's source-version lock first | The write waits for the mover's lock, then creates a newer pool version | Used by S3.7; direct writes that bypass the lock are outside the baseline contract |
+| `concurrent-modify` | Client-side append or rewrite of the pool file of item 1 through the share at a hook, with no mover-side lock (a lock of the mover cannot bind SMB clients, so none exists); the harness measures the time the write takes to complete | The write is never held back by the mover and creates a newer pool version (new ctime and size, or a new inode) | Used by S3.7 at the four `inject:modify-pool-*` points of the mover contract. At `inject:modify-pool-during:M3` the host pauses the sync process with a stop signal at the `sync-pos` position (named, not timed) so that the write provably overlaps M3, then resumes it; the pause method is UNVERIFIED until probed. A write that has not completed within the bound (initial target 5 s) while the sync is paused counts as having waited through M3 |
 
 ## Point namespaces
 
 | Namespace | Defined in | Examples |
 | --- | --- | --- |
 | Mover boundaries and mid-step points | [mover-steps.md](mover-steps.md) | `post:M5`, `mid:M1:tmp-partial` |
-| Mover faults, injections and the negative-control variant | [mover-steps.md](mover-steps.md) | `fault:M3:parity-write-fail`, `inject:modify-pool-after:M2`, `control:stock-remove-source` |
+| Mover faults, injections and the negative-control variant | [mover-steps.md](mover-steps.md) | `fault:M3:parity-write-fail`, `inject:modify-pool-during:M3`, `inject:modify-pool-at:M5:residual-window`, `control:stock-remove-source` |
 | SnapRAID sync (S2.4) | criteria file S2 | `sync:pos:<K>` for K in the frozen list |
 | Disk lifecycle (S2, S4) | criteria files S2, S4 | `disk:<serial>:fail`, `disk:<serial>:replace`, `boot:after-failure` |
 | Fixture states (S1) | criteria file S1 | `pool:free:<bytes>` for the out-of-space new write |
+
+## M5 residual-window fault point
+
+`inject:modify-pool-at:M5:residual-window` is armed on the hook `mid:M5:item-validated`, which the mover
+reaches for item 1 after its final identity check (ctime, size, inode against the copy-time values) passed
+and before it unlinks the pool copy. The same hook is also a crash point of the mover contract; as an
+injection point it does the following, in this order, never after a timed delay:
+
+1. The host waits for `reached/mid:M5:item-validated`. The mover is blocked between the final check and the
+   unlink.
+2. The host performs a client write through the share to the pool path of item 1 (an append of a known
+   byte pattern, so that the final content is predictable) and waits for it to complete. No lock exists, so
+   it completes; its completion and the acknowledged bytes are recorded.
+3. The host releases `go/mid:M5:item-validated`. The mover unlinks the pool copy it validated, completes
+   the run and exits.
+4. The oracle then runs one further mover run and searches the pool and the archive for the final content
+   of item 1 (the original bytes plus the appended pattern, by hash). The case records `data_lost: true` if
+   that content exists nowhere, otherwise `data_lost: false`, together with the observed placement.
+
+The outcome is recorded either way. `data_lost: true` fails scenario S3.7 (d), S3 FAILS, and the record names
+the rename-to-quarantine-and-recheck protocol as the fallback (spec FR-031). A `poweroff` or `kill` at the
+same hook is a separate crash case (`S3.2:mid:M5:item-validated:<mode>`) and is not an injection.
 
 ## Rules
 
