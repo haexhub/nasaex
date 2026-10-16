@@ -2,20 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "nasaex/phase0/result-record.schema.json",
   "title": "Phase 0 result record",
-  "description": "docs/phase0/results/<spike>/<record-id>/record.json (spike S1 to S5, or the optional non-gating X1). Immutable once committed. Contains identifiers and hashes only; no absolute host paths, user names or host names.",
+  "description": "docs/phase0/results/<spike>/<record-id>/record.json (spike S1 to S5, or the optional non-gating X1). Immutable once committed. Contains identifiers and hashes only; no absolute host paths, user names or host names. Three kinds: spike-run and repro (the outcome of runs) and review (the reviewed judgement of S2.7, see the kind review rule below). The status pending is never stored: the verdict of a spike-run record stays PASS or FAIL, and the spike status pending is derived by the tooling from the absence of a review record (data-model.md, Acceptance scenario).",
   "type": "object",
-  "required": [
-    "record_id", "kind", "spike", "criteria_version", "criteria_sha256", "environment",
-    "date", "scenarios", "verdict", "residual_risk", "evidence_archive"
-  ],
+  "required": ["record_id", "kind", "spike", "criteria_version", "criteria_sha256"],
   "additionalProperties": false,
   "properties": {
     "record_id": {
       "type": "string",
-      "pattern": "^((S[1-5]|X1)|repro-(S[1-5]|X1))-[0-9]{8}T[0-9]{6}Z-v[0-9]+$",
-      "description": "<spike>-<UTC timestamp, basic format>-v<criteria version>; repro records use the repro- prefix."
+      "pattern": "^((S[1-5]|X1)|repro-(S[1-5]|X1)|review-S2)-[0-9]{8}T[0-9]{6}Z-v[0-9]+$",
+      "description": "<spike>-<UTC timestamp, basic format>-v<criteria version>; repro records use the repro- prefix, review records the review-S2- prefix."
     },
-    "kind": { "enum": ["spike-run", "repro"] },
+    "kind": { "enum": ["spike-run", "repro", "review"] },
     "spike": { "enum": ["S1", "S2", "S3", "S4", "S5", "X1"] },
     "gating": {
       "type": "boolean",
@@ -44,7 +41,7 @@
     },
     "verdict": {
       "enum": ["PASS", "FAIL"],
-      "description": "PASS iff every scenario of the named criteria version is present with outcome pass. A missing scenario counts as fail."
+      "description": "PASS iff every scenario of the named criteria version is present with outcome pass. A missing scenario counts as fail. Never pending. In an S2 spike-run record the S2.7 outcome is that of its automated step checks, so the verdict is the automated verdict; the S2 spike status stays pending until a review record exists and is never read from this field alone."
     },
     "fallback_decision": {
       "type": "string",
@@ -87,9 +84,60 @@
         "path": { "type": "string", "pattern": "^evidence\\.tar\\.xz$" },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
+    },
+    "reviewed_record": {
+      "type": "string",
+      "pattern": "^S2-[0-9]{8}T[0-9]{6}Z-v[0-9]+$",
+      "description": "kind=review only: the id of the S2 spike-run record whose S2.7 this record judges. It must name the same criteria version and criteria_sha256 as this record."
+    },
+    "review": {
+      "type": "object",
+      "description": "kind=review only: the reviewed judgement of the written recovery procedure (S2.7, spec FR-002).",
+      "required": ["scenario", "outcome", "reviewer", "date", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "scenario": { "const": "S2.7" },
+        "outcome": { "enum": ["pass", "fail"], "description": "The final S2.7 outcome. Only pass and fail exist: a review that is not yet made is the absence of this record (the derived status pending)." },
+        "reviewer": { "type": "string", "minLength": 1, "description": "Reviewer identity as a public handle or role; no host name, no e-mail address." },
+        "date": { "type": "string", "format": "date-time", "description": "UTC time of the judgement." },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "description": "What was reviewed: entries inside the evidence archive of the reviewed record (for example the rendered procedure text), pinned by hash.",
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string", "pattern": "^[^/].*$" },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        },
+        "notes": { "type": "string" }
+      }
     }
   },
   "allOf": [
+    {
+      "if": { "properties": { "kind": { "enum": ["spike-run", "repro"] } }, "required": ["kind"] },
+      "then": {
+        "required": ["environment", "date", "scenarios", "verdict", "residual_risk", "evidence_archive"],
+        "properties": { "record_id": { "not": { "pattern": "^review-" } } },
+        "not": { "anyOf": [{ "required": ["reviewed_record"] }, { "required": ["review"] }] }
+      }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "review" } }, "required": ["kind"] },
+      "then": {
+        "required": ["reviewed_record", "review"],
+        "properties": {
+          "spike": { "const": "S2" },
+          "record_id": { "pattern": "^review-S2-" }
+        },
+        "propertyNames": { "enum": ["record_id", "kind", "spike", "criteria_version", "criteria_sha256", "reviewed_record", "review"] }
+      }
+    },
     {
       "if": {
         "properties": {
@@ -181,7 +229,10 @@
       "additionalProperties": false,
       "properties": {
         "id": { "type": "string", "pattern": "^(S[1-5]|X1)\\.[0-9]+$" },
-        "outcome": { "enum": ["pass", "fail", "error", "skipped", "flaky"] },
+        "outcome": {
+          "enum": ["pass", "fail", "error", "skipped", "flaky"],
+          "description": "For a scenario with cases: pass only if every case with gating true (or without a gating flag) is pass; cases with gating false never change it. For S2.7 in an S2 spike-run record: the outcome of the automated step checks only; the final S2.7 outcome comes from the review record, and a failed step check makes it fail without review."
+        },
         "duration_s": { "type": "number", "minimum": 0 },
         "cases": {
           "type": "array",
@@ -192,6 +243,11 @@
             "properties": {
               "id": { "type": "string", "description": "<scenario id>:<case>, for example S3.2:post:M5:poweroff" },
               "outcome": { "enum": ["pass", "fail", "error", "skipped", "flaky"] },
+              "gating": {
+                "type": "boolean",
+                "default": true,
+                "description": "False for an informational variant case (S1.2, S1.6, S1.8: create policy lus, passthrough.io=rw, cache.files=auto-full): its outcome and evidence are recorded but never change the scenario outcome or the verdict. Absent means true."
+              },
               "fault_point": { "type": "string" },
               "fault_kind": { "type": "string" }
             }

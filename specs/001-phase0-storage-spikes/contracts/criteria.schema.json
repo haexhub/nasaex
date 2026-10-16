@@ -128,22 +128,47 @@
         "review": {
           "type": "boolean",
           "default": false,
-          "description": "True only for the written recovery procedure of S2.7 (spec FR-002)."
+          "description": "True only for the written recovery procedure of S2.7 (spec FR-002). The automated step checks stay (a failed step check makes S2.7 fail without review); the final outcome is set by a review record named by review_kind. Until that record exists S2.7 and the S2 spike status are pending (derived, never stored)."
+        },
+        "review_kind": {
+          "const": "review",
+          "description": "Required when review is true, forbidden otherwise: the kind of the result record that judges this scenario. A record of this kind (see result-record.schema.json) names the S2 spike-run record it reviews in reviewed_record and sets the scenario to pass or fail in review.outcome, with reviewer, date and evidence."
         },
         "cases": {
           "type": "string",
           "pattern": "^[a-z][a-z0-9-]*$",
           "description": "Case generator name for matrix scenarios, for example mover-crash-points. Case ids are <scenario id>:<case>."
         },
+        "variants": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Only with a variant generator such as mount-variants (S1.2, S1.6, S1.8): the variants the generator produces and whether each gates. The case id of a variant is <scenario id>:<variant>; the recorder writes the gating flag of the variant onto the case entry of the result record. At least one variant gates (the baseline); a variant with gating false is informational and never changes the scenario outcome. Generators without variants (for example mover-crash-points) produce only gating cases.",
+          "items": {
+            "type": "object",
+            "required": ["case", "gating"],
+            "additionalProperties": false,
+            "properties": {
+              "case": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._=-]*$", "description": "Variant part of the case id, for example ff or lus." },
+              "gating": { "type": "boolean" },
+              "description": { "type": "string", "minLength": 1 }
+            }
+          },
+          "contains": { "type": "object", "properties": { "gating": { "const": true } }, "required": ["gating"] }
+        },
         "prediction": {
           "type": "string",
           "description": "S2 only: reference to a key under tables that predicts recoverable and unrecoverable items at block granularity (spec FR-016)."
         }
       },
+      "dependentRequired": { "variants": ["cases"] },
       "allOf": [
         {
           "if": { "not": { "properties": { "review": { "const": true } }, "required": ["review"] } },
-          "then": { "required": ["check"] }
+          "then": { "required": ["check"], "not": { "required": ["review_kind"] } }
+        },
+        {
+          "if": { "properties": { "review": { "const": true } }, "required": ["review"] },
+          "then": { "required": ["review_kind"], "properties": { "id": { "const": "S2.7" } } }
         }
       ]
     }
