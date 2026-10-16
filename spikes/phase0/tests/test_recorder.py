@@ -2,9 +2,10 @@
 budget handling, and output that fits the result-record schema."""
 
 import pytest
-from helpers import make_root, record_doc
+from helpers import criteria_doc, make_root, record_doc
 
 from spikectl.model import schema_errors
+from spikectl.verdict import derive_verdict
 from testlib.recorder import OUTCOMES, Recorder, Skip, counts_as_pass
 
 
@@ -103,6 +104,118 @@ def test_case_entries_carry_fault_kind_and_point():
         {"id": "S3.2:pre:M1:kill", "outcome": "pass", "fault_kind": "kill", "fault_point": "pre:M1"}
     ]
     assert by_id(rec)["S3.2"]["outcome"] == "pass"
+
+
+# --- variant cases and the gating flag -------------------------------------
+
+
+def variant_criteria():
+    """S1.2 with the baseline variant `ff` gating and the variant `lus` informational."""
+    doc = criteria_doc("S1")
+    doc["scenarios"][1].update(
+        cases="mount-variants",
+        variants=[{"case": "ff", "gating": True}, {"case": "lus", "gating": False}],
+    )
+    return doc
+
+
+def variant_cases(*names):
+    return [Recorder.case(f"S1.2:{name}", "none", "mount") for name in names]
+
+
+def run_variants(outcomes, names=("ff", "lus"), criteria=None):
+    rec = Recorder(criteria=criteria or variant_criteria())
+
+    def case_fn(case):
+        outcome = outcomes[case.id.split(":")[1]]
+        if outcome == "fail":
+            raise AssertionError("differs")
+        if outcome == "error":
+            raise RuntimeError("driver lost the machine")
+        if outcome == "skipped":
+            raise Skip("not applicable")
+
+    rec.run_cases("S1.2", variant_cases(*names), case_fn)
+    return by_id(rec)["S1.2"]
+
+
+def test_variant_case_entries_carry_the_gating_flag_of_the_criteria():
+    scenario = run_variants({"ff": "pass", "lus": "pass"})
+
+    assert [(c["id"], c["gating"]) for c in scenario["cases"]] == [
+        ("S1.2:ff", True),
+        ("S1.2:lus", False),
+    ]
+
+
+@pytest.mark.parametrize("outcome", ["fail", "error", "skipped"])
+def test_an_informational_variant_never_changes_the_scenario_outcome(outcome):
+    scenario = run_variants({"ff": "pass", "lus": outcome})
+
+    assert scenario["outcome"] == "pass"
+    assert [c["outcome"] for c in scenario["cases"]] == ["pass", outcome]
+
+
+def test_a_failing_gating_variant_fails_the_scenario_whatever_the_informational_ones_do():
+    scenario = run_variants({"ff": "fail", "lus": "pass"})
+
+    assert scenario["outcome"] == "fail"
+
+
+def test_the_most_severe_gating_outcome_decides_not_an_informational_one():
+    criteria = variant_criteria()
+    criteria["scenarios"][1]["variants"].append({"case": "second", "gating": True})
+    rec = Recorder(criteria=criteria)
+
+    def case_fn(case):
+        if case.id.endswith("lus"):
+            raise RuntimeError("informational error")
+        if case.id.endswith("second"):
+            raise AssertionError("gating failure")
+
+    rec.run_cases("S1.2", variant_cases("ff", "lus", "second"), case_fn)
+
+    assert by_id(rec)["S1.2"]["outcome"] == "fail"
+
+
+def test_a_gating_variant_that_was_not_run_is_an_error():
+    scenario = run_variants({"lus": "pass"}, names=("lus",))
+
+    assert scenario["outcome"] == "error"
+    assert "S1.2:ff" in scenario["notes"]
+
+
+def test_a_case_that_is_not_a_listed_variant_is_an_error():
+    scenario = run_variants({"ff": "pass", "other": "pass"}, names=("ff", "other"))
+
+    assert scenario["outcome"] == "error"
+    assert "other" in scenario["notes"]
+
+
+def test_cases_of_a_scenario_without_variants_carry_no_gating_flag():
+    rec = Recorder(criteria=variant_criteria())
+
+    rec.run_cases("S1.1", [Recorder.case("S1.1:a", "kill", "pre:M1")], lambda case: None)
+
+    assert "gating" not in by_id(rec)["S1.1"]["cases"][0]
+
+
+def test_variant_output_fits_the_schema_and_the_derived_verdict_ignores_informational_cases(
+    tmp_path,
+):
+    root = make_root(tmp_path)
+    rec = Recorder(criteria=variant_criteria())
+    rec.run("S1.1", lambda: None)
+
+    def case_fn(case):
+        assert case.id != "S1.2:lus", "informational variant differs"
+
+    rec.run_cases("S1.2", variant_cases("ff", "lus"), case_fn)
+    doc = record_doc("S1", 1, "0" * 64)
+    doc["scenarios"] = rec.scenarios()
+
+    assert schema_errors(root, "result-record.schema.json", doc) == []
+    assert derive_verdict(variant_criteria(), doc) == "PASS"
 
 
 def test_error_in_a_case_beats_fail_and_every_case_still_runs():

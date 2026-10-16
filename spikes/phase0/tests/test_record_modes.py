@@ -6,11 +6,13 @@ import json
 import pytest
 from helpers import (
     CRITERIA,
+    S2_OUTCOMES,
     RESULTS,
     commit_all,
     criteria_doc,
     init_repo,
     make_root,
+    record_doc,
     sha256_bytes,
     write_criteria,
 )
@@ -22,6 +24,7 @@ from spikectl.record import (
     PreflightError,
     RecordError,
     build_record,
+    build_review_record,
     configured_ram_budget_mib,
     make_record_id,
     preflight,
@@ -240,6 +243,27 @@ def test_x1_records_are_non_gating_and_have_no_fallback(root):
     assert schema_errors(root, "result-record.schema.json", record) == []
 
 
+def test_an_informational_failing_case_does_not_change_the_derived_verdict(clean_locked_repo):
+    root, entry = clean_locked_repo
+    scenarios = [
+        PASS_ALL[0],
+        {
+            "id": "S1.2",
+            "outcome": "pass",
+            "cases": [
+                {"id": "S1.2:ff", "outcome": "pass", "gating": True},
+                {"id": "S1.2:lus", "outcome": "fail", "gating": False},
+            ],
+        },
+    ]
+
+    record = build(root, entry, scenarios)
+
+    assert record["verdict"] == "PASS"
+    assert "fallback_decision" not in record
+    assert schema_errors(root, "result-record.schema.json", record) == []
+
+
 def test_supersedes_is_recorded_when_given(clean_locked_repo):
     root, entry = clean_locked_repo
 
@@ -314,3 +338,155 @@ def test_a_record_that_fails_the_schema_is_not_written(clean_locked_repo, tmp_pa
         write_record(root, record, evidence_file(tmp_path), "record")
 
     assert not (root / RESULTS / "S1").exists()
+
+
+# --- review records --------------------------------------------------------
+
+EVIDENCE = [{"path": "procedure.txt", "sha256": "b" * 64}]
+REVIEW_TIME = datetime.datetime(2026, 10, 23, 12, 0, 0, tzinfo=datetime.UTC)
+
+
+@pytest.fixture
+def s2_root(root):
+    write_criteria(root, doc=criteria_doc("S2", scenarios=7, review=True))
+    entry = freeze(root, "S2")
+    run = record_doc("S2", entry.version, entry.sha256, S2_OUTCOMES)
+    return root, run
+
+
+def review(run, outcome="pass", **overrides):
+    arguments = {
+        "reviewed_record": run,
+        "criteria": criteria_doc("S2", scenarios=7, review=True),
+        "outcome": outcome,
+        "reviewer": "maintainer",
+        "when": REVIEW_TIME,
+        "evidence": EVIDENCE,
+    }
+    return build_review_record(**{**arguments, **overrides})
+
+
+def test_an_s2_run_with_passing_automated_checks_stores_pass_never_pending(s2_root):
+    root, run = s2_root
+
+    assert run["verdict"] == "PASS"
+    assert schema_errors(root, "result-record.schema.json", run) == []
+
+
+def test_a_review_record_names_the_reviewed_record_and_validates(s2_root):
+    root, run = s2_root
+
+    record = review(run)
+
+    assert record["record_id"] == "review-S2-20261023T120000Z-v1"
+    assert record["kind"] == "review"
+    assert record["reviewed_record"] == run["record_id"]
+    assert (record["criteria_version"], record["criteria_sha256"]) == (
+        run["criteria_version"],
+        run["criteria_sha256"],
+    )
+    assert record["review"] == {
+        "scenario": "S2.7",
+        "outcome": "pass",
+        "reviewer": "maintainer",
+        "date": "2026-10-23T12:00:00Z",
+        "evidence": EVIDENCE,
+    }
+    assert schema_errors(root, "result-record.schema.json", record) == []
+
+
+def test_a_review_record_carries_no_run_fields(s2_root):
+    _, run = s2_root
+
+    record = review(run)
+
+    for forbidden in ("environment", "scenarios", "verdict", "evidence_archive", "date"):
+        assert forbidden not in record
+
+
+def test_a_passing_review_has_no_fallback_and_a_failing_one_carries_the_criteria_fallback(s2_root):
+    root, run = s2_root
+
+    failing = review(run, "fail")
+
+    assert "fallback_decision" not in review(run)
+    assert failing["fallback_decision"] == criteria_doc("S2")["fallback"]
+    assert schema_errors(root, "result-record.schema.json", failing) == []
+
+
+def test_optional_review_notes_are_recorded(s2_root):
+    root, run = s2_root
+
+    record = review(run, notes="steps followed on a scratch copy")
+
+    assert record["review"]["notes"] == "steps followed on a scratch copy"
+    assert schema_errors(root, "result-record.schema.json", record) == []
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"outcome": "pending"}, "outcome"),
+        ({"outcome": "PASS"}, "outcome"),
+        ({"reviewer": ""}, "reviewer"),
+        ({"evidence": []}, "evidence"),
+    ],
+)
+def test_a_review_with_unusable_input_is_refused(s2_root, overrides, message):
+    _, run = s2_root
+
+    with pytest.raises(RecordError, match=message):
+        review(run, **overrides)
+
+
+def test_only_an_s2_spike_run_can_be_reviewed(clean_locked_repo):
+    root, entry = clean_locked_repo
+    s1_run = build(root, entry)
+
+    with pytest.raises(RecordError, match="S2"):
+        review(s1_run)
+
+
+def test_a_review_record_is_written_without_an_evidence_archive(s2_root):
+    root, run = s2_root
+    record = review(run)
+
+    target = write_record(root, record, None, "record")
+
+    assert target == root / RESULTS / "S2" / record["record_id"]
+    assert json.loads((target / "record.json").read_text()) == record
+    assert [p.name for p in target.iterdir()] == ["record.json"]
+
+
+def test_a_review_record_is_never_overwritten(s2_root):
+    root, run = s2_root
+    record = review(run)
+    write_record(root, record, None, "record")
+
+    with pytest.raises(RecordError, match="exists"):
+        write_record(root, record, None, "record")
+
+
+def test_a_review_record_that_fails_the_schema_is_not_written(s2_root):
+    root, run = s2_root
+    record = review(run)
+    record["review"]["outcome"] = "pending"
+
+    with pytest.raises(RecordError, match="schema"):
+        write_record(root, record, None, "record")
+
+    assert not (root / RESULTS / "S2").exists()
+
+
+def test_a_review_record_with_an_evidence_archive_is_refused(s2_root, tmp_path):
+    root, run = s2_root
+
+    with pytest.raises(RecordError, match="archive"):
+        write_record(root, review(run), evidence_file(tmp_path), "record")
+
+
+def test_a_spike_run_record_without_an_evidence_archive_is_refused(clean_locked_repo):
+    root, entry = clean_locked_repo
+
+    with pytest.raises(RecordError, match="archive"):
+        write_record(root, build(root, entry, evidence_sha256=ARCHIVE_SHA), None, "record")
