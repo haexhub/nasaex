@@ -6,8 +6,8 @@ import json
 import pytest
 from helpers import (
     CRITERIA,
-    S2_OUTCOMES,
     RESULTS,
+    S2_OUTCOMES,
     commit_all,
     criteria_doc,
     init_repo,
