@@ -22,13 +22,14 @@ implementation tasks (research section 6).
 | `kill-sync-at-position` | Wait until the `snapraid -l` log shows `run:pos:<block>` with block >= K, then `kill` | A SnapRAID sync dies after at least K blocks were processed | Flush frequency of the log lines UNVERIFIED; the S2.4 prediction is evaluated against what the kill left (research 3.4), separately for the plain and the snapshot variant; with the snapshot tooling the kill also leaves an incomplete snapshot set whose handling is part of the result (research 7.3) |
 | `sync-limited` | `snapraid sync -S <start> -B <count>` | A sync that processes only a block range and ends normally | Deterministic stand-in for "stopped after K blocks" |
 | `concurrent-modify` | Client-side append or rewrite of the pool file of item 1 through the share at a hook, with no mover-side lock (a lock of the mover cannot bind SMB clients, so none exists); the harness measures the time the write takes to complete | The write is never held back by the mover and creates a newer pool version (new ctime and size, or a new inode) | Used by S3.7 at the four `inject:modify-pool-*` points of the mover contract. At `inject:modify-pool-during:M3` the host pauses the sync process with a stop signal at the `sync-pos` position (named, not timed) so that the write provably overlaps M3, then resumes it; the pause method is UNVERIFIED until probed. A write that has not completed within the bound (initial target 5 s) while the sync is paused counts as having waited through M3 |
+| `concurrent-delete` (**UNVERIFIED**) | Client-side unlink of the pool file of item 1 through the share at a hook, with no mover-side lock; the harness waits for the unlink to complete and then reads the share path of item 1 once | The pool file disappears; the archive copy made in M1 is expected to show through the cache pool from then until the mover has moved it into the trash (`visible_before_trash`, recorded, not judged) | Used by S3.7 (e) at the two `inject:delete-pool-after:*` points of the mover contract, and as the precondition of the two trash crash points. That the trash is hidden from the pool view and that the archive copy shows through until the trash move are expected behaviours that S1 and S3 must prove |
 
 ## Point namespaces
 
 | Namespace | Defined in | Examples |
 | --- | --- | --- |
 | Mover boundaries and mid-step points | [mover-steps.md](mover-steps.md) | `post:M5`, `mid:M1:tmp-partial` |
-| Mover faults, injections and the negative-control variant | [mover-steps.md](mover-steps.md) | `fault:M3:parity-write-fail`, `inject:modify-pool-during:M3`, `inject:modify-pool-at:M5:residual-window`, `control:stock-remove-source` |
+| Mover faults, injections and the negative-control variant | [mover-steps.md](mover-steps.md) | `fault:M3:parity-write-fail`, `inject:modify-pool-during:M3`, `inject:modify-pool-at:M5:residual-window`, `inject:delete-pool-after:M3`, `control:stock-remove-source` |
 | SnapRAID sync (S2.4) | criteria file S2 | `sync:pos:<K>` for K in the frozen list |
 | Disk lifecycle (S2, S4) | criteria files S2, S4 | `disk:<serial>:fail`, `disk:<serial>:replace`, `boot:after-failure` |
 | Fixture states (S1) | criteria file S1 | `pool:free:<bytes>` for the out-of-space new write |
@@ -54,6 +55,26 @@ injection point it does the following, in this order, never after a timed delay:
 The outcome is recorded either way. `data_lost: true` fails scenario S3.7 (d), S3 FAILS, and the record names
 the rename-to-quarantine-and-recheck protocol as the fallback (spec FR-031). A `poweroff` or `kill` at the
 same hook is a separate crash case (`S3.2:mid:M5:item-validated:<mode>`) and is not an injection.
+
+## Delete injection points
+
+`inject:delete-pool-after:M1` is armed on the hook `post:M1` and `inject:delete-pool-after:M3` on `post:M3`.
+Both do the following, in this order, never after a timed delay:
+
+1. The host waits for `reached/<hook>`; the mover is blocked at the boundary.
+2. The host unlinks the pool path of item 1 through the share and waits for the unlink to complete. No lock
+   exists, so it completes.
+3. The host reads the share path of item 1 once and records `visible_before_trash` (expected true: the archive
+   copy shows through). This is a measurement of the window, not a check.
+4. The host releases `go/<hook>`. The mover completes the run: for a delete after M1 it finds the vanished item
+   at M2, for a delete after M3 at M5, and it moves the archive copy into the trash at M5 if the archive copy
+   still matches its copy-time record.
+5. The oracle checks FR-019 (c), (e) and (g): the deleted file is not visible through the share, exactly one
+   trash copy exists and is byte-identical to the copy the mover made, no archive copy was deleted, and the
+   device-failure drill loses no live file and no trash content.
+
+The trash handling does not change the residual window above: that window concerns a pool file that is
+present at the final check, and the trash applies only when the pool file is missing.
 
 ## Rules
 

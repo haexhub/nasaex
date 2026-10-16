@@ -16,7 +16,12 @@ used; they appear only as the negative control of S3 scenario 5 (research sectio
 Design rule under test: **the mover keeps no state that must survive a crash.** Every run derives its
 plan from the on-disk state (pool branch, archive branches, SnapRAID content and snapshot state). S3
 shows whether that is sufficient. If a journal turns out to be necessary, that is an S3 finding and a
-correction of this list, not a silent addition.
+correction of this list, not a silent addition. The trash handling of a client-deleted file (below) is the
+place where this rule is under the most pressure: see "Known limits of the trash handling".
+
+Status of the text: everything in this contract that depends on the behaviour of mergerfs, btrfs, SnapRAID or
+the kernel (including the trash handling below) is **expected behaviour** that S1 or S3 must prove and stays
+UNVERIFIED until a spike has shown it.
 
 Concurrency rule: **the mover takes no lock that clients would have to honour, and no client write is
 required to wait through the sync step M3.** A lock held by the mover cannot bind SMB
@@ -30,7 +35,21 @@ rule was dropped by the clarification of 2026-10-16 (task T081).
 
 - **Pool branch**: the btrfs subvolume of the pool that is the first branch of the cache pool (holds new
   files).
-- **Archive branches**: the data subvolume of each archive disk (each its own btrfs filesystem).
+- **Archive branches**: the branch directory of each archive disk, a directory inside the data subvolume of
+  that disk (each disk its own btrfs filesystem). The data subvolume holds two sibling directories: the branch
+  directory, which is a branch of both pools, and the trash directory (next entry).
+- **Trash**: the trash directory of an archive disk, a sibling of the branch directory inside the same data
+  subvolume, so that it is outside every pool branch and is expected not to appear in the view of the cache
+  pool or the base pool, and so that a rename from the branch directory into it stays inside one subvolume and
+  one filesystem (expected to be an atomic rename; a rename across btrfs subvolumes is not expected to work,
+  which is why the trash is not a subvolume of its own). The data subvolume is covered by the parity of the
+  archive, so trash content is expected to stay recoverable. A trash entry has the path `<pool-relative path>`
+  suffixed with the copy-time ctime in nanoseconds and the pool inode number of the item, so that two trashed
+  versions of one path never collide, a retry computes the same name, and no trash entry is ever overwritten.
+  The retention period of the trash is a parameter fixed in the S3 criteria; purging the trash is out of
+  Phase 0. That the trash is hidden from both pools, that the rename into it is atomic and that its content
+  survives a single device failure are expected behaviours (UNVERIFIED): S1 scenario 1 and S3 scenario 7 (e)
+  must prove them.
 - **Base pool**: the mergerfs pool over the archive branches only. The mover writes into the archive
   through the base pool, never through the share.
 - **Cache pool**: the mergerfs pool (pool branch first, archive branches after it, no-create) that is
@@ -42,11 +61,14 @@ rule was dropped by the clarification of 2026-10-16 (task T081).
   a timestamp in the future has no valid age and is not selected; and (2) no process and no SMB client holds
   it open when it is examined (open handles are determined on the server). A file that fails either test stays
   in the pool untouched and is considered again by the next run. The S3 fixture contains at least one file
-  that is too young and one that is held open, and both must stay in the pool.
+  that is too young and one that is held open, and both must stay in the pool. A selected file whose pool file is
+  gone before its copy-time identity could be read is dropped from the run: no archive copy exists, so nothing
+  can reappear.
 - **Item**: a file selected by the run. A run has `n` copy items (pool-only files, including exactly one
   that replaces an older archived version at the same path). The S3 fixture uses `n = 3`. There are no
   deletion items: client deletions of archived files happen in place on the archive disk (S1 scenario 4)
-  and the mover never applies deletions.
+  and the mover never applies deletions. The trash move of a vanished item (below) is not the application of a
+  client deletion: it hides a copy the mover itself made and deletes nothing.
 - **Item order and the instrumented item**: the items of a loop step are processed in ascending order of
   their pool-relative path (byte order). The S3 fixture names its three items so that the **replacing item**
   (the one that replaces an older archived version) sorts first; the run refuses to start a case when the
@@ -59,11 +81,25 @@ rule was dropped by the clarification of 2026-10-16 (task T081).
   writing) immediately before the first byte of that item is copied in M1. The mover keeps it in memory
   only, per run; it is never persisted, so the design rule above holds: after a crash the next run selects,
   copies and records again. M2 and M5 compare against it.
-- **Changed item**: an item whose pool file no longer has its copy-time identity at M2 or M5 (ctime, size or
-  inode differ, or the file is gone). A changed item is not a failure: the run keeps its pool copy, takes
+- **Copy-time record of the archive copy**: after the final fsync of M1 the mover also records, in memory
+  only, the inode, size and ctime of the archive copy under its final name and the content hash of the bytes it
+  copied. M2 and the trash move of M5 compare the archive copy against it; it is how "the archive copy still
+  matches the identity and checksum recorded at copy time" is decided.
+- **Changed item**: an item whose pool file exists but no longer has its copy-time identity at M2 or M5 (ctime,
+  size or inode differ). A changed item is not a failure: the run keeps its pool copy, takes
   it out of the remaining steps of this run, reports it on standard error as `changed` and carries on with
   the other items. Its archive copy, if M1 already created one, stays and is stale; the next run, which
   selects the file again once it is old enough, supersedes it.
+- **Vanished item**: an item whose pool file is missing at M2 or at M5 after its copy was made in M1 (a client
+  deleted it, or it vanished for another reason such as a device error; the mover cannot tell the two apart).
+  A vanished item is not a failure and is not a changed item. Its archive copy must neither be deleted (it may
+  be the only copy of a file lost by a device error) nor stay visible (a client delete must not be undone by
+  the stale archive copy): at M5 it is moved into the trash if it still matches its copy-time record, otherwise
+  left where it is and reported as `vanished-archive-changed` (it may be live data: a client may have
+  changed the archive copy in place after the pool file vanished). A vanished item stays in M3 and M4, so the
+  content that goes into the trash is parity-covered first. If a pool file exists again at the path at M5
+  (a client created a new file there), the item is a changed item, not a vanished one: the new pool file is
+  kept and the stale archive copy is superseded by the next run.
 - **Snapshot-supported sync**: `snapraid sync` run through the snapshot tooling selected in the plan
   (open item O15): new read-only btrfs snapshots of the data disks are taken, the sync runs against
   them, and the snapshots are kept until the next sync completes.
@@ -76,15 +112,17 @@ rule was dropped by the clarification of 2026-10-16 (task T081).
 
 | Step | Name | Action | Durable effects (each is a mid-step point) | Postcondition at `post:M<k>` |
 | --- | --- | --- | --- | --- |
-| M1 | copy | For each copy item: record its copy-time identity, then copy the pool file through the base pool to a temporary name in the target archive directory together with the metadata listed under "Metadata preservation", fsync, rename to the final name (for a replacement the rename atomically replaces the old archived version), fsync the directory | `tmp-created`, `tmp-partial` (half of the bytes written, not yet synced), `tmp-data-synced`, `renamed`, `parent-synced` (for item 1), `item-1-done` | Every copy item has a complete archive copy under its final name with the metadata preserved; pool copies are untouched; the copy-time identity of every item is held in memory |
-| M2 | checksum | For each copy item: hash the pool file, then read its identity again; if it differs from the copy-time identity the item is a changed item and is skipped; otherwise hash the archive copy (archive side read after dropping caches so it comes from the disk) and compare the content hash and the metadata fields | `pool-hashed`, `archive-hashed` (no durable effects; read only) | For every unchanged item the hashes and the metadata fields are equal; changed items are reported and out of the run; a content or metadata mismatch of an unchanged item stops the run at M2, reports it, and changes nothing else |
-| M3 | sync | Snapshot-supported `snapraid sync` for the archive, if at least one unchanged item remains. The mover holds no lock on the pool; client I/O is neither blocked nor delayed while it runs | `sync-pos` (`snapraid -l` progress position reached, or a sync limited with `-B`), see the fault-points contract | Sync completed with exit status 0; content file saved; the snapshot set of this sync is marked complete; no client write waited for it (S3 scenario 7 (c)) |
-| M4 | verification | Verify that every unchanged copy item is covered by completed parity: the item exists with the expected hash in the snapshot set of the completed sync, there are no pending changes for the item paths, and a check of those paths succeeds | `checked` (no durable effects) | Parity coverage verified for every unchanged copy item |
-| M5 | pool copy removal (compare and delete) | For each unchanged copy item: read the identity of the pool file by its path on the pool branch and compare ctime, size and inode with the copy-time identity (the final check); if anything differs or the file is gone, keep the pool copy, report the item as changed and leave it for a later run; otherwise unlink the pool copy. The window between the final check and the unlink is the **residual window**: a write that lands inside it is not seen by the check | `item-validated` (the final check passed, the unlink has not happened; the residual-window point), `unlinked` (item 1), `item-1-done` | Every unchanged item exists only in the archive; changed items still in the pool, their archive copies stale until the next run. A path-only check followed by unlink is not sufficient; the check is the identity comparison |
+| M1 | copy | For each copy item: record its copy-time identity, then copy the pool file through the base pool to a temporary name in the target archive directory together with the metadata listed under "Metadata preservation", fsync, rename to the final name (for a replacement the rename atomically replaces the old archived version), fsync the directory; then record the copy-time record of the archive copy | `tmp-created`, `tmp-partial` (half of the bytes written, not yet synced), `tmp-data-synced`, `renamed`, `parent-synced` (for item 1), `item-1-done` | Every copy item has a complete archive copy under its final name with the metadata preserved; pool copies are untouched; the copy-time identity and the copy-time record of the archive copy of every item are held in memory |
+| M2 | checksum | For each copy item: hash the pool file, then read its identity again; if the pool file is gone the item is a vanished item (no pool hash; the archive copy is hashed and compared with the copy-time hash only); if the identity differs from the copy-time identity the item is a changed item and is skipped; otherwise hash the archive copy (archive side read after dropping caches so it comes from the disk) and compare the content hash and the metadata fields | `pool-hashed`, `archive-hashed` (no durable effects; read only) | For every unchanged item the hashes and the metadata fields are equal; changed items are reported and out of the run; vanished items are reported, stay in the run and have an archive copy equal to its copy-time hash; a content or metadata mismatch of an unchanged item, or a hash mismatch of a vanished item's archive copy, stops the run at M2, reports it, and changes nothing else |
+| M3 | sync | Snapshot-supported `snapraid sync` for the archive, if at least one unchanged or vanished item remains. The mover holds no lock on the pool; client I/O is neither blocked nor delayed while it runs | `sync-pos` (`snapraid -l` progress position reached, or a sync limited with `-B`), see the fault-points contract | Sync completed with exit status 0; content file saved; the snapshot set of this sync is marked complete; no client write waited for it (S3 scenario 7 (c)) |
+| M4 | verification | Verify that every unchanged or vanished copy item is covered by completed parity: the item exists with the expected hash in the snapshot set of the completed sync, there are no pending changes for the item paths, and a check of those paths succeeds | `checked` (no durable effects) | Parity coverage verified for every unchanged and every vanished copy item |
+| M5 | pool copy removal (compare and delete) and trash move | For each unchanged or vanished copy item: read the identity of the pool file by its path on the pool branch. **Pool file present** (an unchanged candidate): compare ctime, size and inode with the copy-time identity (the final check); if anything differs, keep the pool copy, report the item as changed and leave it for a later run; otherwise unlink the pool copy. The window between the final check and the unlink is the **residual window**: a write that lands inside it is not seen by the check. **Pool file missing** (a vanished item): compare the inode, size and ctime of the archive copy with its copy-time record and hash it again against the copy-time hash; if both match, move the archive copy into the trash on the same archive disk (rename to the trash path, creating missing trash directories, never overwriting; then fsync the trash directory and the former parent directory of the archive copy); if either differs, leave the archive copy where it is and report `vanished-archive-changed`. Nothing is ever unlinked on the vanished path | `item-validated` (the final check passed, the unlink has not happened; the residual-window point; present-file path only), `unlinked` (item 1; present-file path only), `trash-renamed` (the archive copy was renamed into the trash, parent directories not yet synced; vanished path only), `trash-parent-synced` (both directories synced; vanished path only), `item-1-done` | Every unchanged item exists only in the archive; every vanished item exists only as one trash copy; changed items still in the pool, their archive copies stale until the next run. A path-only check followed by unlink is not sufficient; the check is the identity comparison |
 
 Spec crash boundaries (FR-018): after copy, after checksum, after sync, after verification, after pool
 copy removal = `post:M1` .. `post:M5`. The start `pre:M1` is added; mid-step points are the effects in
-the table, for item 1 of a loop step (see "Item order and the instrumented item").
+the table, for item 1 of a loop step (see "Item order and the instrumented item"). The points of the present-file
+path and those of the vanished path of M5 are different effects of one step: an uninterrupted run reaches the
+first group for an unchanged item 1 and the second group for a vanished item 1.
 
 ## Metadata preservation (M1 and M2)
 
@@ -114,25 +152,38 @@ criteria version.
 | Mid-step M2 (item 1) | `mid:M2:pool-hashed`, `mid:M2:archive-hashed` | 2 |
 | Mid-step M3 | `mid:M3:sync-pos` | 1 |
 | Mid-step M4 | `mid:M4:checked` | 1 |
-| Mid-step M5 (item 1) | `mid:M5:item-validated`, `mid:M5:unlinked`, `mid:M5:item-1-done` | 3 |
-| **Total crash points** | | **19** |
+| Mid-step M5 (item 1), present-file path | `mid:M5:item-validated`, `mid:M5:unlinked`, `mid:M5:item-1-done` | 3 |
+| Mid-step M5 (item 1), vanished path | `mid:M5:trash-renamed`, `mid:M5:trash-parent-synced` | 2 |
+| **Total crash points** | | **21** |
 
 - Kill modes: `kill` (process kill) and `poweroff` (QEMU process termination; host-power-loss semantics
-  unverified). Every point is exercised in both modes: 19 x 2 = **38 cases**. SC-005 requires 100% of the
+  unverified). Every point is exercised in both modes: 21 x 2 = **42 cases**. SC-005 requires 100% of the
   enumerated points.
 - Case id: `S3.2:<point>:<kill|poweroff>`, for example `S3.2:post:M5:poweroff`. The residual-window point
   `mid:M5:item-validated` is also a crash point (a kill or power-off right after the final check).
+- The two points `mid:M5:trash-renamed` and `mid:M5:trash-parent-synced` fire only when item 1 is a vanished
+  item. A case of either point therefore arms `inject:delete-pool-after:M3` first (a client delete of the pool
+  file of item 1 after the sync has covered it), then kills or powers off at the point. Their case ids have the
+  same form, for example `S3.2:mid:M5:trash-renamed:poweroff`.
 - The amendment of 2026-10-16 (no client lock, selection, compare-and-delete at M5) adds no durable effect
   and no step: selection and the copy-time identity are read-only and in memory, the identity comparisons of
   M2 and M5 read only, so the count of crash points and cases is unchanged by it. Selection is covered by
   `pre:M1`. What it changes is where item 1 comes from (the replacing item, which also instruments S3
   scenario 8) and the injection points below, which are not crash points and are not counted in SC-005.
+- The trash amendment of 2026-10-16/17 (a client delete of a selected pool file) adds one durable effect pair to
+  M5, the rename of the archive copy into the trash and the sync of both directories. Both are durable effects
+  and, by the rule that every durable effect is a point, two points: `mid:M5:trash-renamed` and
+  `mid:M5:trash-parent-synced` (the move is one rename plus the directory syncs, so there is no further
+  intermediate effect; creating missing trash directories is not a point, an empty directory being harmless,
+  as with the parent directories of M1). The vanished-item handling of M2 to M4 adds reads only. The count goes
+  from 19 to 21 crash points and from 38 to 42 cases; the enumeration of the table above gives 6 boundaries +
+  6 mid-step points of M1 + 2 of M2 + 1 of M3 + 1 of M4 + 5 of M5 = 21.
 - Compared with the first plan (nine steps, 34 points, 68 cases) the steps M6 to M9 (archive deletion,
   second sync, second verification, whiteout cleanup) and the `view-refreshed` points are gone: there are
   no whiteouts in the baseline (see the appendix for where they went).
 - A first item that is a plain new file instead of the replacing item would leave the replacement
-  uninstrumented; instrumenting both would add the six M1 mid-step points for a second item (25 points,
-  50 cases). That is not part of this contract.
+  uninstrumented; instrumenting both would add the six M1 mid-step points for a second item (27 points,
+  54 cases). That is not part of this contract.
 
 Injected faults and concurrent changes (S3 scenarios 6 to 9) use named injection points in the same
 namespace; they are enumerated here, are not crash points and are not counted in SC-005:
@@ -147,6 +198,8 @@ namespace; they are enumerated here, are not crash points and are not counted in
 | `inject:modify-pool-after:M2` | S3.7 (b) | Client write after M2 (found by the final check of M5) |
 | `inject:modify-pool-during:M3` | S3.7 (c) | Client write while the sync of M3 is in progress; must complete without delay |
 | `inject:modify-pool-at:M5:residual-window` | S3.7 (d) | Client write between the final check of M5 and the unlink of item 1; the outcome (data lost or not lost) is recorded |
+| `inject:delete-pool-after:M1` | S3.7 (e) | Client delete of the pool file of item 1 after M1 (found at M2 as a vanished item; the trash move happens at M5) |
+| `inject:delete-pool-after:M3` | S3.7 (e) | Client delete of the pool file of item 1 after M3 (found at M5); also the precondition of the two trash crash points |
 
 and the variant selector `control:stock-remove-source` for S3 scenario 5 (the stock pattern: unlink each pool
 copy right after its copy, before M3). The control is a separate mover variant, not a point of the list.
@@ -170,13 +223,21 @@ See [fault-points.md](fault-points.md).
    afterwards; a write that has not completed within the bound while the sync is paused counts as having
    waited through M3). The injection points are armed on these hook points: `inject:modify-pool-after:M1` on
    `post:M1`, `inject:modify-pool-after:M2` on `post:M2`, `inject:modify-pool-during:M3` on
-   `mid:M3:sync-pos`, `inject:modify-pool-at:M5:residual-window` on `mid:M5:item-validated`. The mover
-   then completes the run, and the checks of S3 scenario 7 run: after `inject:modify-pool-after:M1` and
+   `mid:M3:sync-pos`, `inject:modify-pool-at:M5:residual-window` on `mid:M5:item-validated`,
+   `inject:delete-pool-after:M1` on `post:M1`, `inject:delete-pool-after:M3` on `post:M3`. For the two delete
+   points the host deletes (unlinks) the pool path of item 1 through the share, again without waiting for the
+   mover, and then reads the share path of item 1 once before it releases the hook: the result
+   (`visible_before_trash`, expected true because the archive copy shows through until the trash move) is
+   recorded, not judged. The mover then completes the run, and the checks of S3 scenario 7 run: after `inject:modify-pool-after:M1` and
    `inject:modify-pool-after:M2` the pool copy of item 1 was kept as a changed item, the newer pool version
    is available through the share and is not deleted or hidden by the stale archive copy, and a later run
    supersedes the archive copy; after `inject:modify-pool-during:M3` the write completed within the bound;
    after `inject:modify-pool-at:M5:residual-window` the oracle searches for the content of the completed
-   write in the pool and in the archive, and the case records `data_lost: true` or `data_lost: false`.
+   write in the pool and in the archive, and the case records `data_lost: true` or `data_lost: false`. After a delete injection the checks of S3 scenario
+   7 (e) run: the deleted file is not visible through the share (the path does not exist), no archive copy of
+   it exists in any archive branch, exactly one trash copy exists on the archive disk that held the archive
+   copy and its content hash equals the hash the fixture expects for the copied bytes, every other file is
+   unchanged, and a later run neither moves, restores nor re-copies the trash entry.
 5. After `kill` or `poweroff` the machine is restarted and the check sequence below runs.
 
 ## Check sequence after every interruption (the oracle, FR-019, FR-020)
@@ -185,18 +246,31 @@ Run in this order, each as its own recorded check of case `S3.2:<point>:<mode>`:
 
 1. **Invariants** (oracle, read only, no mover running):
    (a) every live file reads back through the share with the expected content hash;
-   (b) every file whose pool copy is gone has an archive copy with the expected hash;
+   (b) every file whose pool copy is gone has an archive copy with the expected hash (for a vanished item whose trash move has completed, exactly one trash copy with that hash instead);
    (c) no file that no client deleted is missing from the share;
    (d) no file is visible with partial content (S3.8: a reader sees complete old or complete new);
    (f) where the case injected a client write, the content of every client write that completed exists in
-   the pool or in the archive (a case that ends with `data_lost: true` fails S3 scenario 7 (d)).
+   the pool or in the archive (a case that ends with `data_lost: true` fails S3 scenario 7 (d));
+   (g) where the case injected a client delete of the pool file of item 1: once the run that handled the delete
+   has completed, the file is not visible through the share, exactly one trash copy exists and it is
+   byte-identical (content hash) to the copy the mover made, and no archive copy was deleted. Until the trash
+   move has completed the archive copy may show through the share (the measured window); immediately after a
+   `kill` or `poweroff` at `mid:M5:trash-renamed` it may be under either its final name or its trash name (after
+   a `poweroff` the rename may not be durable), and the case records which. This leniency ends with the retry:
+   S3.3 requires the deleted file to be hidden and its trash copy to exist after the retry, see "Known limits of
+   the trash handling".
 2. **Retry** the mover (S3.3): the run must converge to the final state of an uninterrupted run, without
    duplicates and without manual cleanup. A second case kills the **retry** at a point chosen by a fixed
    rule (the next point after the one just exercised) and retries again.
 3. **Device failure drill** (S3.4, FR-019 (e) and the parity-coverage proof): on a copy of the
    interrupted machine state, fail one pool device in one drill and the archive disk holding a moved file in
    another; apply the S2 recovery sequence (with the snapshot workflow where S2 prescribes it); every live
-   file must come back with the expected hash. This is how "pool copy removed implies parity-covered"
+   file must come back with the expected hash, and where the case holds a trash copy, the trash content must
+   come back byte-identical as well (FR-019 (e): no live file and no trash content lost). The path under which
+   a recovered trash entry lands (the trash path or the archive path it was moved from) is recorded; recovery
+   is expected to restore the path as of the last completed sync, so a trash entry moved after that sync may
+   come back under its old archive path, which would make the deleted file reappear: that is a finding for the
+   maintainers, not a pass or a silent change of the check. This is how "pool copy removed implies parity-covered"
    (FR-019 (b)) is proven without trusting the mover.
 
 Negative control (S3.5): the same invariants (a) and (b) and the drill are run against the
@@ -213,14 +287,50 @@ S3.5 passes only if it does.
 | during M5 | present for items not yet unlinked and for changed items, absent only for unchanged items already verified and parity-covered (M3, M4 completed) | complete |
 | `post:M5` | absent for unchanged items; present for changed items | complete and parity-covered for unchanged items; stale (older than the pool copy) for changed items until the next run |
 
-A pool copy absent before `post:M4` has completed is a violation of FR-019 (b).
+For a vanished item (the host deleted the pool file by injection, so its absence is not a mover effect):
+
+| Phase | Pool copy | Archive copy (branch directory) | Trash copy |
+| --- | --- | --- | --- |
+| from the delete to `mid:M5:trash-renamed` | absent (deleted by the client) | complete under its final name, hash-equal to its copy-time hash; shows through the share until the trash move (measured) | absent |
+| between `mid:M5:trash-renamed` and `mid:M5:trash-parent-synced` | absent | absent or complete under its final name (after a `poweroff` the rename may not be durable) | complete and hash-equal if the rename is durable, otherwise absent; never both partial |
+| from `mid:M5:trash-parent-synced` and at `post:M5` | absent | absent | exactly one, complete, byte-identical to the copy-time hash; the file is not visible through the share |
+
+At no phase may the content of a vanished item exist nowhere (neither in the archive branch nor in the trash),
+and no archive copy may be unlinked. A pool copy absent before `post:M4` has completed is a violation of
+FR-019 (b), unless the host's own delete injection removed it.
 
 ## Failure behaviour (S3 scenarios 6 and 9, FR-021)
 
-A failure of M1 (including out-of-space), M2 (content or metadata mismatch of an unchanged item), M3 (sync
+A failure of M1 (including out-of-space), M2 (content or metadata mismatch of an unchanged item, or a hash mismatch of a vanished item's archive copy), M3 (sync
 failure) or M4 (verification failure) stops the run, reports the failing step on standard error and in the
 exit status, and leaves every pool copy in place. A changed item is not a failure (see "Changed item"). A
-later run starts again from the on-disk state.
+later run starts again from the on-disk state. A failure of the trash move (the rename or a directory sync
+fails, for example because the rename is refused across filesystems) is reported as `trash-failed` in the exit
+status, leaves the archive copy where it is (so the deleted file stays visible and the content is not lost)
+and stops the run.
+
+## Known limits of the trash handling
+
+These follow from the decision to trash at M5 and from the design rule that the mover keeps no state across a
+crash. They are expected to show up in S3.7 (e) and S3.2 and are recorded as findings; none of them is hidden
+by the oracle.
+
+1. **Visible window.** From the client delete of the pool file until the trash move, the archive copy of the
+   file (made in M1) shows through the cache pool, because the pool file that hid it is gone. The window is
+   measured (`visible_before_trash`) and not bounded in Phase 0.
+2. **Crash before the trash move.** After a `kill` or `poweroff` before the trash move is durable, the next
+   run does not select the file (its pool file is gone), so it cannot tell the stale archive copy from an
+   ordinary archived file and cannot trash it. The deleted file then stays visible. S3 records this for the two
+   trash points. Immediately after a `poweroff` at `mid:M5:trash-renamed` the rename may not be durable (a
+   `kill` does not lose it), and then the retry cannot restore the hidden state. The checks judge this
+   without interpretation: a retry that leaves the deleted file visible fails S3.3 for that case, so a failing
+   S3.3 case is a possible, expected-to-be-measured outcome, not a harness defect. Other combinations of a
+   delete with a crash at an earlier point are not enumerated; they have the same gap. If the case fails, the
+   correction is durable state (a journal or tombstone) and a reviewed amendment of this contract before S3 is
+   re-run, as the design rule says.
+3. **Delete while no mover runs.** A client delete of a pool file while no mover run is in progress has an
+   archive copy to bring back only if an earlier, interrupted run had already copied the file; that case is the
+   gap of point 2. A pool file that no run ever copied has no archive copy and nothing can reappear.
 
 ## Appendix: where the whiteout steps went
 
