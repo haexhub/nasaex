@@ -128,7 +128,7 @@
         "review": {
           "type": "boolean",
           "default": false,
-          "description": "True only for the written recovery procedure of S2.7 (spec FR-002). The automated step checks stay (a failed step check makes S2.7 fail without review); the final outcome is set by a review record named by review_kind. Until that record exists S2.7 and the S2 spike status are pending (derived, never stored)."
+          "description": "True only for the written recovery procedure of S2.7 (spec FR-002). The automated step checks stay (a failed step check makes S2.7 fail without review); the final outcome is set by a review record named by review_kind. Until that record exists S2.7 and the S2 spike status are pending only when the automated step checks pass (derived, never stored)."
         },
         "review_kind": {
           "const": "review",
