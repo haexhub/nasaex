@@ -220,3 +220,34 @@ def test_recorder_output_fits_the_result_record_schema(tmp_path):
     doc["fallback_decision"] = "Adopt the documented fallback."
 
     assert schema_errors(root, "result-record.schema.json", doc) == []
+
+
+def test_review_failure_requires_an_immutable_fallback_decision(tmp_path):
+    root = make_root(tmp_path)
+    doc = {
+        "record_id": "review-S2-20261016T120000Z-v1",
+        "kind": "review",
+        "spike": "S2",
+        "criteria_version": 1,
+        "criteria_sha256": "a" * 64,
+        "reviewed_record": "S2-20261016T110000Z-v1",
+        "review": {
+            "scenario": "S2.7",
+            "outcome": "pass",
+            "reviewer": "maintainer",
+            "date": "2026-10-16T12:00:00Z",
+            "evidence": [{"path": "procedure.txt", "sha256": "b" * 64}],
+        },
+    }
+
+    assert schema_errors(root, "result-record.schema.json", doc) == []
+
+    failing = {
+        **doc,
+        "review": {**doc["review"], "outcome": "fail"},
+        "fallback_decision": "Adopt the documented fallback.",
+    }
+    assert schema_errors(root, "result-record.schema.json", failing) == []
+
+    without_fallback = {key: value for key, value in failing.items() if key != "fallback_decision"}
+    assert schema_errors(root, "result-record.schema.json", without_fallback)
