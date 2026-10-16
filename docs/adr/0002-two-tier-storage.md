@@ -27,6 +27,11 @@ Two tiers, built on the tiered-cache pattern documented by mergerfs.
   pool, on a schedule) with the project's safety rule: copy with a checksum and keep the
   source, run and verify `snapraid sync`, and only then delete the pool copy. The stock
   `--remove-source-files` behaviour is not acceptable.
+- If a client deletes a selected pool file after the mover copied it, the mover keeps the
+  archive copy and, after parity coverage, renames it into a trash directory beside the
+  archive branch on the same data subvolume. The trash is outside both mergerfs pools, is
+  never purged in Phase 0, and its exclusion from the pool views and recovery behaviour
+  remain subject to the S1/S3 spikes.
 - In the degraded state, sync, scrub and the mover are locked and the archive is
   read-only.
 
@@ -68,6 +73,10 @@ enhancement is worth adding later.
   the failed disk that was added or changed after the last sync is not recoverable.
 - A full pool must not spill into the archive: the archive branches are no-create and
   mergerfs `moveonenospc` is off in the cache pool (to be confirmed by S1).
+- A client delete of a selected pool file has a measured visibility window until the
+  trash rename. A crash before that rename is durable may leave the stale archive copy
+  visible on retry; this is an explicit S3 failure condition and requires a reviewed
+  correction before the tiered model can be accepted.
 - The mover is the critical component and needs crash-safety tests.
 - The decision is only accepted when the spikes show that the tiered-cache share works with
   Samba, renames and large files (S1), that the SnapRAID failure and snapshot behaviour
