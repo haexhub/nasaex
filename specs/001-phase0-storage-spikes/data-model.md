@@ -22,9 +22,12 @@ One of `S1` (tiered-cache share), `S2` (parity recovery), `S3` (mover crash safe
 | `criteria_versions` | Ordered list of Criteria versions; the last is the **current** one |
 | `records` | Zero or more Result records |
 
-Derived: the spike's **current verdict** is the verdict of the newest `spike-run` Result record that names the
-current criteria version, or `none` if there is no such record. For `S2` the verdict is `pending` while
-the newest `spike-run` record exists but the reviewed sub-record of `S2.7` (see Acceptance scenario) does not. For `X1`, `none` is a valid permanent
+Derived: for S1 to S5 (except the S2 review rule below), the spike's **current verdict** is the verdict of the
+newest `spike-run` Result record that names the current criteria version, or `none` if there is no such record.
+For `S2`, the current verdict is derived from that run and its matching review: a failed automated S2.7 step
+check is `fail` and remains `fail` even if a later review passes; when the automated checks pass, the review
+outcome is the final S2.7 outcome, or `pending` while its reviewed sub-record does not exist. `pending` is a
+derived value that no record stores. For `X1`, `none` is a valid permanent
 state (the experiment was skipped); for `S1` to `S5` it blocks the gate.
 
 ### Acceptance scenario
@@ -37,26 +40,37 @@ state (the experiment was skipped); for `S1` to `S5` it blocks the gate.
 | `action` | Text: the "When" |
 | `observable` | Text: the checkable "Then"; must be decidable without interpretation (FR-002), using the observable terms of the spec's verdict model (named errno, numeric bound, manifest). Exception: `S2.7` carries `review: true` for the written procedure (FR-002) |
 | `check` | Name of the automated check (function in the spike's test script); required unless `review: true`. `S2.7` keeps its automated step checks and additionally carries `review: true` |
-| `cases` | Optional case generator for matrix scenarios (for example `mover-crash-points`), producing case ids `S3.2:<point>:<kill-mode>`, or variant generators (`mount-variants` for `S1.2`, `S1.6`, `S1.8`) where each case is marked `gating: true` (baseline variant) or `gating: false` (informational variant) |
+| `review`, `review_kind` | `review: true` only for `S2.7`; such a scenario names the kind of the record that judges it in `review_kind: review` (required with `review: true`, forbidden otherwise) |
+| `cases` | Optional case generator for matrix scenarios (for example `mover-crash-points`), producing case ids `S3.2:<point>:<kill-mode>`, or variant generators (`mount-variants` for `S1.2`, `S1.6`, `S1.8`) where each case is marked `gating: true` (baseline variant) or `gating: false` (informational variant). The criteria file lists the variants of such a scenario in `variants` (variant name, `gating`, at least one variant gating) and the case entries of the record carry the same flag |
 | `prediction` | For S2 scenarios: the expected set of recoverable and unrecoverable items, as a rule over the fixture at parity-block granularity, or a reference to a table in the criteria file (FR-016); the snapshot scenario (S2.9) and the interrupted-sync scenario (S2.4) carry one prediction per variant |
 
 Outcome of one execution of a scenario (in a Result record): `pass`, `fail`, `error` (could not
 execute, harness or infrastructure failure), `skipped`, `flaky` (differs between repeated runs).
 Only `pass` counts as passing for an ordinary scenario; every other value counts as `fail` for the verdict
-(spec verdict model). `S2.7` is `pending` until its reviewed sub-record exists.
+(spec verdict model). `S2.7` is `fail` when an automated step check fails; otherwise it is `pending` until its
+reviewed sub-record exists.
 For a scenario with cases, the scenario outcome is `pass` only if every **gating** case is `pass`; the
-record keeps the case list. A case with `gating: false` (a non-baseline variant of `S1.2`, `S1.6` or
+record keeps the case list; the `gating` flag of a case entry is a boolean and an absent flag means `true`. A case with `gating: false` (a non-baseline variant of `S1.2`, `S1.6` or
 `S1.8`: create policy `lus`, `passthrough.io=rw`, `cache.files=auto-full`) is informational: its outcome and
 evidence are recorded in the case list but never change the scenario outcome or the verdict.
 
-`S2.7` (reviewed judgement): the spike-run record carries the outcomes of its automated step checks. The
-scenario outcome that counts for the verdict is set by a separate **review sub-record** (a record of kind
-`review`, committed through a PR) that names the S2 record and sets `S2.7` to `pass` or `fail`. A failed
-step check makes `S2.7` `fail` without review. Until a review sub-record exists, `S2.7` is `pending`, the
-S2 verdict is `pending` and no ADR gate may be applied. The result-record schema has no kind `review`, no
-`pending` verdict and no per-case `gating` flag yet. The schemas are intentionally unchanged by this
-clarification; task T066 must extend the result-record contract before the first record-mode run that needs
-these fields.
+`S2.7` (reviewed judgement): the spike-run record carries the outcomes of its automated step checks (the `S2.7`
+outcome in a spike-run record is the outcome of the step checks only). The scenario outcome that counts for the
+verdict is set by a separate **review sub-record** (a record of kind `review`, committed through a PR, see
+Result record) that names the S2 record and sets `S2.7` to `pass` or `fail`. A failed step check makes `S2.7`
+`fail` without review, and a later passing review cannot override that failure. When the automated checks pass,
+the review sub-record sets the final outcome to `pass` or `fail`; until it exists, `S2.7` is `pending`, the S2
+verdict is `pending` and no ADR gate may be applied. A failing review carries the immutable `fallback_decision`.
+
+`pending` is a derived value, not a stored one (decided with the schema extension of T037a). A result record is
+immutable once committed, so a stored `pending` would have to be rewritten when the review arrives; instead the
+review is a second, additive record and the tooling derives the status from the pair: the newest `spike-run`
+record of the current criteria version whose automated S2.7 checks pass and without a `review` record that names it
+is `pending`; a failed automated S2.7 check remains `fail` regardless of later review records. For that reason
+`outcome` and `verdict` in the schema keep only their existing values, and the `verdict` of an S2 spike-run
+record is the automated verdict (PASS only if every scenario including the `S2.7` step checks passes); it never
+stands for the S2 spike status on its own.
+
 
 ### Criteria version
 
@@ -84,19 +98,20 @@ The outcome of one run of one spike. Immutable once committed. Fields (full sche
 | Field | Description |
 | --- | --- |
 | `record_id` | `<spike>-<UTC timestamp basic format>-v<criteria version>` |
-| `kind` | `spike-run` or `repro` (three-run record, SC-004); the review sub-record of S2.7 is a further kind `review` (schema follow-up) |
+| `kind` | `spike-run` or `repro` (three-run record, SC-004); the review sub-record of S2.7 is a further kind `review` (below) |
 | `gating` | X1 records only: `false`. The experiment never gates an ADR; absent on S1 to S5 records |
 | `spike`, `criteria_version`, `criteria_sha256` | What was judged; must equal a line of `frozen.lock` |
 | `environment` | Environment revision: repository commit, `flake.lock` SHA-256, nixpkgs revision, tool versions observed inside the guest, topology profile, host class descriptor (CPU model class, vCPU count, memory), QEMU version, KVM yes/no, kernel config pre-flight results |
 | `date` | UTC start and end |
-| `scenarios` | Per scenario: `id`, `outcome`, `cases` (id, outcome, fault point, kill mode, `gating` for variant cases), `evidence` (paths inside the evidence archive, SHA-256), `notes` |
-| `verdict` | `PASS` or `FAIL` for a run record; derived only from scenario outcomes. The derived S2 spike status can additionally be `pending` while its review sub-record is absent |
+| `scenarios` | Per scenario: `id`, `outcome`, `cases` (id, outcome, `gating` flag, fault point, kill mode), `evidence` (paths inside the evidence archive, SHA-256), `notes` |
+| `verdict` | `PASS` or `FAIL` for a run record; derived only from scenario outcomes. The S2 spike status can additionally be `pending` (derived, never stored) while its review sub-record is absent |
 | `fallback_decision` | Required on `FAIL` for S1 to S5: which fallback applies (FR-007); omitted for X1, which has no fallback |
 | `coverage` | Counts for SC-005 (crash points enumerated, executed, per kill mode; 19 points, 38 cases as currently enumerated), prediction comparisons for SC-006, transitions for SC-007, durations for SC-008 |
 | `required_settings` | Mount or share settings found necessary (FR-013: create policy, branch modes, out-of-space settings, rename setting), the procedure for branch changes made directly by the mover (S1.10), written recovery procedure reference (S2.7) |
 | `residual_risk` | Fixed statements, at least: device-level volatile caches not emulated, virtual disks stand in for real disks |
 | `supersedes` | Optional record id of an earlier record this run re-runs after a documented design correction (never deletes the earlier one) |
 | `evidence_archive` | Path of `evidence.tar.xz` and its SHA-256 |
+| `reviewed_record`, `review` | `kind: review` only (`spike` is `S2`, `record_id` has the prefix `review-S2-`): `reviewed_record` is the id of the S2 `spike-run` record it judges; `review` holds `scenario` (`S2.7`), `outcome` (`pass` or `fail`), `reviewer`, `date`, `evidence` (entries of the reviewed record's evidence archive that were read, pinned by SHA-256) and optional `notes`. It carries the criteria version and hash of the reviewed record but none of the run fields (`environment`, `scenarios`, `verdict`, `evidence_archive`, ...) |
 
 Validation rules: the criteria version named must be `frozen`; `verdict` equals `PASS` iff every
 scenario of that criteria version appears with outcome `pass` (variant cases with `gating: false` and the
@@ -108,8 +123,9 @@ written and S3 has no verdict); free text and evidence contain no absolute host 
 ### Verdict
 
 `PASS` or `FAIL` for one run record. A spike passes only if every scenario passes (no partial pass); variant
-cases with `gating: false` do not count. For `S2`, `pending` while the review sub-record of `S2.7` is
-missing. Derived by `spikectl verdict`; never typed by hand.
+cases with `gating: false` do not count. For `S2`, `pending` applies only while automated S2.7 checks pass and
+the review sub-record is missing; an automated failure remains `FAIL`, even after a passing review. Derived by
+`spikectl verdict`; never typed by hand.
 
 ### ADR gate
 
