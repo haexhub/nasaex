@@ -14,7 +14,7 @@ branch mode) are recorded from the gating case. Scaffolding for the spikes, not 
 
 from collections.abc import Mapping
 
-from s1.context import BASELINE_ARCHIVE_MODE, Lab, Variant
+from s1.context import BASELINE_ARCHIVE_MODE, Lab, Variant, under
 from s1.fixture import POOL
 
 from testlib.fixtures import Entry, Fixture, expected_manifest
@@ -40,12 +40,6 @@ def placement_failures(holders: Mapping[str, list[str]]) -> list[str]:
     return [f"{path} lies on {where}" for path, where in holders.items() if where != [POOL]]
 
 
-def _under(prefix: str, entries: tuple[Entry, ...]) -> tuple[Entry, ...]:
-    return tuple(
-        Entry(f"{prefix}/{e.path}", e.branch, e.kind, e.size, e.mode, e.mtime) for e in entries
-    )
-
-
 def _create(lab: Lab, entry: Entry) -> None:
     if entry.kind == "dir":
         lab.client.succeed(f"mkdir {lab.share.path(entry.path)}")
@@ -55,7 +49,7 @@ def _create(lab: Lab, entry: Entry) -> None:
 
 def check_new_data_placement(lab: Lab, variant: Variant) -> None:
     prefix = f"s1.2/{variant.name}"
-    old, new = _under(prefix, OLD), _under(prefix, NEW)
+    old, new = under(prefix, OLD), under(prefix, NEW)
     lab.place(Fixture(SEED, old))
     failures: list[str] = []
     with lab.variant(variant.overrides):
@@ -72,7 +66,7 @@ def check_new_data_placement(lab: Lab, variant: Variant) -> None:
     if one_tree:
         failures.append(f"the share does not show one tree: {describe(one_tree)}")
 
-    (probe,) = _under(prefix, (WITHOUT_NC,))
+    (probe,) = under(prefix, (WITHOUT_NC,))
     without_nc: dict = {"path": probe.path, "create_policy": variant.overrides}
     try:
         with lab.variant(variant.overrides, archive_mode=None):

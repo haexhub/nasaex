@@ -20,7 +20,7 @@ import json
 import shlex
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from s1.fixture import ARCHIVE, POOL
@@ -102,6 +102,14 @@ def branches_with_mode(what: str, mode: str | None) -> str:
     return ":".join([pool, *(b if mode is None else f"{b}={mode}" for b in plain)])
 
 
+def under(prefix: str, entries: tuple[Entry, ...]) -> tuple[Entry, ...]:
+    """The entries moved below `prefix`, so that each scenario (and case) owns its directory."""
+    return tuple(
+        replace(e, path=f"{prefix}/{e.path}", link_to=e.link_to and f"{prefix}/{e.link_to}")
+        for e in entries
+    )
+
+
 def _b64(text: str) -> str:
     return base64.b64encode(text.encode()).decode()
 
@@ -171,6 +179,16 @@ class Lab:
     def inode(self, key: str, rel: str) -> int:
         return int(self.server.succeed(f"stat -c %i {shlex.quote(self.path(key, rel))}"))
 
+    def move_command(self, rel: str, first: int = 0) -> str:
+        """Shell command that moves a pool file the mover's way with the move primitives of
+        guest/mover-effects.sh: copy through the base pool (M1), then unlink the pool copy (M5);
+        with `first` = 1 their hooks fire (contracts/mover-steps.md)."""
+        source, target = shlex.quote(self.path(POOL, rel)), shlex.quote(f"{BASE}/{rel}")
+        return (
+            f"mover-effects mover_copy_item {source} {target} {first}"
+            f" && mover-effects mover_unlink_pool_copy {source} {first}"
+        )
+
     def effective(self, option: str) -> str:
         """The value of a mergerfs option of the running cache pool (runtime xattr)."""
         return self.python(self.server, _GETXATTR, f"{CACHE}/.mergerfs", f"user.mergerfs.{option}")
@@ -193,6 +211,11 @@ class Lab:
         """Run a client command whose failure is an outcome, not a harness error: exit status
         and combined output."""
         return self.client.execute(f"{command} 2>&1")
+
+    def rename_through(self, mount: CifsMount, src: str, dst: str) -> tuple[int, str]:
+        """Rename or move through a client mount (`mv -T`); exit status and output."""
+        source, target = shlex.quote(mount.path(src)), shlex.quote(mount.path(dst))
+        return self.client_run(f"mv -T -- {source} {target}")
 
     def flip_through(self, mount: CifsMount, rel: str, offsets) -> None:
         """Invert the bits of the byte at each offset in place, through a client mount."""
