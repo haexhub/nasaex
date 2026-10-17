@@ -5,6 +5,7 @@ import json
 
 import pytest
 from helpers import (
+    LOCK,
     S2_OUTCOMES,
     criteria_doc,
     make_root,
@@ -16,7 +17,7 @@ from helpers import (
 )
 
 from spikectl.freeze import freeze
-from spikectl.model import SPIKES
+from spikectl.model import SPIKES, LockEntry, sha256_hex
 from spikectl.verdict import current_verdicts, derive_verdict, format_matrix, gate_matrix
 
 CRITERIA_IDS = ("S1.1", "S1.2")
@@ -235,9 +236,11 @@ def test_a_typed_verdict_that_differs_from_the_derived_one_is_an_error(root):
 
 
 def all_pass(root):
-    for spike in ("S1", "S2", "S3", "S4", "S5"):
+    for spike in ("S1", "S3", "S4", "S5"):
         entry = frozen(root, spike)
         put_record(root, entry, spike, {f"{spike}.1": "pass", f"{spike}.2": "pass"})
+    # S2 cannot be frozen without the reviewed S2.7 (T037d), so it passes through a review.
+    write_review(root, review_doc(s2_run(root, frozen_s2(root)), "pass"))
 
 
 def test_adr_eligibility_follows_the_gating_spikes(root):
@@ -497,7 +500,11 @@ def test_a_stored_pending_verdict_is_an_error(root):
 
 
 def test_a_spike_without_a_review_scenario_never_waits_for_review(root):
-    entry = frozen(root, "S2")  # criteria without review: true
+    # freeze refuses S2 criteria without the reviewed S2.7 and verify reports them (T037d);
+    # the verdict still derives from the criteria as locked, so lock such a file by hand.
+    path = write_criteria(root, doc=criteria_doc("S2", status="frozen"))
+    entry = LockEntry(path.name, 1, sha256_hex(path.read_bytes()))
+    (root / LOCK).write_text(entry.line() + "\n", encoding="utf-8")
     put_record(root, entry, "S2", {"S2.1": "pass", "S2.2": "pass"})
 
     assert s2(root).verdict == "PASS"

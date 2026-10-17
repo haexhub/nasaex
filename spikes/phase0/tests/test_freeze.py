@@ -42,7 +42,7 @@ def test_freeze_marks_the_file_frozen_and_keeps_comments(root):
 
 def test_freeze_never_rewrites_an_earlier_line(root):
     write_criteria(root, spike="S1")
-    write_criteria(root, spike="S2")
+    write_criteria(root, doc=criteria_doc("S2", scenarios=7, review=True))
     freeze(root, "S1")
     before = (root / LOCK).read_bytes()
 
