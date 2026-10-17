@@ -82,6 +82,27 @@ def content_sha256(seed: str, entry: Entry) -> str:
     return digest.hexdigest()
 
 
+def flipped_sha256(seed: str, entry: Entry, offsets) -> str:
+    """SHA-256 of the entry's content after inverting every bit of the byte at each offset
+    (the expectation of an in-place change made through the share)."""
+    for offset in offsets:
+        if not 0 <= offset < entry.size:
+            raise ValueError(f"{entry.path}: offset {offset} is outside {entry.size} bytes")
+    digest = hashlib.sha256()
+    start = 0
+    for chunk in content_chunks(seed, entry):
+        end = start + len(chunk)
+        inside = [o - start for o in offsets if start <= o < end]
+        if inside:
+            data = bytearray(chunk)
+            for index in inside:
+                data[index] ^= 0xFF
+            chunk = bytes(data)
+        digest.update(chunk)
+        start = end
+    return digest.hexdigest()
+
+
 def _hex_xattrs(xattrs: tuple[tuple[str, str], ...]) -> tuple[tuple[str, str], ...]:
     return tuple(sorted((name, value.encode().hex()) for name, value in xattrs))
 
