@@ -26,6 +26,7 @@
       # Probe-only VM tests: they never write records.
       probeFaults = import ./vm-tests/probes/faults.nix { inherit mkSpike; };
       probeDelete = import ./vm-tests/probes/concurrent_delete.nix { inherit mkSpike; };
+      probeSmbAttrs = import ./vm-tests/probes/smb_attrs.nix { inherit mkSpike; };
 
       app = pkg: { type = "app"; program = lib.getExe pkg; };
       placeholders = lib.genAttrs
@@ -47,12 +48,14 @@
         probe-faults = apps.runDriver "probe-faults" probeFaults.driver;
         probe-concurrent-delete = apps.runDriver "probe-concurrent-delete" probeDelete.default.driver;
         probe-concurrent-delete-ff = apps.runDriver "probe-concurrent-delete-ff" probeDelete.ff.driver;
+        probe-smb-attrs = apps.runDriver "probe-smb-attrs" probeSmbAttrs.driver;
       });
 
       packages.${system} = {
         driver-probe-faults = probeFaults.driver;
         driver-probe-concurrent-delete = probeDelete.default.driver;
         driver-probe-concurrent-delete-ff = probeDelete.ff.driver;
+        driver-probe-smb-attrs = probeSmbAttrs.driver;
       }
       # Cached test drivers of the spikes; US1 to US5 and X1 replace these placeholders.
       // lib.genAttrs
