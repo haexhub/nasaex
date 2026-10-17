@@ -55,6 +55,13 @@ fixture = from_json(base64.b64decode(sys.argv[1]).decode())
 with open(sys.argv[2], "wb") as handle:
     for chunk in content_chunks(fixture.seed, fixture.entries[0]):
         handle.write(chunk)"""
+_FLIP = """import sys
+with open(sys.argv[1], "r+b") as handle:
+    for offset in map(int, sys.argv[2:]):
+        handle.seek(offset)
+        byte = handle.read(1)[0]
+        handle.seek(offset)
+        handle.write(bytes([byte ^ 0xFF]))"""
 _GETXATTR = """import os, sys
 print(os.getxattr(sys.argv[1], sys.argv[2]).decode())"""
 
@@ -182,6 +189,15 @@ class Lab:
         self.umount_clients()
         self.mount_clients()
 
+    def client_run(self, command: str) -> tuple[int, str]:
+        """Run a client command whose failure is an outcome, not a harness error: exit status
+        and combined output."""
+        return self.client.execute(f"{command} 2>&1")
+
+    def flip_through(self, mount: CifsMount, rel: str, offsets) -> None:
+        """Invert the bits of the byte at each offset in place, through a client mount."""
+        self.python(self.client, _FLIP, mount.path(rel), *map(str, offsets))
+
     def write_through(self, mount: CifsMount, rel: str, seed: str, entry: Entry) -> None:
         """Write the seeded content of `entry` to `rel` through a client mount."""
         fixture = Fixture(seed, (entry,))
@@ -189,7 +205,8 @@ class Lab:
 
     # --- cache pool variants -------------------------------------------------------------------
 
-    def _unit(self, field: str) -> str:
+    def cache_unit(self, field: str) -> str:
+        """A field of the cache pool's systemd mount unit as configured (What, Options)."""
         return self.server.succeed(f"systemctl cat {CACHE_UNIT} | sed -n 's/^{field}=//p'").strip()
 
     @contextmanager
@@ -201,8 +218,8 @@ class Lab:
         if not overrides and archive_mode == BASELINE_ARCHIVE_MODE:
             yield
             return
-        what = branches_with_mode(self._unit("What"), archive_mode)
-        options = variant_options(self._unit("Options"), overrides)
+        what = branches_with_mode(self.cache_unit("What"), archive_mode)
+        options = variant_options(self.cache_unit("Options"), overrides)
         self._release_cache_pool()
         self.server.succeed(f"systemctl stop {CACHE_UNIT}")
         self.server.succeed(f"mergerfs -o {shlex.quote(options)} {shlex.quote(what)} {CACHE}")
