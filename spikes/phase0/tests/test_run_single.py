@@ -5,6 +5,7 @@ rest (preflight and mode gate of spikectl.record, record writer, evidence) is th
 import datetime
 import json
 import shutil
+import signal
 import tarfile
 import tempfile
 from pathlib import Path
@@ -21,6 +22,7 @@ from helpers import (
 )
 
 from spikectl import cli
+from spikectl import run as run_module
 from spikectl.freeze import freeze
 from spikectl.model import schema_errors
 from spikectl.record import PreflightError
@@ -189,6 +191,44 @@ def test_shakedown_runs_the_cached_driver_outside_the_sandbox_in_a_fresh_state_d
     assert not (root / RESULTS / "S1").exists(), "shakedown never writes a record"
     outcome = json.loads((out / "outcome.json").read_text())
     assert [s["id"] for s in outcome["scenarios"]] == ["S1.1"]
+
+
+def test_launch_kills_the_process_group_when_wait_is_interrupted(monkeypatch, tmp_path):
+    class InterruptedProcess:
+        pid = 123
+
+        def __init__(self):
+            self.waits = 0
+
+        def wait(self, timeout=None):
+            self.waits += 1
+            if self.waits == 1:
+                raise KeyboardInterrupt
+            return -signal.SIGKILL
+
+    process = InterruptedProcess()
+    killed = []
+    monkeypatch.setattr(run_module.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(run_module.os, "killpg", lambda pid, sig: killed.append((pid, sig)))
+
+    with pytest.raises(KeyboardInterrupt):
+        run_module._launch(["driver"], tmp_path, {}, tmp_path / "driver.log", timeout_s=1)
+
+    assert killed == [(123, signal.SIGKILL)]
+    assert process.waits == 2
+
+
+def test_run_removes_machine_state_when_driver_launch_is_interrupted(root, state_base):
+    host = FakeHost(state_base)
+
+    def interrupt(*_args):
+        raise KeyboardInterrupt
+
+    host.launch = interrupt
+    with pytest.raises(KeyboardInterrupt):
+        run_spike(root, "S1", "shakedown", env=env_for(state_base), host=host)
+
+    assert not (state_base / "S1-20261022T101500Z" / "run").exists()
 
 
 def test_every_run_gets_its_own_state_directory(root, state_base):
