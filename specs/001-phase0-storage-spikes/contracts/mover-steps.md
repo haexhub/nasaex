@@ -60,7 +60,8 @@ rule was dropped by the clarification of 2026-10-16 (task T081).
   clock of the machine the mover runs on, is the time since the later of its mtime and ctime, and a file with
   a timestamp in the future has no valid age and is not selected; and (2) no process and no SMB client holds
   it open when it is examined (open handles are determined on the server). A file that fails either test stays
-  in the pool untouched and is considered again by the next run. The S3 fixture contains at least one file
+  in the pool untouched and is considered again by the next run. A pool file whose name has the form of a
+  temporary file of M1 (below) is never selected (proposed decision, see that term). The S3 fixture contains at least one file
   that is too young and one that is held open, and both must stay in the pool. A selected file whose pool file is
   gone before its copy-time identity could be read is dropped from the run: no archive copy exists, so nothing
   can reappear.
@@ -104,14 +105,41 @@ rule was dropped by the clarification of 2026-10-16 (task T081).
   (a client created a new file there), the item is a changed item, not a vanished one: the new pool file is
   kept and the stale archive copy is superseded by the next run.
 - **Vanished item without archive copy**: a vanished item whose archive copy is gone as well when the mover
-  looks for it at M2 or M5. A client delete through the share is expected to cause this under the default
-  unlink policy of mergerfs (`epall`, which includes the `NC` archive branches and so also unlinks the archive
-  copy that M1 made; read from the pinned 2.41.1 source, UNVERIFIED until S1 scenario 4 and the probe of the
-  delete fault kind have measured it). It is a valid outcome, not a failure: the item is reported on standard
+  looks for it at M2 or M5. A client delete through the share after the rename of M1 causes this: the cache
+  pool keeps the default unlink policy of mergerfs, `epall` (no `func.unlink` option is set; spec
+  Clarifications 2026-10-17, unlink policy), which includes the `NC` archive branches and so also unlinks the
+  archive copy that M1 made (measured by the probe of the delete fault kind, task T037c, at `post:M1`, two
+  runs; at the later points expected from the same policy and UNVERIFIED until S3 scenario 7 (e) runs). It is a
+  valid outcome, not a failure: the item is reported on standard
   error as `vanished-archive-gone` and leaves the run (nothing to hash, to cover or to move); it is not an M2
   hash mismatch, nothing is trashed, the mover deletes nothing, and no data is lost because the client
   deleted the file. The oracle tells it from a mover deletion by the host's record of the branches that held
   item 1 right after the delete (see the hook protocol).
+- **Temporary file of M1**: the file under which M1 writes the archive copy before the rename, named
+  `.<name>.tmp-<pid>` in the target archive directory (`<name>` the final name, `<pid>` the process id of the
+  copying mover). It is never an archive copy (M1 has not renamed it and M2 has not compared it) and never a
+  live file; the mover and the oracle treat it as neither. It lies in an archive branch directory, so it is
+  listed through the share while it exists (measured by probe T037f). A **stale temporary file** is one that a
+  run left behind: by a failure of M1 (for example the copy failing because a client deleted its source during
+  M1, or `fault:M1:enospc`) or by a `kill` or `poweroff` at `mid:M1:tmp-created`, `mid:M1:tmp-partial` or
+  `mid:M1:tmp-data-synced`. **Proposed decision (maintainer review)**: a run that fails in M1 reports the name
+  of the temporary file it leaves together with the failing step; the next run removes, at the start of M1 and
+  before its first copy, every stale temporary file in the archive branch directories (a file whose name has
+  this form and whose `<pid>` is not its own), reports each removal on standard error as `stale-temp-removed`,
+  removes no file of any other name and never touches the trash; and selection never selects a pool file whose
+  name has this form, so the mover never archives a live file under such a name. The removal is not a crash
+  point: it is one unlink of a file that is neither live nor an archive copy, the states before and after it
+  are both permitted, and a crash at it leaves a state that the next run handles the same way (the reasoning
+  that also keeps the creation of missing trash directories out of the point list); counting it as a point
+  (`mid:M1:stale-temp-removed`) would make 22 crash points and 44 cases. While a stale temporary file exists,
+  its listing through the share is recorded as a finding of the case, not a failure: FR-019 (d) judges the
+  content of live files (a partial copy under a temporary name is a permitted state before `post:M1`, and every
+  M1 shows its temporary file through the share), and the exclusion of S1 scenario 1 and FR-012 concerns the
+  trash, which a temporary file is not. A stale temporary file still present after the next run has completed
+  is a failure: of S3 scenario 3 for a crash case (the final state of an uninterrupted run holds no temporary
+  file) and of S3 scenario 7 (e) for `inject:delete-pool-at:M1:tmp-partial`. Limit (UNVERIFIED, not tested in
+  Phase 0): the rule knows a temporary file by its name only, so an archived file that a client renames in place
+  to a name of this form (S1 scenario 6) would be removed by it.
 - **Snapshot-supported sync**: `snapraid sync` run through the snapshot tooling selected in the plan
   (open item O15): new read-only btrfs snapshots of the data disks are taken, the sync runs against
   them, and the snapshots are kept until the next sync completes.
@@ -124,7 +152,7 @@ rule was dropped by the clarification of 2026-10-16 (task T081).
 
 | Step | Name | Action | Durable effects (each is a mid-step point) | Postcondition at `post:M<k>` |
 | --- | --- | --- | --- | --- |
-| M1 | copy | For each copy item: record its copy-time identity, then copy the pool file through the base pool to a temporary name in the target archive directory together with the metadata listed under "Metadata preservation", fsync, rename to the final name (for a replacement the rename atomically replaces the old archived version), fsync the directory; then record the copy-time record of the archive copy | `tmp-created`, `tmp-partial` (half of the bytes written, not yet synced), `tmp-data-synced`, `renamed`, `parent-synced` (for item 1), `item-1-done` | Every copy item has a complete archive copy under its final name with the metadata preserved; pool copies are untouched; the copy-time identity and the copy-time record of the archive copy of every item are held in memory |
+| M1 | copy | First remove the stale temporary files of earlier runs (see "Temporary file of M1"; proposed, not a point). Then for each copy item: record its copy-time identity, then copy the pool file through the base pool to a temporary name in the target archive directory together with the metadata listed under "Metadata preservation", fsync, rename to the final name (for a replacement the rename atomically replaces the old archived version), fsync the directory; then record the copy-time record of the archive copy | `tmp-created`, `tmp-partial` (half of the bytes written, not yet synced), `tmp-data-synced`, `renamed`, `parent-synced` (for item 1), `item-1-done` | Every copy item has a complete archive copy under its final name with the metadata preserved; no temporary file of the mover remains in an archive branch directory; pool copies are untouched; the copy-time identity and the copy-time record of the archive copy of every item are held in memory |
 | M2 | checksum | For each copy item: hash the pool file, then read its identity again; if the pool file is gone the item is a vanished item (no pool hash; the archive copy is hashed and compared with the copy-time hash only; if the archive copy is gone too, the item is a vanished item without archive copy, reported and out of the run, not a mismatch); if the identity differs from the copy-time identity the item is a changed item and is skipped; otherwise hash the archive copy (archive side read after dropping caches so it comes from the disk) and compare the content hash and the metadata fields | `pool-hashed`, `archive-hashed` (no durable effects; read only) | For every unchanged item the hashes and the metadata fields are equal; changed items are reported and out of the run; vanished items that remain in the run are reported and have an archive copy equal to their copy-time hash; a vanished item without archive copy is reported and out of the run; a content or metadata mismatch of an unchanged item, or a hash mismatch of a vanished item's archive copy, stops the run at M2, reports it, and changes nothing else |
 | M3 | sync | Snapshot-supported `snapraid sync` for the archive, if at least one unchanged or vanished item remains. The mover holds no lock on the pool; client I/O is neither blocked nor delayed while it runs | `sync-pos` (`snapraid -l` progress position reached, or a sync limited with `-B`), see the fault-points contract | Sync completed with exit status 0; content file saved; the snapshot set of this sync is marked complete; no client write waited for it (S3 scenario 7 (c)) |
 | M4 | verification | Verify that every unchanged or retained vanished copy item is covered by completed parity: the item exists with the expected hash in the snapshot set of the completed sync, there are no pending changes for the item paths, and a check of those paths succeeds | `checked` (no durable effects) | Parity coverage verified for every unchanged and every retained vanished copy item; a vanished item without archive copy was reported and removed from the run at M2 |
@@ -181,10 +209,19 @@ criteria version.
 - Case id: `S3.2:<point>:<kill|poweroff>`, for example `S3.2:post:M5:poweroff`. The residual-window point
   `mid:M5:item-validated` is also a crash point (a kill or power-off right after the final check).
 - The two points `mid:M5:trash-renamed` and `mid:M5:trash-parent-synced` fire only when item 1 is a vanished
-  item. A case of either point therefore arms `inject:delete-pool-after:M3` first (a client delete of the pool
-  file of item 1 after the sync has covered it), then kills or powers off at the point. Their case ids have the
-  same form, for example `S3.2:mid:M5:trash-renamed:poweroff`. Whether the harness can reach them under the
-  measured unlink policy is open (see "Known limits of the trash handling", point 4).
+  item whose archive copy is present at M5. A case of either point therefore arms
+  `inject:delete-pool-at:M1:tmp-data-synced` first (a client delete of the pool file of item 1 while its
+  temporary copy is synced and not yet renamed; the rename then makes it the archive copy, which M3 covers and
+  M5 trashes), then kills or powers off at the point. Their case ids have the same form, for example
+  `S3.2:mid:M5:trash-renamed:poweroff`. Under the unlink policy `epall` of the cache pool a delete after M1
+  or after M3 removes the archive copy as well and cannot reach these points (see "Known limits of the trash
+  handling", point 4); that the delete during M1 reaches them is measured up to the end of M1 (probe T037f) and
+  UNVERIFIED for M2 to M5 until S3 runs. A case whose point is not reached counts as failed (spec verdict
+  model).
+- The unlink-policy amendment of 2026-10-17 adds the two injection points `inject:delete-pool-at:M1:tmp-data-synced`
+  and `inject:delete-pool-at:M1:tmp-partial` (below). Injection points are not crash points, so the count stays
+  21 crash points and 42 cases (6 + 6 + 2 + 1 + 1 + 5 = 21; 21 x 2 = 42); the named fault and injection points
+  go from 11 (4 fault points + 7 injection points) to 13 (4 fault points + 9 injection points).
 - The amendment of 2026-10-16 (no client lock, selection, compare-and-delete at M5) adds no durable effect
   and no step: selection and the copy-time identity are read-only and in memory, the identity comparisons of
   M2 and M5 read only, so the count of crash points and cases is unchanged by it. Selection is covered by
@@ -218,9 +255,11 @@ namespace; they are enumerated here, are not crash points and are not counted in
 | `inject:modify-pool-after:M2` | S3.7 (b) | Client write after M2 (found by the final check of M5) |
 | `inject:modify-pool-during:M3` | S3.7 (c) | Client write while the sync of M3 is in progress; must complete without delay |
 | `inject:modify-pool-at:M5:residual-window` | S3.7 (d) | Client write between the final check of M5 and the unlink of item 1; the outcome (data lost or not lost) is recorded |
-| `inject:delete-pool-after:M1` | S3.7 (e) | Client delete of the pool file of item 1 after M1 (found at M2 as a vanished item; the trash move happens at M5) |
-| `inject:delete-pool-after:M3` | S3.7 (e) | Client delete of the pool file of item 1 after M3 (found at M5); also the precondition of the two trash crash points |
-| `inject:modify-archive-after-delete:M4` | S3.7 (e) | Client write through the share to the path of item 1 after M4, in a case that also arms `inject:delete-pool-after:M3`. Where the delete left the archive copy in place, the write changes that archive copy in place (S1 scenario 3), so M5 finds it no longer matching its copy-time record and leaves it as `vanished-archive-changed`; where the delete removed the archive copy, the write creates a new pool file and M5 treats item 1 as a changed item. M4 is the only step: a client change of the archive copy before M4 has completed is expected to be found by M2 (hash mismatch) or M4 (verification) and to stop the run (failure behaviour) |
+| `inject:delete-pool-at:M1:tmp-data-synced` | S3.7 (e) | Client delete of the pool file of item 1 while the mover is held at `mid:M1:tmp-data-synced` (temporary copy complete and synced, not renamed). The path of item 1 is on no archive branch yet, so the delete removes only the pool file; the mover's rename then makes the temporary copy the archive copy (measured, probe T037f, two runs: copy exit status 0, archive copy byte-identical). Expected outcome: **trash** (a vanished item with archive copy, found at M2, kept through M3 and M4, moved into the trash at M5); also the precondition of the two trash crash points |
+| `inject:delete-pool-at:M1:tmp-partial` | S3.7 (e) | Variant of the point above, held at `mid:M1:tmp-partial` (half of the bytes written, not synced). Expected outcome: **copy failed** (measured, probe T037f, two runs): the copy fails when it reads the rest of the deleted source (exit status 1), M1 fails and the run stops (failure behaviour), no archive copy and no trash copy of item 1 exist, and the partial temporary file stays on the archive disk, listed through the share, until the next run removes it (a stale temporary file, see "Temporary file of M1") |
+| `inject:delete-pool-after:M1` | S3.7 (e) | Client delete of the pool file of item 1 after M1. Under the unlink policy `epall` the delete removes the archive copy too (measured, probe T037c, two runs). Expected outcome: **archive gone** (a vanished item without archive copy, found at M2 and reported `vanished-archive-gone`; nothing is trashed) |
+| `inject:delete-pool-after:M3` | S3.7 (e) | Client delete of the pool file of item 1 after M3. Expected outcome under `epall`: **archive gone**, as after M1, found at M5 (the same policy; not measured at this point, UNVERIFIED until S3 scenario 7 (e) runs) |
+| `inject:modify-archive-after-delete:M4` | S3.7 (e) | Client write through the share to the path of item 1 after M4, in a case that also arms a delete injection. With `inject:delete-pool-after:M3` the delete removed the archive copy (archive gone), so the write creates a new pool file and M5 treats item 1 as a changed item. **Proposed** second case (maintainer review) with `inject:delete-pool-at:M1:tmp-data-synced`, the only delete that leaves an archive copy under `epall`: the write changes that archive copy in place (S1 scenario 3), so M5 finds it no longer matching its copy-time record and leaves it as `vanished-archive-changed`. M4 is the only step: a client change of the archive copy before M4 has completed is expected to be found by M2 (hash mismatch) or M4 (verification) and to stop the run (failure behaviour) |
 
 and the variant selector `control:stock-remove-source` for S3 scenario 5 (the stock pattern: unlink each pool
 copy right after its copy, before M3). The control is a separate mover variant, not a point of the list.
@@ -245,33 +284,52 @@ See [fault-points.md](fault-points.md).
    waited through M3). The injection points are armed on these hook points: `inject:modify-pool-after:M1` on
    `post:M1`, `inject:modify-pool-after:M2` on `post:M2`, `inject:modify-pool-during:M3` on
    `mid:M3:sync-pos`, `inject:modify-pool-at:M5:residual-window` on `mid:M5:item-validated`,
-   `inject:delete-pool-after:M1` on `post:M1`, `inject:delete-pool-after:M3` on `post:M3`,
+   `inject:delete-pool-at:M1:tmp-data-synced` on `mid:M1:tmp-data-synced`,
+   `inject:delete-pool-at:M1:tmp-partial` on `mid:M1:tmp-partial`, `inject:delete-pool-after:M1` on `post:M1`,
+   `inject:delete-pool-after:M3` on `post:M3`,
    `inject:modify-archive-after-delete:M4` on `post:M4` (an append of a known byte pattern through the share at
-   the path of item 1; the host records on which branch the written file is found afterwards). For the two delete
+   the path of item 1; the host records on which branch the written file is found afterwards). For the four delete
    points the host deletes (unlinks) the pool path of item 1 through the share, again without waiting for the
-   mover, then lists the path of item 1 directly on the pool branch and on every archive branch and records
-   which branches still hold it (`branches_after_delete`), reads the effective unlink policy of the cache pool
-   (`func.unlink`), and reads the share path of item 1 once before it releases the hook. The read
-   (`visible_before_trash`) is recorded, not judged: it is true only where the delete left the archive copy in
-   place (the archive copy then shows through until the trash move); under the default unlink policy `epall`
-   the delete is expected to remove the archive copy too, and the read is expected to be false (UNVERIFIED,
-   measured). The mover then completes the run, and the checks of S3 scenario 7 run: after `inject:modify-pool-after:M1` and
+   mover, then lists the directory of item 1 directly on the pool branch and on every archive branch (temporary
+   names included, kept in the case evidence) and records which branches still hold item 1
+   (`branches_after_delete`): a branch holds it if it has the path of item 1, or, for the two delete points
+   during M1, a temporary file of the mover for item 1 whose content hash equals the hash the fixture expects
+   for item 1 (a complete temporary copy, which the rename turns into the archive copy; a partial temporary file
+   is not a holder). The host then reads the effective unlink policy of the cache pool (`func.unlink`, expected
+   `epall`) and reads the share path of item 1 once before it releases the hook. The read
+   (`visible_before_trash`) is recorded, not judged: it is true only where an archive copy of item 1 exists under
+   its path (it then shows through until the trash move); under `epall` it was false after the delete at
+   `post:M1` (probe T037c). For the delete points during M1 the path is on no branch until the mover's rename, so
+   the host arms `post:M1` as a release-only point and reads the share path once more there (at
+   `mid:M1:tmp-partial` the run fails before `post:M1`, and the host reads it after the run instead); probe
+   T037f saw the renamed copy at once through the cache pool on the server and an `actimeo=0` mount, but not by
+   `stat` through a default mount within 35 s, so this value depends on the client's caching and is recorded,
+   not judged. The mover then completes the run, and the checks of S3 scenario 7 run: after `inject:modify-pool-after:M1` and
    `inject:modify-pool-after:M2` the pool copy of item 1 was kept as a changed item, the newer pool version
    is available through the share and is not deleted or hidden by the stale archive copy, and a later run
    supersedes the archive copy; after `inject:modify-pool-during:M3` the write completed within the bound;
    after `inject:modify-pool-at:M5:residual-window` the oracle searches for the content of the completed
    write in the pool and in the archive, and the case records `data_lost: true` or `data_lost: false`. After a delete injection the checks of S3 scenario
    7 (e) run: the deleted file is not visible through the share (the path does not exist), no archive copy of
-   it exists in any archive branch, every other file is unchanged, and one of two outcomes holds: (trash) where
-   `branches_after_delete` names an archive branch, exactly one trash copy exists on the archive disk that held
-   the archive copy, its content hash equals the hash the fixture expects for the copied bytes, and a later run
-   neither moves, restores nor re-copies the trash entry; (archive gone) where `branches_after_delete` names no
-   branch, no trash copy exists and the item was reported `vanished-archive-gone`. The case records which
-   outcome it reached together with `func.unlink`. After `inject:modify-archive-after-delete:M4` the content of
+   it exists in any archive branch, every other file is unchanged, and the expected outcome of the injection
+   (injection table above) holds: (trash, `inject:delete-pool-at:M1:tmp-data-synced`) `branches_after_delete`
+   names the archive branch of the temporary copy, exactly one trash copy exists on that archive disk, its
+   content hash equals the hash the fixture expects for the copied bytes, and a later run neither moves,
+   restores nor re-copies the trash entry; (archive gone, `inject:delete-pool-after:M1` and
+   `inject:delete-pool-after:M3`) `branches_after_delete` names no branch, no trash copy exists and the item was
+   reported `vanished-archive-gone`; (copy failed, `inject:delete-pool-at:M1:tmp-partial`)
+   `branches_after_delete` names no branch, the run stopped in M1 and reported M1 as the failing step with the
+   name of the temporary file it left, no trash copy exists, every other pool copy is in place, and a second,
+   uninterrupted mover run of the case removes the stale temporary file and ends in the final state of an
+   uninterrupted run without item 1 (the listing of the temporary file through the share before that run is a
+   finding, see "Temporary file of M1"). A case whose `branches_after_delete` or final state does not match
+   the expected outcome of its injection fails; the case records the outcome it reached together with
+   `func.unlink`. After `inject:modify-archive-after-delete:M4` the content of
    the client's write is visible through the share at the path of item 1, nothing is trashed and nothing is
-   deleted: where the archive copy survived the delete it stays where it is with the client's content and is
-   reported `vanished-archive-changed`; where the delete had removed it, the written file is a pool file and
-   item 1 is reported `changed`.
+   deleted: with `inject:delete-pool-after:M3` (the delete removed the archive copy) the written file is a pool
+   file and item 1 is reported `changed`; in the proposed case with `inject:delete-pool-at:M1:tmp-data-synced`
+   (the archive copy survived the delete) it stays where it is with the client's content and is reported
+   `vanished-archive-changed`.
 5. After `kill` or `poweroff` the machine is restarted and the check sequence below runs.
 
 ## Check sequence after every interruption (the oracle, FR-019, FR-020)
@@ -289,7 +347,9 @@ Run in this order, each as its own recorded check of case `S3.2:<point>:<mode>`:
    has completed, the file is not visible through the share, the mover deleted no archive copy, and either
    exactly one trash copy exists and it is byte-identical (content hash) to the copy the mover made, or, where
    `branches_after_delete` names no archive branch, neither a trash copy nor an archive copy exists (a vanished
-   item without archive copy, removed by the client's delete; the outcome is recorded). Until the trash
+   item without archive copy, removed by the client's delete, or an item whose copy failed because the delete
+   during M1 removed its source; the outcome is recorded; for a delete during M1 `branches_after_delete` counts
+   a complete temporary copy as a holder, see the hook protocol). Until the trash
    move has completed the archive copy may show through the share (the measured window); immediately after a
    `kill` or `poweroff` at `mid:M5:trash-renamed` it may be under either its final name or its trash name (after
    a `poweroff` the rename may not be durable), and the case records which. This leniency ends with the retry:
@@ -302,7 +362,10 @@ Run in this order, each as its own recorded check of case `S3.2:<point>:<mode>`:
    of them, it is killed at `post:M5` (which every run reaches). This covers the cases in which the next point
    cannot fire in the retry: in the four cases of the two trash points the retry never selects the deleted
    item, so no point of the vanished path fires and the retry is killed at the first later point it reaches,
-   at the latest `post:M5`; after the case `post:M5` itself the retry is killed at `post:M5`.
+   at the latest `post:M5`; after the case `post:M5` itself the retry is killed at `post:M5`. A kill at
+   `mid:M1:tmp-created`, `mid:M1:tmp-partial` or `mid:M1:tmp-data-synced` leaves a stale temporary file; the
+   retry removes it at the start of its M1 (proposed, see "Temporary file of M1"), and one still present after
+   the last retry of the case has completed fails S3.3.
 3. **Device failure drill** (S3.4, FR-019 (e) and the parity-coverage proof): on a copy of the
    interrupted machine state, fail one pool device in one drill and the archive disk holding a moved file in
    another; apply the S2 recovery sequence (with the snapshot workflow where S2 prescribes it); every live
@@ -328,7 +391,7 @@ S3.5 passes only if it does.
 
 | Phase | Pool copy of a copy item | Archive copy of a copy item |
 | --- | --- | --- |
-| before `post:M1` | present | absent, partial under a temporary name, or complete |
+| before `post:M1` | present | absent, partial under a temporary name, or complete; a stale temporary file of an earlier run may also be present until the start of this run's M1 removes it |
 | `post:M1` to `post:M4` | present | complete; hash-equal if unchanged, but may be stale while a newer pool copy remains |
 | during M5 | present for items not yet unlinked and for changed items, absent only for unchanged items already verified and parity-covered (M3, M4 completed) | complete |
 | `post:M5` | absent for unchanged items; present for changed items | complete and parity-covered for unchanged items; stale (older than the pool copy) for changed items until the next run |
@@ -337,15 +400,18 @@ For a vanished item (the host deleted the pool file by injection, so its absence
 
 | Phase | Pool copy | Archive copy (branch directory) | Trash copy |
 | --- | --- | --- | --- |
-| from the delete to `mid:M5:trash-renamed` | absent (deleted by the client) | complete under its final name, hash-equal to its copy-time hash; shows through the share until the trash move (measured) | absent |
+| delete during M1 at `mid:M1:tmp-data-synced` (`inject:delete-pool-at:M1:tmp-data-synced`), from the delete to `mid:M1:renamed` | absent (deleted by the client) | complete under the temporary name only, not under the final name; the path is not visible through the share | absent |
+| from the delete (from `mid:M1:renamed` for a delete during M1) to `mid:M5:trash-renamed` | absent (deleted by the client) | complete under its final name, hash-equal to its copy-time hash; shows through the share until the trash move (measured) | absent |
 | between `mid:M5:trash-renamed` and `mid:M5:trash-parent-synced` | absent | absent or complete under its final name (after a `poweroff` the rename may not be durable) | complete and hash-equal if the rename is durable, otherwise absent; never both partial |
 | from `mid:M5:trash-parent-synced` and at `post:M5` | absent | absent | exactly one, complete, byte-identical to the copy-time hash; the file is not visible through the share |
 | archive copy changed in place by `inject:modify-archive-after-delete:M4` (the delete left it in place), from the write to `post:M5` | absent | complete under its final name with the client's content (no longer equal to the copy-time hash); visible through the share; M5 leaves it and reports `vanished-archive-changed` | absent |
 | vanished item without archive copy: from the delete on (the host recorded `branches_after_delete` without an archive branch) | absent (deleted by the client) | absent (removed by the client's delete through the share) | absent; the file is not visible through the share; the mover reports `vanished-archive-gone` |
+| copy failed: delete during M1 at `mid:M1:tmp-partial` (`inject:delete-pool-at:M1:tmp-partial`), from the delete on | absent (deleted by the client) | absent under the final name; a partial stale temporary file stays until the next run's M1 removes it (listed through the share, a finding) | absent; the path is not visible through the share; the run fails in M1 and reports the temporary file it left |
 
 At no phase may the content of a vanished item exist nowhere (neither in the archive branch nor in the trash),
 except for a vanished item without archive copy, whose content the client deleted (as recorded by the host
-right after the delete), and no archive copy may be unlinked by the mover. A pool copy absent before `post:M4` has completed is a violation of
+right after the delete), and an item whose copy failed because the client deleted its source during M1, and no
+archive copy may be unlinked by the mover. A pool copy absent before `post:M4` has completed is a violation of
 FR-019 (b), unless the host's own delete injection removed it.
 
 ## Failure behaviour (S3 scenarios 6 and 9, FR-021)
@@ -353,7 +419,12 @@ FR-019 (b), unless the host's own delete injection removed it.
 A failure of M1 (including out-of-space), M2 (content or metadata mismatch of an unchanged item, or a hash mismatch of a vanished item's archive copy), M3 (sync
 failure) or M4 (verification failure) stops the run, reports the failing step on standard error and in the
 exit status, and leaves every pool copy in place. A changed item is not a failure (see "Changed item"). A
-later run starts again from the on-disk state. A failure of the trash move (the rename or a directory sync
+later run starts again from the on-disk state. A failure of M1 leaves the temporary file of the item it was
+copying; the run reports its name with the failing step, and the next run removes it (proposed, see
+"Temporary file of M1"). A pool file that a client deletes while M1 copies it makes the copy fail when the
+remaining bytes are read (measured, probe T037f, at `mid:M1:tmp-partial`: exit status 1); that is an M1
+failure like any other: the run stops, and every pool copy that still exists stays in place until the next
+run. A failure of the trash move (the rename or a directory sync
 fails, for example because the rename is refused across filesystems) is reported as `trash-failed` in the exit
 status, leaves the archive copy where it is (so the deleted file stays visible and the content is not lost)
 and stops the run.
@@ -364,10 +435,13 @@ These follow from the decision to trash at M5 and from the design rule that the 
 crash. They are expected to show up in S3.7 (e) and S3.2 and are recorded as findings; none of them is hidden
 by the oracle.
 
-1. **Visible window.** Where the client delete left the archive copy in place (see point 4), the archive copy
-   of the file (made in M1) shows through the cache pool from the delete until the trash move, because the pool
-   file that hid it is gone. The window is
-   measured (`visible_before_trash`) and not bounded in Phase 0.
+1. **Visible window.** Where an archive copy exists after the client delete (under `epall` only for a delete
+   during M1 before the rename, see point 4), the archive copy of the file shows through the cache pool from
+   the mover's rename until the trash move, because the pool file that hid it is gone. Probe T037f saw it at
+   once through the cache pool on the server and through an `actimeo=0` mount and still 35 s later; a default
+   `mount.cifs` mount did not find it by `stat` within 35 s and listed the stale temporary name until the next
+   change through SMB in that directory (why is not measured). The window is measured (`visible_before_trash`)
+   and not bounded in Phase 0.
 2. **Crash before the trash move.** After a `kill` or `poweroff` before the trash move is durable, the next
    run does not select the file (its pool file is gone), so it cannot tell the stale archive copy from an
    ordinary archived file and cannot trash it. The deleted file then stays visible. S3 records this for the two
@@ -381,20 +455,28 @@ by the oracle.
 3. **Delete while no mover runs.** A client delete of a pool file while no mover run is in progress has an
    archive copy to bring back only if an earlier, interrupted run had already copied the file; that case is the
    gap of point 2. A pool file that no run ever copied has no archive copy and nothing can reappear.
-4. **Reachability of the trash path.** The trash path needs a vanished item whose archive copy is still
-   present. Under the default unlink policy of mergerfs (`epall`, pinned 2.41.1 source
-   `src/func.hpp:77-83,177`, `src/policy_epall.cpp:70-91`) a client delete through the share is expected to
-   remove the archive copy together with the pool file; mergerfs unlinks the selected branches one after
-   another (`src/fuse_unlink.cpp`), so the only state in which the pool file is gone and the archive copy is
-   still present is the window between those unlinks, which no named point can hit. The trash outcome of the
-   two delete injections and the four cases of the trash points (`mid:M5:trash-renamed`,
-   `mid:M5:trash-parent-synced`, each in both kill modes) may therefore be reachable only through that window
-   or under another unlink policy. Which one the harness can reach is measured (S1 scenario 4, the probe of the
-   delete fault kind, the S3.7 (e) check), not decided: `func.unlink=ff` is a candidate setting and UNVERIFIED.
-   A case that cannot be executed counts as failed (spec verdict model), so if the measurement shows the trash
-   path unreachable, a reviewed amendment before the S3 criteria are frozen either adopts a measured unlink
-   setting as a required setting (FR-013, with its effect on S1 scenarios 4 and 5 checked) or changes this
-   point list, and with it the counts.
+4. **Reachability of the trash path (measured 2026-10-17).** The trash path needs a vanished item whose
+   archive copy is still present. The cache pool keeps the default unlink policy of mergerfs, `epall` (pinned
+   2.41.1 source `src/func.hpp:77-83,177`, `src/policy_epall.cpp:70-91`; no `func.unlink` option is set; spec
+   Clarifications 2026-10-17, unlink policy): a client delete through the share removes the path on every
+   branch that is not `RO`, the `NC` archive branches included. After the rename of M1 it therefore removes the
+   archive copy together with the pool file (probe T037c, mover held at `post:M1`, two runs:
+   `branches_after_delete` empty, nothing visible afterwards), so `inject:delete-pool-after:M1` and
+   `inject:delete-pool-after:M3` end as vanished items without archive copy. Before the rename the archive copy
+   exists only under its temporary name, which a delete of the path does not touch: with the mover held at
+   `mid:M1:tmp-data-synced` the delete removed only the pool file, and the rename then left "pool file missing,
+   archive copy present", the precondition of the trash path, with a byte-identical archive copy (probe T037f,
+   two runs, the same under `func.unlink=ff`). `inject:delete-pool-at:M1:tmp-data-synced` is therefore the named
+   point that makes the trash outcome deterministic, and the precondition of the four cases of the trash points
+   (`mid:M5:trash-renamed`, `mid:M5:trash-parent-synced`, each in both kill modes). `func.unlink=ff` is not
+   adopted: it removes only the first copy found, so a file held on the pool branch and an archive branch
+   reappears after a client delete (probe T037c: the archive copy stayed and was visible through the share),
+   including after a mover crash between M1 and M5, and a client delete must remove every copy. The unlink
+   policy stays a measurement of S1 scenario 4 (recorded in the evidence, not a pass condition). Not measured
+   (UNVERIFIED until S3 runs): an M2 to M5 run on the state that the delete during M1 leaves (the trash rename,
+   the comparison with the copy-time record), the delete at `post:M3`, deletes at `mid:M1:tmp-created`,
+   `mid:M1:renamed` and later mid-step points, and a crash combined with a delete during M1 other than at the
+   trash points.
 
 ## Appendix: where the whiteout steps went
 
