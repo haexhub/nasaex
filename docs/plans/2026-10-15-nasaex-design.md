@@ -66,7 +66,14 @@ The earlier idea of stacking overlayfs on top of mergerfs is not part of the bas
   deletes the source immediately after the copy. The nasaex mover copies with a checksum
   and keeps the source, runs and verifies `snapraid sync`, and only then removes the pool
   copy. If copy, checksum, sync or verification fails, the pool copy remains in place for
-  retry.
+  retry. The mover takes no lock that SMB clients would have to honour: it selects only
+  pool files that have been idle for a minimum age and are not open, and it removes a pool
+  copy only if its ctime, size and inode are unchanged since the copy (compare and delete);
+  a file changed meanwhile stays in the pool for a later run. If a client deletes a selected
+  pool file after the copy while the archive copy is still there, the mover moves the
+  archive copy into a trash directory beside the archive branch on the same disk instead of
+  deleting it. Whether a client delete through the share leaves that archive copy in place,
+  and how the trash behaves, are subject to the S1 and S3 spikes.
 - **Protection**: a file on the pool is protected by the mirror. A file in the archive is
   protected by parity as of the last completed sync. Changes made to archived files in
   place since that sync (the unprotected window) are what the snapshot workflow addresses
