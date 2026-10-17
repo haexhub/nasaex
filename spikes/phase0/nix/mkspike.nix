@@ -51,6 +51,7 @@ let
   # What the Python test script and the spikectl preflight need to know about the topology.
   topology = {
     inherit profile vmResources;
+    inherit (nodeDefs) archiveLayout;
     disks = nodeDefs.diskTable;
   };
 
