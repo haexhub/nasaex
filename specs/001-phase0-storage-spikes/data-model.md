@@ -158,16 +158,22 @@ An accepted ADR references the record paths. `spikectl verify` checks this on PR
 
 ### Environment
 
-The topology and inputs a run used.
+The topology and inputs a run used: the `environment` object of a `spike-run` or `repro` record. The field names
+are those of [the result record schema](contracts/result-record.schema.json).
 
 | Field | Description |
 | --- | --- |
-| `profile` | `large` (S1), `small` (S2-S4), `s5`, or `x1` (the `large` disks with the overlay stack, X1 only) |
-| `disks` | List of (serial, role, size in MiB, filesystem); archive disks are btrfs |
-| `vms` | `server`, `client` (S1 only) with vCPU and memory |
-| `pins` | nixpkgs revision, `flake.lock` SHA-256, repository commit |
-| `tool_versions` | Observed in the guest: mergerfs, snapraid, btrfs-progs, snapper, snapshot tooling revision, samba, kernel, plus host QEMU version |
-| `fault_points` | The named points exercised (see [fault-points](contracts/fault-points.md)) |
+| `repo_commit`, `flake_lock_sha256`, `nixpkgs_rev` | The pins: repository commit, `flake.lock` SHA-256, nixpkgs revision (required) |
+| `profile` | `large` (S1), `small` (S2-S4), `s5`, or `x1` (the `large` disks with the overlay stack, X1 only) (required) |
+| `disks` | List of (`serial`, `role`, `size_mib`, `filesystem`); archive disks are btrfs. Optional in the schema today; task T037e makes it required for S1 to S4 records (FR-009) |
+| `vm_resources` | Per VM name (`server`, `client` for S1 only) its `vcpus` and `memory_mib` (FR-009) |
+| `tool_versions` | Observed in the guest or on the host at run time: `kernel` and `qemu` (required), mergerfs, snapraid, btrfs-progs, snapper, snapshot tooling revision, samba, nix |
+| `kernel_config` | Pre-flight results read from the running kernel |
+| `host` | `cpu_class`, `vcpus`, `memory_gib` of the host class; no host name (required) |
+| `kvm` | Always `true`: a run without KVM never produces a record (required) |
+
+The named fault points exercised are not an environment field: each case entry of a record carries its
+`fault_kind` and `fault_point` (see [fault-points](contracts/fault-points.md)).
 
 ### Recovery procedure
 
