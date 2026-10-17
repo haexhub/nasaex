@@ -3,8 +3,8 @@
 Scaffolding for the Phase 0 spikes, not product code. Check groups:
 
 - criteria: schema, lock hashes, frozen status matches the lock, S2 has the reviewed S2.7
-- records: schema, record-to-lock pairing, layout, evidence hash; a review record (S2.7) has no
-  archive of its own and is checked against the record it reviews instead
+- records: schema, record-to-lock pairing, layout, evidence hash, disks of S1 to S4 runs; a
+  review record (S2.7) has no archive of its own and is checked against the record it reviews
 - git: append-only lock history, criteria commit before record commit, reviewed record before
   its review (needs a git work tree)
 - hygiene: host paths, user and host names, authoring-tool self-references, spikes/ references
@@ -29,6 +29,7 @@ from spikectl.model import (
     parse_criteria_filename,
     read_lock,
     record_paths,
+    record_rule_errors,
     schema_errors,
     sha256_hex,
 )
@@ -182,7 +183,7 @@ def _check_record(root: Path, path: Path, lock: list[LockEntry]) -> list[Finding
     if problems:
         return [Finding("record-schema", f"{rel}: {p}") for p in problems]
 
-    findings = []
+    findings = [Finding("record-disks", f"{rel}: {p}") for p in record_rule_errors(record)]
     if path.parent.name != record["record_id"]:
         findings.append(
             Finding("record-layout", f"{rel}: directory is not named {record['record_id']}")
