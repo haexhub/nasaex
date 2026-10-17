@@ -150,7 +150,7 @@ def test_xattrs_are_set_read_and_listed_as_bytes(cifs, share_dir):
 
 
 def test_an_xattr_error_other_than_a_missing_attribute_is_raised(cifs):
-    with pytest.raises(SmbError, match="ENOENT"):
+    with pytest.raises(SmbError, match="dir/missing"):  # ENOENT, or ENOTSUP without xattrs
         cifs.getxattr("dir/missing", "user.tag")
 
 
