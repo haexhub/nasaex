@@ -201,3 +201,102 @@ def test_a_failed_copy_reports_failure_and_leaves_the_destination_alone(hooks, t
 
     assert result.returncode != 0
     assert dest.read_bytes() == b"keep me"
+
+
+# Metadata preservation of M1 (contracts/mover-steps.md): sparse holes, hard links, xattrs.
+
+MIB = 1024 * 1024
+
+
+def hole_map(path):
+    """The data extents of a file as (start, end) pairs, found with SEEK_DATA and SEEK_HOLE."""
+    extents, offset = [], 0
+    with open(path, "rb") as handle:
+        size = os.fstat(handle.fileno()).st_size
+        while offset < size:
+            try:
+                start = os.lseek(handle.fileno(), offset, os.SEEK_DATA)
+            except OSError:  # ENXIO: only a hole remains
+                break
+            offset = os.lseek(handle.fileno(), start, os.SEEK_HOLE)
+            extents.append((start, offset))
+    return extents
+
+
+def make_sparse_source(tmp_path):
+    """3 MiB logical size, data at 0 and at 2 MiB, so the middle (1.5 MiB) lies in a hole."""
+    src = tmp_path / "pool" / "docs" / "sparse.bin"
+    src.parent.mkdir(parents=True)
+    with open(src, "wb") as handle:
+        handle.write(b"\x01" * 4096)
+        handle.seek(2 * MIB)
+        handle.write(b"\x02" * 4096)
+        handle.truncate(3 * MIB)
+    if hole_map(src) != [(0, 4096), (2 * MIB, 2 * MIB + 4096)]:
+        pytest.skip("the temporary filesystem does not report holes")
+    return src
+
+
+def test_copy_item_keeps_the_size_and_hole_map_of_a_sparse_source(hooks, tmp_path):
+    src = make_sparse_source(tmp_path)
+    dest = tmp_path / "base" / "docs" / "sparse.bin"
+    arm(hooks, "mid:M1:tmp-partial")
+    process = subprocess.Popen(
+        ["bash", str(EFFECTS), "mover_copy_item", str(src), str(dest), "1"], env=env(hooks)
+    )
+
+    wait_for(hooks / "reached" / "mid:M1:tmp-partial")
+    (tmp,) = [p for p in dest.parent.iterdir() if p.name.startswith(".sparse.bin.tmp-")]
+    assert tmp.stat().st_size == 3 * MIB // 2  # the point lies between the two halves
+    assert tmp.read_bytes() == src.read_bytes()[: 3 * MIB // 2]
+    release(hooks, "mid:M1:tmp-partial")
+
+    assert process.wait(timeout=20) == 0
+    assert dest.stat().st_size == src.stat().st_size
+    assert hole_map(dest) == hole_map(src)
+    assert dest.read_bytes() == src.read_bytes()
+
+
+def test_copy_item_keeps_allocated_zero_blocks_as_data(hooks, tmp_path):
+    src = tmp_path / "pool" / "zeros.bin"
+    src.parent.mkdir(parents=True)
+    src.write_bytes(bytes(64 * 1024))  # written zeros are data, not holes
+    dest = tmp_path / "base" / "zeros.bin"
+
+    result = run_effects(hooks, "mover_copy_item", str(src), str(dest), "0")
+
+    assert result.returncode == 0, result.stderr
+    assert hole_map(dest) == hole_map(src)
+
+
+def test_copy_item_keeps_the_extended_attributes(hooks, tmp_path):
+    src = make_source(tmp_path)
+    try:
+        os.setxattr(src, "user.DOSATTRIB", b"\x00\x01")
+    except OSError:
+        pytest.skip("the temporary filesystem has no user extended attributes")
+    dest = tmp_path / "base" / "docs" / "a.bin"
+
+    run_effects(hooks, "mover_copy_item", str(src), str(dest), "0")
+
+    assert os.getxattr(dest, "user.DOSATTRIB") == b"\x00\x01"
+
+
+def test_further_links_of_a_copied_inode_share_one_archive_inode(hooks, tmp_path):
+    first = make_source(tmp_path)
+    second = first.parent / "b.bin"
+    os.link(first, second)
+    archive = tmp_path / "base" / "docs"
+    archive.mkdir(parents=True)
+    (archive / "b.bin").write_bytes(b"old archived version")
+
+    copied = run_effects(hooks, "mover_copy_item", str(first), str(archive / "a.bin"), "0")
+    linked = run_effects(
+        hooks, "mover_link_item", str(archive / "a.bin"), str(archive / "b.bin"), "0"
+    )
+
+    assert copied.returncode == 0 and linked.returncode == 0, linked.stderr
+    a, b = (archive / "a.bin").stat(), (archive / "b.bin").stat()
+    assert a.st_ino == b.st_ino
+    assert a.st_nlink == b.st_nlink == first.stat().st_nlink == 2
+    assert sorted(p.name for p in archive.iterdir()) == ["a.bin", "b.bin"]  # no temporary name
