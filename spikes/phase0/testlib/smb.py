@@ -171,6 +171,14 @@ class SmbClient:
             raise ValueError(f"not a setmode change: {change!r}")
         self.machine.succeed(self._command(f"setmode {self._remote(rel)} {change}"))
 
+    def put(self, local: str, rel: str) -> tuple[int, str]:
+        """Upload a client file; exit status and output, which names the NT status of a refused
+        upload (a refusal is an outcome here, not an error)."""
+        status, output = self.machine.execute(
+            self._command(f"put {self._remote(local)} {self._remote(rel)}") + " 2>&1"
+        )
+        return status, output
+
     def sha256(self, rel: str) -> str:
         """Stream the whole file to standard output and return its SHA-256."""
         command = self._command(f"get {self._remote(rel)} -")
