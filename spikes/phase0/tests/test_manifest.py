@@ -12,6 +12,7 @@ from testlib.manifest import (
     compare,
     describe,
     from_json,
+    subtree,
     to_json,
     tree_hash,
 )
@@ -154,3 +155,12 @@ def test_describe_cuts_a_long_list_and_counts_the_rest():
 
     assert describe(differences, limit=2) == "0.txt missing, 1.txt missing (+3 more)"
     assert describe([]) == ""
+
+
+def test_subtree_keys_the_entries_below_a_directory_relative_to_it():
+    item = Item("file", 1, 0o644, 0, (), "c" * 64)
+    manifest = {"a": item, "a/b": item, "a/b/c.txt": item, "ab/d.txt": item}
+
+    assert subtree(manifest, "a") == {"b": item, "b/c.txt": item}
+    assert subtree(manifest, "") == manifest
+    assert subtree(manifest, "missing") == {}
