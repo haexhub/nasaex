@@ -161,6 +161,21 @@ def test_smbclient_checksums_a_file_streamed_to_standard_output():
     assert shlex.split(command.removesuffix("| sha256sum"))[4:] == ["-c", 'get "big/file.bin" -']
 
 
+def test_smbclient_put_reports_the_exit_status_and_the_output_with_its_nt_status():
+    machine = RecordingMachine({"put ": "NT_STATUS_DISK_FULL closing remote file\n"})
+    client = SmbClient(machine, SHARE)
+
+    status, output = client.put("/tmp/upload.bin", "dir/new file.bin")
+
+    assert (status, output) == (0, "NT_STATUS_DISK_FULL closing remote file\n")
+    command = machine.commands[0]
+    assert command.endswith(" 2>&1")
+    assert shlex.split(command.removesuffix(" 2>&1"))[4:] == [
+        "-c",
+        'put "/tmp/upload.bin" "dir/new file.bin"',
+    ]
+
+
 @pytest.mark.parametrize("change", ["h", "+x", "+", "+h;rm x", ""])
 def test_set_dos_attributes_refuses_anything_but_a_setmode_change(change):
     client = SmbClient(RecordingMachine(), SHARE)
