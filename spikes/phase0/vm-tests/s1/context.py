@@ -251,13 +251,13 @@ class Lab:
         options = variant_options(self.cache_unit("Options"), overrides)
         self._release_cache_pool()
         self.server.succeed(f"systemctl stop {CACHE_UNIT}")
-        self.server.succeed(f"mergerfs -o {shlex.quote(options)} {shlex.quote(what)} {CACHE}")
-        self._serve_cache_pool()
-        try:
+        try:  # a variant that fails to mount still gives the next scenario the baseline back
+            self.server.succeed(f"mergerfs -o {shlex.quote(options)} {shlex.quote(what)} {CACHE}")
+            self._serve_cache_pool()
             yield
         finally:
             self._release_cache_pool()
-            self.server.succeed(f"umount {CACHE}")
+            self.server.succeed(f"umount {CACHE} || true")
             self.server.succeed(f"systemctl start {CACHE_UNIT}")
             self._serve_cache_pool()
 
