@@ -63,8 +63,8 @@ no product code.
 
 **Scale/Scope**: 5 gating spikes and the optional X1; 44 gating acceptance scenarios (11+9+9+7+8)
 plus 10 optional X1 scenarios; S3 enumerates 21 crash points (6 boundaries and 15 mid-step points, listed in
-contracts/mover-steps.md), each in 2 kill modes (42 cases), plus 10 named fault and injection points that are not
-crash points; topology profiles `large` (S1) and `small` (S2-S4), one single-machine
+contracts/mover-steps.md), each in 2 kill modes (42 cases), plus 11 named fault and injection points that are not
+crash points (the eleventh, `inject:modify-archive-after-delete:M4`, was added on 2026-10-17); topology profiles `large` (S1) and `small` (S2-S4), one single-machine
 topology for S5, and the `x1` profile (the `large` disks with the overlay stack) for X1.
 
 ## Decisions at a glance

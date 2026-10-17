@@ -71,8 +71,11 @@ rule was dropped by the clarification of 2026-10-16 (task T081).
   client deletion: it hides a copy the mover itself made and deletes nothing.
 - **Item order and the instrumented item**: the items of a loop step are processed in ascending order of
   their pool-relative path (byte order). The S3 fixture names its three items so that the **replacing item**
-  (the one that replaces an older archived version) sorts first; the run refuses to start a case when the
-  item with the lowest path is not the replacing one. **Item 1** is that first item. In every loop step the
+  (the one that replaces an older archived version) sorts first; the first run of a case refuses to start when
+  the item with the lowest path is not the replacing one. **Item 1** is that first item. The refusal applies to
+  the first run of a case only: a retry selects whatever the on-disk state still offers, and its item 1 is the
+  item with the lowest path among the items the retry selects (the replacing item may already be done, and a
+  vanished item is never selected again); the mid-step points of a retry fire for that item 1. In every loop step the
   mid-step points and the `item-1-done` points fire for item 1 only, and the injections of S3 scenario 7
   act on item 1. The replacement of S3 scenario 8 is therefore instrumented by the M1 mid-step points
   (`tmp-created` to `item-1-done`): the kill lands before, during and after the atomic rename that replaces
@@ -168,6 +171,13 @@ criteria version.
 - Kill modes: `kill` (process kill) and `poweroff` (QEMU process termination; host-power-loss semantics
   unverified). Every point is exercised in both modes: 21 x 2 = **42 cases**. SC-005 requires 100% of the
   enumerated points.
+- The boundary points `pre:M1` and `post:M1` to `post:M5` fire in every run, also when a step has no item to
+  process (M3 then runs no sync), so that every run reaches `post:M5`. The **execution order** of the points is
+  this fixed list: `pre:M1`, the M1 mid-step points in table order, `post:M1`, the M2 mid-step points,
+  `post:M2`, `mid:M3:sync-pos`, `post:M3`, `mid:M4:checked`, `post:M4`, the present-file points of M5
+  (`mid:M5:item-validated`, `mid:M5:unlinked`, `mid:M5:item-1-done`), the vanished-path points of M5
+  (`mid:M5:trash-renamed`, `mid:M5:trash-parent-synced`), `post:M5`. A run reaches only one of the two M5
+  groups for item 1.
 - Case id: `S3.2:<point>:<kill|poweroff>`, for example `S3.2:post:M5:poweroff`. The residual-window point
   `mid:M5:item-validated` is also a crash point (a kill or power-off right after the final check).
 - The two points `mid:M5:trash-renamed` and `mid:M5:trash-parent-synced` fire only when item 1 is a vanished
@@ -200,7 +210,7 @@ namespace; they are enumerated here, are not crash points and are not counted in
 
 | Point | Scenario | Meaning |
 | --- | --- | --- |
-| `fault:M1:enospc` | S3.9 | Archive out of space during the copy of item 1 |
+| `fault:M1:enospc` | S3.6, S3.9 | Archive out of space during the copy of item 1; it is also the copy fault of S3.6 (a fault in the copy step), so S3.6 needs no further point |
 | `fault:M2:corrupt-archive-copy` | S3.6 | Archive copy of item 1 corrupted before M2 hashes it |
 | `fault:M3:parity-write-fail` | S3.6 | Failed parity write during the sync |
 | `fault:M4:verify-fail` | S3.6 | Verification fails for item 1 |
@@ -210,6 +220,7 @@ namespace; they are enumerated here, are not crash points and are not counted in
 | `inject:modify-pool-at:M5:residual-window` | S3.7 (d) | Client write between the final check of M5 and the unlink of item 1; the outcome (data lost or not lost) is recorded |
 | `inject:delete-pool-after:M1` | S3.7 (e) | Client delete of the pool file of item 1 after M1 (found at M2 as a vanished item; the trash move happens at M5) |
 | `inject:delete-pool-after:M3` | S3.7 (e) | Client delete of the pool file of item 1 after M3 (found at M5); also the precondition of the two trash crash points |
+| `inject:modify-archive-after-delete:M4` | S3.7 (e) | Client write through the share to the path of item 1 after M4, in a case that also arms `inject:delete-pool-after:M3`. Where the delete left the archive copy in place, the write changes that archive copy in place (S1 scenario 3), so M5 finds it no longer matching its copy-time record and leaves it as `vanished-archive-changed`; where the delete removed the archive copy, the write creates a new pool file and M5 treats item 1 as a changed item. M4 is the only step: a client change of the archive copy before M4 has completed is expected to be found by M2 (hash mismatch) or M4 (verification) and to stop the run (failure behaviour) |
 
 and the variant selector `control:stock-remove-source` for S3 scenario 5 (the stock pattern: unlink each pool
 copy right after its copy, before M3). The control is a separate mover variant, not a point of the list.
@@ -234,7 +245,9 @@ See [fault-points.md](fault-points.md).
    waited through M3). The injection points are armed on these hook points: `inject:modify-pool-after:M1` on
    `post:M1`, `inject:modify-pool-after:M2` on `post:M2`, `inject:modify-pool-during:M3` on
    `mid:M3:sync-pos`, `inject:modify-pool-at:M5:residual-window` on `mid:M5:item-validated`,
-   `inject:delete-pool-after:M1` on `post:M1`, `inject:delete-pool-after:M3` on `post:M3`. For the two delete
+   `inject:delete-pool-after:M1` on `post:M1`, `inject:delete-pool-after:M3` on `post:M3`,
+   `inject:modify-archive-after-delete:M4` on `post:M4` (an append of a known byte pattern through the share at
+   the path of item 1; the host records on which branch the written file is found afterwards). For the two delete
    points the host deletes (unlinks) the pool path of item 1 through the share, again without waiting for the
    mover, then lists the path of item 1 directly on the pool branch and on every archive branch and records
    which branches still hold it (`branches_after_delete`), reads the effective unlink policy of the cache pool
@@ -254,7 +267,11 @@ See [fault-points.md](fault-points.md).
    the archive copy, its content hash equals the hash the fixture expects for the copied bytes, and a later run
    neither moves, restores nor re-copies the trash entry; (archive gone) where `branches_after_delete` names no
    branch, no trash copy exists and the item was reported `vanished-archive-gone`. The case records which
-   outcome it reached together with `func.unlink`.
+   outcome it reached together with `func.unlink`. After `inject:modify-archive-after-delete:M4` the content of
+   the client's write is visible through the share at the path of item 1, nothing is trashed and nothing is
+   deleted: where the archive copy survived the delete it stays where it is with the client's content and is
+   reported `vanished-archive-changed`; where the delete had removed it, the written file is a pool file and
+   item 1 is reported `changed`.
 5. After `kill` or `poweroff` the machine is restarted and the check sequence below runs.
 
 ## Check sequence after every interruption (the oracle, FR-019, FR-020)
@@ -280,17 +297,27 @@ Run in this order, each as its own recorded check of case `S3.2:<point>:<mode>`:
    the trash handling".
 2. **Retry** the mover (S3.3): the run must converge to the final state of an uninterrupted run, without
    duplicates and without manual cleanup. A second case kills the **retry** at a point chosen by a fixed
-   rule (the next point after the one just exercised) and retries again.
+   rule, per case, and retries again: the host arms every point that follows the one just exercised in the
+   execution order and kills the retry at the first of them that the retry reaches; if the retry reaches none
+   of them, it is killed at `post:M5` (which every run reaches). This covers the cases in which the next point
+   cannot fire in the retry: in the four cases of the two trash points the retry never selects the deleted
+   item, so no point of the vanished path fires and the retry is killed at the first later point it reaches,
+   at the latest `post:M5`; after the case `post:M5` itself the retry is killed at `post:M5`.
 3. **Device failure drill** (S3.4, FR-019 (e) and the parity-coverage proof): on a copy of the
    interrupted machine state, fail one pool device in one drill and the archive disk holding a moved file in
    another; apply the S2 recovery sequence (with the snapshot workflow where S2 prescribes it); every live
    file must come back with the expected hash, and where the case holds a trash copy, the trash content must
    come back byte-identical as well (FR-019 (e): no live file and no trash content lost). The path under which
-   a recovered trash entry lands (the trash path or the archive path it was moved from) is recorded; recovery
-   is expected to restore the path as of the last completed sync, so a trash entry moved after that sync may
-   come back under its old archive path, which would make the deleted file reappear: that is a finding for the
-   maintainers, not a pass or a silent change of the check. This is how "pool copy removed implies parity-covered"
-   (FR-019 (b)) is proven without trusting the mover.
+   a recovered trash entry lands (the trash path or the archive path it was moved from) is recorded per case;
+   recovery is expected to restore the state as of the last completed sync, so a trash entry moved after that
+   sync may come back under its old archive path, which makes the deleted file reappear through the share.
+   **Outcome of S3.4 for such a case**: S3.4 judges FR-019 (e) only, by content. The case passes S3.4 when every
+   live file and the trash content come back byte-identical, under either path; a trash entry that comes back
+   under its archive path is recorded as a finding of the record (the landing path in the case evidence and a
+   note on the case) for the maintainers. It does not fail S3.4, and it is not judged against FR-019 (c), which
+   applies after an interruption and after a retry, not after a recovery. Content that does not come back fails
+   S3.4. This is how "pool copy removed implies parity-covered" (FR-019 (b)) is proven without trusting the
+   mover.
 
 Negative control (S3.5): the same invariants (a) and (b) and the drill are run against the
 `control:stock-remove-source` variant. At the first point after its copy and before M3, a `poweroff` plus
@@ -313,6 +340,7 @@ For a vanished item (the host deleted the pool file by injection, so its absence
 | from the delete to `mid:M5:trash-renamed` | absent (deleted by the client) | complete under its final name, hash-equal to its copy-time hash; shows through the share until the trash move (measured) | absent |
 | between `mid:M5:trash-renamed` and `mid:M5:trash-parent-synced` | absent | absent or complete under its final name (after a `poweroff` the rename may not be durable) | complete and hash-equal if the rename is durable, otherwise absent; never both partial |
 | from `mid:M5:trash-parent-synced` and at `post:M5` | absent | absent | exactly one, complete, byte-identical to the copy-time hash; the file is not visible through the share |
+| archive copy changed in place by `inject:modify-archive-after-delete:M4` (the delete left it in place), from the write to `post:M5` | absent | complete under its final name with the client's content (no longer equal to the copy-time hash); visible through the share; M5 leaves it and reports `vanished-archive-changed` | absent |
 | vanished item without archive copy: from the delete on (the host recorded `branches_after_delete` without an archive branch) | absent (deleted by the client) | absent (removed by the client's delete through the share) | absent; the file is not visible through the share; the mover reports `vanished-archive-gone` |
 
 At no phase may the content of a vanished item exist nowhere (neither in the archive branch nor in the trash),
