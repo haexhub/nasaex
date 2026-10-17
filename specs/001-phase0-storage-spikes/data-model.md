@@ -33,10 +33,11 @@ sub-record exists for the newest spike-run of the current criteria version; it i
 state (the experiment was skipped); for `S1` to `S5` it blocks the gate.
 
 Reproducibility (proposed rule, spec Clarifications 2026-10-17, U8, for maintainer review): a `repro` record never
-counts as the newest spike-run. The current verdict of a spike is `FAIL` when the newest `repro` record of the
-current criteria version that is not older than the newest `spike-run` of that version has the verdict `FAIL` (a
-gating scenario `flaky` or failed across the three runs); otherwise the rules above apply unchanged. A passing repro
-changes no verdict, and the S2 review scope stays the newest spike-run.
+counts as the newest spike-run. The current verdict of a spike is `FAIL` when any `repro` record of the current
+criteria version that is not older than the newest `spike-run` of that version has the verdict `FAIL` (a gating
+scenario `flaky` or failed across the three runs); otherwise the rules above apply unchanged. A passing repro
+changes no verdict, and a newer spike-run supersedes repro results from before it. The S2 review scope stays the
+newest spike-run.
 
 ### Acceptance scenario
 
@@ -231,7 +232,7 @@ S2 record with automated S2.7 checks pass and a passing review, all other scenar
 S2 record with automated S2.7 checks pass and a failing review --> FAIL (fallback_decision required)
 record for current version, all scenarios pass --> PASS
 record for current version, any other outcome --> FAIL (fallback_decision required for S1 to S5)
-newest repro record of the current version, not older than the newest spike-run, verdict FAIL --> FAIL (proposed rule, U8)
+any repro record of the current version, not older than the newest spike-run, with verdict FAIL --> FAIL (proposed rule, U8)
 new criteria version frozen --> none (old verdicts void)
 ```
 
