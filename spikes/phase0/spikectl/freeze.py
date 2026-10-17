@@ -11,6 +11,7 @@ from spikectl.model import (
     SPIKES,
     LockEntry,
     ModelError,
+    criteria_rule_errors,
     load_criteria,
     parse_criteria_filename,
     read_lock,
@@ -57,6 +58,9 @@ def freeze(root: Path, spike: str) -> LockEntry:
     problems = schema_errors(root, "criteria.schema.json", doc)
     if problems:
         raise FreezeError(f"{path.name} fails the criteria schema: " + "; ".join(problems))
+    rules = criteria_rule_errors(doc)
+    if rules:
+        raise FreezeError(f"{path.name}: " + "; ".join(rules))
     if doc["spike"] != spike or doc["criteria_version"] != version:
         raise FreezeError(
             f"{path.name} says {doc['spike']} version {doc['criteria_version']}, "

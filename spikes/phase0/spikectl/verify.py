@@ -2,7 +2,7 @@
 
 Scaffolding for the Phase 0 spikes, not product code. Check groups:
 
-- criteria: schema, lock hashes, frozen status matches the lock
+- criteria: schema, lock hashes, frozen status matches the lock, S2 has the reviewed S2.7
 - records: schema, record-to-lock pairing, layout, evidence hash; a review record (S2.7) has no
   archive of its own and is checked against the record it reviews instead
 - git: append-only lock history, criteria commit before record commit, reviewed record before
@@ -23,6 +23,7 @@ from spikectl.model import (
     LOCK_PATH,
     LockEntry,
     ModelError,
+    criteria_rule_errors,
     load_criteria,
     load_record,
     parse_criteria_filename,
@@ -143,7 +144,7 @@ def _check_criteria_file(root, path, parsed, locked) -> list[Finding]:
     ]
     if problems:
         return problems
-    findings = []
+    findings = [Finding("criteria-review", f"{path.name}: {p}") for p in criteria_rule_errors(doc)]
     if (doc["spike"], doc["criteria_version"]) != parsed:
         findings.append(
             Finding("criteria-schema", f"{path.name}: spike or version disagree with the name")
