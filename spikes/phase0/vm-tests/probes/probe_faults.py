@@ -98,7 +98,7 @@ for mount in [
 server.succeed("systemctl start mnt-base.mount mnt-cache.mount")
 server.succeed("mkdir -p /mnt/cache/smoke && echo hello > /mnt/cache/smoke/new.txt")
 placed_on_pool = exists("/mnt/pool/smoke/new.txt")
-placed_on_archive = any(exists(f"/mnt/archive/{a}/smoke") for a in ("arch0", "arch1", "arch2"))
+placed_on_archive = any(exists(f"{a['branch']}/smoke") for a in TOPOLOGY["archiveLayout"])
 RESULT["tiered_cache_smoke"] = {
     "new_file_on_pool_branch": placed_on_pool,
     "new_file_on_an_archive_branch": placed_on_archive,

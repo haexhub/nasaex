@@ -2,7 +2,11 @@
 #
 # server: btrfs RAID1 pool with a pool subvolume, one btrfs filesystem per archive disk with a
 #   `data` subvolume and a separate, never-snapshotted `content` subvolume, the SnapRAID parity
-#   file on ext4, and the tools under test. The disks start blank; `spike-mkfs` formats them
+#   file on ext4, and the tools under test. The data subvolume holds two sibling directories
+#   (trash amendment, task T028a): `branch`, the archive branch of both pools, and `trash`,
+#   outside every pool branch; the SnapRAID data path is the whole data subvolume, so trash
+#   content is parity-covered. That the trash stays hidden from both pool views is UNVERIFIED
+#   until S1.1 and S3.7 (e) prove it. The disks start blank; `spike-mkfs` formats them
 #   on demand, never at boot, so a blank replacement disk stays blank until a scenario acts.
 #   Mounts are `nofail` and resolve by label, so a missing disk degrades instead of blocking boot.
 # client: the SMB client VM of S1.
@@ -20,6 +24,17 @@ let
   # emptyDiskImages entry i is the file empty<i>.qcow2 of the machine state directory; the
   # host swaps it to simulate a replaced disk (fault kind device-failed-at-boot).
   diskTable = lib.imap0 (idx: d: d // { image = "empty${toString idx}.qcow2"; }) disks;
+
+  # Per archive disk: the data subvolume mount (the SnapRAID data path), the branch directory
+  # and the trash directory beside it. Fixtures and the oracle name `branch` as the archive branch.
+  archiveLayout = map
+    (d: rec {
+      inherit (d) serial;
+      data = "/mnt/archive/${d.serial}";
+      branch = "${data}/branch";
+      trash = "${data}/trash";
+    })
+    archive;
 
   diskImage = d: {
     size = d.sizeMiB;
@@ -44,6 +59,15 @@ let
           exit 1
         fi
       }
+      directories() { # <label> <subvolume> <directory>...
+        local tmp
+        tmp=$(mktemp -d)
+        mount -o "subvol=$2" "/dev/disk/by-label/$1" "$tmp"
+        shift 2
+        for dir in "$@"; do mkdir "$tmp/$dir"; done
+        umount "$tmp"
+        rmdir "$tmp"
+      }
       subvolumes() { # <label> <subvolume>...
         local tmp
         tmp=$(mktemp -d)
@@ -65,6 +89,7 @@ let
           mkfs.btrfs -q -f -L ${d.serial} ${byId d.serial}
           udevadm settle
           subvolumes ${d.serial} data content
+          directories ${d.serial} data branch trash
         '') archive}
       }
       do_parity() {
@@ -126,7 +151,7 @@ let
 
   server = { ... }: {
     imports = [ common ./tiered-cache.nix ];
-    spike.tieredCache.archiveBranches = lib.mkDefault (map (d: "/mnt/archive/${d.serial}") archive);
+    spike.tieredCache.archiveBranches = lib.mkDefault (map (a: a.branch) archiveLayout);
     virtualisation = vmSizing.server // {
       emptyDiskImages = map diskImage disks;
       inherit fileSystems;
@@ -163,5 +188,5 @@ let
   };
 in
 {
-  inherit server client diskTable spikeMkfs;
+  inherit server client diskTable archiveLayout spikeMkfs;
 }

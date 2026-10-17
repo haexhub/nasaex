@@ -7,7 +7,8 @@
 #
 # Defaults are the decisions of plan O16 and O9: create policy `ff`, `moveonenospc` off, an
 # explicit low `minfreespace`, `passthrough.io=off`, `cache.files=off`. Everything S1 varies is
-# an option.
+# an option. The unlink policy of the cache pool is unset by default, so the mergerfs default
+# stays in effect (task T028a); probe T037c and S1 measure alternatives through `unlinkPolicy`.
 { config, lib, ... }:
 
 let
@@ -18,7 +19,7 @@ let
   # fstab option (nofail, x-systemd.*) to mergerfs, which rejects unknown options. The unit is
   # wanted by multi-user.target (not required by local-fs.target), so a missing branch
   # leaves the system booted and the pool unmounted instead of dropping to emergency mode.
-  mergerfsMount = { where, branches, fsname, createPolicy }: {
+  mergerfsMount = { where, branches, fsname, createPolicy, extra ? [ ] }: {
     what = lib.concatStringsSep ":" branches;
     inherit where;
     type = "fuse.mergerfs";
@@ -30,7 +31,7 @@ let
       "minfreespace=${cfg.minFreeSpace}"
       "passthrough.io=${cfg.passthroughIo}"
       "cache.files=${cfg.cacheFiles}"
-    ] ++ cfg.extraOptions);
+    ] ++ extra ++ cfg.extraOptions);
     wantedBy = [ "multi-user.target" ];
     unitConfig.RequiresMountsFor = [ cfg.poolBranch ] ++ cfg.archiveBranches;
   };
@@ -47,7 +48,7 @@ in
     archiveBranches = mkOption {
       type = types.listOf types.str;
       default = [ ];
-      description = "The archive data subvolumes, in branch order.";
+      description = "The branch directories of the archive disks (each inside its data subvolume, beside the trash directory), in branch order.";
     };
     baseMountPoint = mkOption { type = types.str; default = "/mnt/base"; };
     cacheMountPoint = mkOption { type = types.str; default = "/mnt/cache"; };
@@ -66,6 +67,15 @@ in
       type = types.str;
       default = "NC";
       description = "Mode of the archive branches in the cache pool; NC allows change and delete but never create.";
+    };
+    unlinkPolicy = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      description = ''
+        `func.unlink` of the cache pool. null sets no option, so the mergerfs default applies
+        (`epall` per the pinned 2.41.1 source, UNVERIFIED until measured). Adopting a value is a
+        reviewed amendment (required setting, FR-013), never a silent default.
+      '';
     };
     moveOnEnospc = mkOption { type = types.bool; default = false; };
     minFreeSpace = mkOption {
@@ -104,6 +114,7 @@ in
         branches = [ cfg.poolBranch ] ++ map (b: "${b}=${cfg.archiveBranchMode}") cfg.archiveBranches;
         fsname = "cachepool";
         createPolicy = cfg.createPolicy;
+        extra = lib.optional (cfg.unlinkPolicy != null) "func.unlink=${cfg.unlinkPolicy}";
       })
     ];
   };
