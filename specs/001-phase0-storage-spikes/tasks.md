@@ -4,22 +4,22 @@
 
 **Prerequisites**: [plan.md](plan.md), [spec.md](spec.md), [research.md](research.md), [data-model.md](data-model.md), [contracts/](contracts/), [quickstart.md](quickstart.md)
 
-**Counts**: 177 tasks, 45 done (T001 to T037, T018a, T019a, T030a, T037a, T037b, T037d, T037e and T081) and 132 open: the ids T001 to T162 plus the fifteen tasks T037a, T037b and T049a (inserted on 2026-10-16), T018a, T019a, T028a, T037c, T086a and T098a (inserted on 2026-10-16 for the trash amendment), T080a and T080b (inserted on 2026-10-17 for the S2.7 review, finding G3 of `checklists/analysis-rerun-1.md`), T138a (inserted on 2026-10-17 for the reproducibility rule, U8), T030a (inserted on 2026-10-17 for metadata preservation, G4), T037d and T037e (inserted on 2026-10-17 for the S2.7 review rule and the required disks, U11 and I19), all inserted in dependency order (the numbering of the 162 original tasks is unchanged).
+**Counts**: 191 tasks, 45 done (T001 to T037, T018a, T019a, T030a, T037a, T037b, T037d, T037e and T081) and 146 open: the ids T001 to T176 (T163 to T176 added on 2026-10-17 for the optional experiment X2) plus the fifteen tasks T037a, T037b and T049a (inserted on 2026-10-16), T018a, T019a, T028a, T037c, T086a and T098a (inserted on 2026-10-16 for the trash amendment), T080a and T080b (inserted on 2026-10-17 for the S2.7 review, finding G3 of `checklists/analysis-rerun-1.md`), T138a (inserted on 2026-10-17 for the reproducibility rule, U8), T030a (inserted on 2026-10-17 for metadata preservation, G4), T037d and T037e (inserted on 2026-10-17 for the S2.7 review rule and the required disks, U11 and I19), all inserted in dependency order (the numbering of the 162 original tasks is unchanged).
 
 **Tests**: The deliverable of Phase 0 is tests, scenarios and decisions (SC-010), so the "implementation" tasks below build a scenario and its harness piece, never a product feature. Pure-Python unit tests (oracle, manifests, recorder, sanitiser, `spikectl`, negative-control definitions) are requested by the plan (`checks.oracle-unit`); they are written first and must fail before the code they cover exists.
 
-**Organization**: Tasks are grouped by user story. Spec stories map to labels as follows: `US1` = S1 tiered-cache share, `US2` = S2 parity recovery, `US3` = S3 mover crash safety, `US4` = S4 degraded modes, `US5` = S5 declarative rebuild, `US6` = the decision and ADR gate, `US7` = X1 optional overlayfs experiment. Phases follow the maintainer's priority: S1 and S2 first (they secure the storage model most), then S3, S4, S5, the decision gate, and last the optional X1.
+**Organization**: Tasks are grouped by user story. Spec stories map to labels as follows: `US1` = S1 tiered-cache share, `US2` = S2 parity recovery, `US3` = S3 mover crash safety, `US4` = S4 degraded modes, `US5` = S5 declarative rebuild, `US6` = the decision and ADR gate, `US7` = X1 optional overlayfs experiment, `US8` = X2 optional ZFS mirror pool experiment. Phases follow the maintainer's priority: S1 and S2 first (they secure the storage model most), then S3, S4, S5, the decision gate, and last the optional X1 and X2 (X2 only after the S1 to S4 checkpoints).
 
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependency on an incomplete task)
-- **[Story]**: Which user story the task belongs to (US1 to US7)
+- **[Story]**: Which user story the task belongs to (US1 to US8)
 - Every task names exact repository-relative file paths.
 
 ## Path Conventions (from plan.md "Project Structure")
 
 - Throwaway scaffolding: `spikes/phase0/` (`flake.nix`, `flake.lock`, `nix/`, `vm-tests/`, `testlib/`, `guest/`, `controls/`, `spikectl/`, `tests/`). Never imported by product code.
-- Decision artifacts: `docs/phase0/criteria/` (`S1.yaml` .. `S5.yaml`, optional `X1.yaml`, `frozen.lock`) and `docs/phase0/results/<spike>/<record-id>/` (`record.json`, `evidence.tar.xz`), `docs/phase0/results/repro/<record-id>/`.
+- Decision artifacts: `docs/phase0/criteria/` (`S1.yaml` .. `S5.yaml`, optional `X1.yaml` and `X2.yaml`, `frozen.lock`) and `docs/phase0/results/<spike>/<record-id>/` (`record.json`, `evidence.tar.xz`), `docs/phase0/results/repro/<record-id>/`.
 - CI: `.github/workflows/phase0.yml` (created in US6).
 
 ## Rules that apply to every task
@@ -304,7 +304,7 @@ Verification tooling (`spikectl verify`, `verdict`) already exists from Phase 2;
 - [ ] T144 [US6] Record the measured suite wall time against the frozen 2-hour target (SC-009); if it misses, write the reason into the reproducibility PR and open a reviewed criteria/spec amendment before any rerun—never edit a frozen criteria file in place—then apply the levers in order: more shards, fewer redundant crash points proven equivalent in shakedown, a smaller fixture (research D14) (depends on T143)
 - [ ] T145 [US6] Run `nix run ./spikes/phase0#spikectl -- verdict` and attach the gate matrix to the PR that merges the last record (depends on T143, T138a)
 - [ ] T146 [US6] **GATE, separate reviewed docs-only PR after all records are merged**: change the `Status:` line of `docs/adr/0002-two-tier-storage.md` (accepted only with S1 to S4 PASS) and `docs/adr/0005-declarative-config-applied-by-rebuild.md` (accepted only with S5 PASS) and reference the record paths; for a gating FAIL adopt the fallback named in the criteria and update the ADR text and `docs/plans/2026-10-15-nasaex-design.md` in that PR (FR-007); CI runs `spikectl verify` on it; no ADR status is changed by any other task or PR (depends on T145)
-- [ ] T147 [US6] **CHECKPOINT Decision**: frozen criteria for all five spikes precede their first records in history, each of S1 to S5 has a PASS or FAIL record, no ADR is `accepted` without matching PASS records, an X1 record if present is marked non-gating and cited by no ADR, and the phase gate "Phase 1 starts only when all five verdicts are recorded and each ADR is accepted or its fallback adopted" is stated in the PR (depends on T146)
+- [ ] T147 [US6] **CHECKPOINT Decision**: frozen criteria for all five spikes precede their first records in history, each of S1 to S5 has a PASS or FAIL record, no ADR is `accepted` without matching PASS records, an X1 or X2 record if present is marked non-gating and cited by no ADR, and the phase gate "Phase 1 starts only when all five verdicts are recorded and each ADR is accepted or its fallback adopted" is stated in the PR (depends on T146)
 
 ---
 
@@ -328,7 +328,32 @@ Verification tooling (`spikectl verify`, `verdict`) already exists from Phase 2;
 
 ---
 
-## Phase 10: Polish & Cross-Cutting Concerns
+## Phase 10: User Story 8 - X2: A ZFS mirror as the fast pool, as an optional experiment (Priority: P3, non-gating)
+
+**OPTIONAL. NOT ON THE CRITICAL PATH. NON-GATING.** Every task in this phase may be skipped entirely. X2 changes no ADR status, triggers no fallback, is not part of `apps.suite` unless `--include-x2` is given, is outside the 2-hour budget, and `spikectl verify` never asks for an X2 record. No task of this phase starts before the S1 to S4 checkpoints `T056`, `T080`, `T105` and `T120` (maintainer decision 2026-10-17); like X1 (OI-8) it must not delay Phases 3 to 8. A change of the pool filesystem is never a task of this phase: it needs a separate reviewed amendment of ADR-0002 after the X2 record is merged.
+
+**Goal**: A comparison table, one row per dimension, stating whether a ZFS mirror as the fast pool has an advantage, no advantage or a disadvantage against btrfs RAID1 under the same tiered-cache setup (spec User Story 8). Without an `advantage` row btrfs RAID1 stays.
+
+**Independent Test**: In the `x2` profile (the `large` disks), run the server once with the btrfs RAID1 pool of S1 (reference case) and once with a ZFS mirror over the same two pool devices (case `gating: false`), both under the unchanged tiered-cache module and the S1 required settings, drive both from the SMB client VM and compare with the X2 criteria (X2.1 to X2.5).
+
+- [ ] T163 [US8] OPTIONAL **GATE, own reviewed docs-only PR (rule 6)**: extend `specs/001-phase0-storage-spikes/contracts/criteria.schema.json` and `specs/001-phase0-storage-spikes/contracts/result-record.schema.json` for X2 (spike id `X2` with `gates: none` and no fallback, scenario ids `X2.<m>`, record ids `X2-...` and `repro-X2-...`, `gating: false` required on X2 records, the profile `x2`, and a place for the comparison table of spec User Story 8), and update the matching sentences of `data-model.md` and a Scenario of `quickstart.md` modelled on Scenario 5a; whether the two-case model of spec User Story 8 is confirmed is settled in this PR; merged by rebase or merge commit, never squash (depends on T056, T080, T105, T120, T037a)
+- [ ] T164 [P] [US8] OPTIONAL: teach the tooling the X2 contract, tests first in a new `spikes/phase0/tests/test_verdict_x2.py` (they must fail before the code exists), then `spikes/phase0/spikectl/model.py`, `spikes/phase0/spikectl/verdict.py`, `spikes/phase0/spikectl/record.py`, `spikes/phase0/spikectl/verify.py` and `spikes/phase0/spikectl/adrgate.py`: X2 records carry `gating: false`, have no fallback decision and are listed on their own non-gating line of the verdict matrix; `spikectl verify` passes with and without an X2 record; an ADR citing an X2 record as a condition is rejected; an X2 record or its absence never changes the ADR gate result (depends on T163, T037b, T141)
+- [ ] T165 [P] [US8] OPTIONAL: probe the ZFS module of the pinned kernel inside a guest (X2.5) in `spikes/phase0/vm-tests/probes/x2_zfs_kernel.nix` and `spikes/phase0/vm-tests/probes/probe_x2_zfs_kernel.py`: boot with `boot.supportedFilesystems = [ "zfs" ]` and a fixed `networking.hostId`, load the module, read its version and the kernel version, create a mirror on two empty disks, export and import it, and compare with the evaluated facts in spec User Story 8 (OpenZFS 2.4.4 for kernel 6.18.56, not marked broken); probes never write records (depends on T032, T056, T080, T105, T120)
+- [ ] T166 [US8] OPTIONAL: implement the ZFS mirror pool in `spikes/phase0/nix/zfs-pool.nix` and the `x2` profile in `spikes/phase0/nix/profiles.nix` (the `large` disks; the two pool devices as a ZFS mirror with one dataset as the pool branch; ARC maximum left at the module default and recorded), keep `spikes/phase0/nix/tiered-cache.nix` unchanged so that only the pool branch differs, and define the X2 VM test in `spikes/phase0/vm-tests/x2/default.nix` with both server variants (btrfs RAID1 reference, ZFS mirror) and the `client` VM (depends on T165, T041, T028a)
+- [ ] T167 [P] [US8] OPTIONAL: write the draft criteria `docs/phase0/criteria/X2.yaml` (`spike: X2`, `gates: none`, no `fallback`, scenarios X2.1 to X2.5 from spec User Story 8, each with the case `btrfs-raid1` and the case `zfs-mirror` marked `gating: false`, the rules that derive `advantage`, `no advantage` or `disadvantage` per dimension from the two cases, and the memory sampling of X2.4 against the 8 GiB budget); it must validate against the schema as extended by T163 (depends on T163)
+- [ ] T168 [P] [US8] OPTIONAL: implement check X2.1 in `spikes/phase0/vm-tests/x2/checks_branch_fs.py` by calling the S1 checks of `spikes/phase0/vm-tests/s1/checks_placement.py`, `checks_inplace.py`, `checks_rename_attrs.py` and `checks_large_space.py` (placement, in-place change, delete and recreate, renames, xattrs and SMB attributes, the sparse file, `ENOSPC` with the S1 `minfreespace`) against each pool variant, without copying them (depends on T166, T167, T044, T045, T046, T047)
+- [ ] T169 [P] [US8] OPTIONAL: implement checks X2.2 and X2.3 in `spikes/phase0/vm-tests/x2/checks_pool_devices.py`: one pool device failed (`device-unplug`, `device-failed-at-boot`), data available through the share while degraded, replacement and resync (resilver for ZFS, replace for btrfs) and no loss judged by the oracle, compared with the S4.1 and S4.6 results of the S4 record; adding a third device and replacing a smaller by a larger device, recording per filesystem which steps work in place without recreating the pool and the usable capacity after each step (depends on T166, T167, T035, T019, T107)
+- [ ] T170 [P] [US8] OPTIONAL: implement checks X2.4 and X2.5 in `spikes/phase0/vm-tests/x2/checks_resources.py`: memory of the filesystem cache (ZFS ARC size and maximum, statistics path probed first, UNVERIFIED) and available guest memory sampled while the S1 data set is written and read, against the 8 GiB VM budget; module and kernel versions of the running guest (depends on T166, T167, T165)
+- [ ] T171 [P] [US8] OPTIONAL: unit tests for the comparison table in `spikes/phase0/tests/test_x2_compare.py`: per dimension the derivation of `advantage`, `no advantage` and `disadvantage` from the two cases by the rules of the X2 criteria, a failed reference case yields no `advantage` row, the table has one row per dimension and never changes a scenario outcome; tests must fail before T172 exists (depends on T167)
+- [ ] T172 [US8] OPTIONAL: implement the comparison table in `spikes/phase0/vm-tests/x2/compare.py`, register the X2 scenarios with their two cases in `spikes/phase0/vm-tests/x2/test_script.py`, wire `packages.driver-x2` and `apps.x2` in `spikes/phase0/flake.nix` and the `--include-x2` option of `spikectl run` in `spikes/phase0/spikectl/run.py` (depends on T168, T169, T170, T171, T138)
+- [ ] T173 [US8] OPTIONAL: shakedown of X2 (`nix run ./spikes/phase0#x2 -- --mode shakedown`, no record) and finalize `docs/phase0/criteria/X2.yaml` with the shakedown edits in its `changelog`; a comparison rule already derived is not changed to match an observation (rule 2) (depends on T172)
+- [ ] T174 [US8] OPTIONAL: freeze with `nix run ./spikes/phase0#spikectl -- freeze X2`, commit as `docs(phase0): freeze X2 criteria`, criteria PR reviewed and merged (rebase or merge commit, never squash) before any X2 record-mode run (depends on T173)
+- [ ] T175 [US8] OPTIONAL: record-mode run (`nix run ./spikes/phase0#x2 -- --mode record` or `--include-x2` on the suite); the record carries `gating: false` and the comparison table, has no fallback decision, and states that it is non-gating; commit `docs/phase0/results/X2/<record-id>/` as `docs(phase0): record X2 result` through a PR (depends on T174, T036)
+- [ ] T176 [US8] OPTIONAL **CHECKPOINT X2**: `spikectl verify` passes with and without the X2 record, `spikectl verdict` lists X2 on a separate non-gating line, no ADR cites it as a condition, and the PR states whether the table holds an `advantage` row; only then may the maintainers open a separate reviewed ADR-0002 amendment, which is not a task of this phase (depends on T175)
+
+---
+
+## Phase 11: Polish & Cross-Cutting Concerns
 
 **Purpose**: Final validation of the whole Phase 0 deliverable.
 
@@ -353,7 +378,8 @@ Verification tooling (`spikectl verify`, `verdict`) already exists from Phase 2;
 - **US5 S5 (Phase 7)**: independent of S1 to S4; the probe `T121` may start right after Foundational.
 - **US6 decision (Phase 8)**: the suite runner depends on the five spike apps (the runner decision `T036` in Phase 2 precedes every record-mode run); the reproducibility run and the ADR PR depend on all five checkpoints and on the S2.7 review GATE `T080b` (which needs the `spikectl review` verb of `T080a`).
 - **US7 X1 (Phase 9)**: optional, depends only on Foundational and the S1 fixtures and SMB driver; never on the critical path.
-- **Polish (Phase 10)**: after US6.
+- **US8 X2 (Phase 10)**: optional, starts only after the S1 to S4 checkpoints `T056`, `T080`, `T105` and `T120`; needs the reviewed contract extension `T163` before its criteria and the tooling `T164` before its record; never on the critical path.
+- **Polish (Phase 11)**: after US6.
 
 ### Within every spike
 
@@ -365,7 +391,7 @@ Verification tooling (`spikectl verify`, `verdict`) already exists from Phase 2;
 
 ### Critical path
 
-`Setup` -> `Foundational (spikectl, oracle, recorder, profiles, nodes, tiered-cache, mkspike, fault probes)` -> `S1 (shakedown, freeze, criteria PR merged)` and `S2 (probe, model, snapsync, lock, recover, shakedown, freeze, criteria PR merged)` -> `runner decision` -> `S1 record`, `S2 record` -> `S3 amendment PR merged (can be written at any time after Foundational) and S3 (needs S1.10 finding and the S2 recovery sequence)` -> `S3 record` -> `S4` -> `S4 record` -> `reproducibility run` -> `verdict` -> `separate ADR PR`. S5 and X1 are off this path (S5 must finish before Phase 1 but not before S3 or S4).
+`Setup` -> `Foundational (spikectl, oracle, recorder, profiles, nodes, tiered-cache, mkspike, fault probes)` -> `S1 (shakedown, freeze, criteria PR merged)` and `S2 (probe, model, snapsync, lock, recover, shakedown, freeze, criteria PR merged)` -> `runner decision` -> `S1 record`, `S2 record` -> `S3 amendment PR merged (can be written at any time after Foundational) and S3 (needs S1.10 finding and the S2 recovery sequence)` -> `S3 record` -> `S4` -> `S4 record` -> `reproducibility run` -> `verdict` -> `separate ADR PR`. S5, X1 and X2 are off this path (S5 must finish before Phase 1 but not before S3 or S4).
 
 ### Parallel Opportunities
 
@@ -403,7 +429,7 @@ Task: "Implement check S1.10 in spikes/phase0/vm-tests/s1/checks_mover_view.py"
 1. S3 (the mover), then S4 (lockouts); each ends with its own record PR and checkpoint.
 2. S5 whenever a person is free (probe first); it is independent.
 3. Phase 8: reproducibility, CI, verdict matrix, the separate ADR PR.
-4. Phase 9 (X1) only on request; Phase 10 last.
+4. Phase 9 (X1) only on request; Phase 10 (X2) only on request and after the S1 to S4 checkpoints; Phase 11 last.
 
 ### Delivery through PRs
 
@@ -438,3 +464,4 @@ One PR per criteria freeze and one per record keeps "criteria before results" vi
 | OI-10 | The 2-hour budget estimates are `[Guessing]` until shakedown. | Task `T144` revises the target only with a recorded reason after measurements. |
 | OI-11 | **Amendment done (T081)** of spec.md (scenario S3.7 and FR text), contracts/mover-steps.md and contracts/fault-points.md to the new concurrent-write semantics (no client write waits through M3; minimum-age and no-open-handle selection; ctime, size and inode comparison at M5; deterministic M5 residual-window fault point; if data can be lost S3 FAILS and the fallback is rename-to-quarantine-and-recheck). The counts were re-derived by enumeration in the contract (19 crash points and 38 cases, unchanged by that amendment; the trash amendment OI-12 later re-derived them as 21 and 42). | Maintainers review and merge the amendment as its own docs PR before any S3 harness work and before the S3 freeze; `/speckit-analyze` is re-run after its merge. |
 | OI-12 | **Amendment done** (maintainer decision 2026-10-16): a client delete of a selected pool file between M1 and M5 is handled by a trash on the same archive disk (S3.7 (e), the injection points `inject:delete-pool-after:M1` and `inject:delete-pool-after:M3`, the trash move as a named effect of M5). Re-derived by enumeration: the trash move is a durable effect and adds the two points `mid:M5:trash-renamed` and `mid:M5:trash-parent-synced`, so the counts are 21 crash points and 42 cases. The residual window of M5 is unchanged. Everything that depends on mergerfs, btrfs or SnapRAID (the trash hidden from the pool view, the atomic rename within one subvolume, recoverability of trash content) is expected behaviour and UNVERIFIED until S1.1 and S3.7 (e) prove it. | Merged as its own reviewed docs PR, haexhub/nasaex#13, after the S3.7 amendment PR haexhub/nasaex#12. Two consequences are open for the maintainers and are measured, not hidden: the archive copy shows through the share between the client delete and the trash move, and a `poweroff` at `mid:M5:trash-renamed` may lose the rename so that the retry cannot restore the hidden state (the mover keeps no state); if the second case fails S3.3 the correction is durable state through a reviewed contract amendment. |
+| OI-13 | X2 scheduling and contract (maintainer decision 2026-10-17): X2 runs only after S1 to S4, and the contracts and `spikectl` know only X1 as a non-gating spike. | Start Phase 10 only after `T120` (the last of the S1 to S4 checkpoints) and only if the maintainers still want the comparison; land the contract extension `T163` as its own reviewed docs PR before any X2 criteria; confirm or reject the proposed two-case model (spec User Story 8) in that PR. |
