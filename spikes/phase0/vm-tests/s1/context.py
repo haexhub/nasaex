@@ -125,6 +125,7 @@ class Lab:
         user: str | None = "spike",
         password: str = "spike",
         share_name: str = "cache",
+        tables: Mapping | None = None,
     ):
         self.server = server
         self.client = client
@@ -135,7 +136,11 @@ class Lab:
         self.share = CifsMount(client, share, "/mnt/share")
         self.second = CifsMount(client, share, "/mnt/share2", ("nosharesock", "actimeo=0"))
         self.smb = SmbClient(client, share)
+        self.tables = tables or {}  # the criteria tables the checks read
         self.required_settings: dict = {}
+        # In-place bit flips applied so far, per path: the expected content of a fixture file
+        # that several cases change (S1.8) follows from all of them.
+        self.flipped: dict[str, tuple[int, ...]] = {}
 
     @property
     def share_branches(self) -> dict[str, str]:
