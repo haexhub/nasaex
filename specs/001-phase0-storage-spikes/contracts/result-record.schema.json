@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "nasaex/phase0/result-record.schema.json",
   "title": "Phase 0 result record",
-  "description": "docs/phase0/results/<spike>/<record-id>/record.json (spike S1 to S5, or the optional non-gating X1). Immutable once committed. Contains identifiers and hashes only; no absolute host paths, user names or host names. Three kinds: spike-run and repro (the outcome of runs) and review (the reviewed judgement of S2.7, see the kind review rule below). The status pending is never stored: the verdict of a spike-run record stays PASS or FAIL, and the S2 status pending is derived only when every other S2 scenario passed, the automated S2.7 checks pass and no review record names the newest spike-run under the current criteria version; a review of an older run does not affect this status (data-model.md, Acceptance scenario).",
+  "description": "docs/phase0/results/<spike>/<record-id>/record.json (spike S1 to S5, or the optional non-gating X1). Immutable once committed. Contains identifiers and hashes only; no absolute host paths, user names or host names. Three kinds: spike-run and repro (the outcome of runs; a repeat run writes only repro records) and review (the reviewed judgement of S2.7, see the kind review rule below). The status pending is never stored: the verdict of a spike-run record stays PASS or FAIL, and the S2 status pending is derived only when every other S2 scenario passed, the automated S2.7 checks pass and no review record names the newest spike-run under the current criteria version; a review of an older run does not affect this status (data-model.md, Acceptance scenario).",
   "type": "object",
   "required": ["record_id", "kind", "spike", "criteria_version", "criteria_sha256"],
   "additionalProperties": false,
@@ -71,7 +71,7 @@
     },
     "repro_runs": {
       "type": "array",
-      "description": "kind=repro only: the record ids of the three consecutive clean runs (SC-004).",
+      "description": "kind=repro only: the run ids of the three consecutive clean runs (SC-004). A repeat run writes only this repro record and no spike-run record, so these ids are not separate records: the per-scenario outcomes of the three runs are combined in scenarios (pass only if all three passed, flaky if they differ, otherwise the common outcome) and their evidence is in this record's archive. A repro record never counts as the newest spike-run (data-model.md, Spike).",
       "minItems": 3,
       "maxItems": 3,
       "items": { "type": "string" }

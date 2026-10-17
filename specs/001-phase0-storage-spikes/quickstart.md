@@ -85,8 +85,11 @@ nix run ./spikes/phase0#suite -- --mode record --repeat 3
 ```
 
 Expected: three full suite runs in sequence, each from clean state; one `repro` record per spike lists the
-three run ids and the per-scenario matrix. Any scenario whose outcome differs between the runs is `flaky`,
-which counts as FAIL (spec edge case). The committed reproducibility record comes from this local run on the reference runner; CI offers the same only as an optional chain of three jobs where a runner offers KVM.
+three run ids and the per-scenario matrix, and the repeat run writes no `spike-run` record (so the newest
+spike-run, and with it the S2.7 review that names it, stays the one of the single record run). Any scenario
+whose outcome differs between the runs is `flaky`, which counts as FAIL (spec edge case); a repro record with
+the verdict FAIL makes the spike's current verdict FAIL (proposed rule, spec Clarifications 2026-10-17, U8),
+while a passing repro changes no verdict. The review judgement of S2.7 is not repeated. The committed reproducibility record comes from this local run on the reference runner; CI offers the same only as an optional chain of three jobs where a runner offers KVM.
 
 ## Scenario 5a: the optional overlayfs experiment X1
 

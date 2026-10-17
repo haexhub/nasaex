@@ -32,6 +32,12 @@ only while every other S2 scenario passed (gating cases only), the automated S2.
 sub-record exists for the newest spike-run of the current criteria version; it is a derived value that no record stores. For `X1`, `none` is a valid permanent
 state (the experiment was skipped); for `S1` to `S5` it blocks the gate.
 
+Reproducibility (proposed rule, spec Clarifications 2026-10-17, U8, for maintainer review): a `repro` record never
+counts as the newest spike-run. The current verdict of a spike is `FAIL` when the newest `repro` record of the
+current criteria version that is not older than the newest `spike-run` of that version has the verdict `FAIL` (a
+gating scenario `flaky` or failed across the three runs); otherwise the rules above apply unchanged. A passing repro
+changes no verdict, and the S2 review scope stays the newest spike-run.
+
 ### Acceptance scenario
 
 | Field | Description / validation |
@@ -105,7 +111,8 @@ The outcome of one run of one spike. Immutable once committed. Fields (full sche
 | Field | Description |
 | --- | --- |
 | `record_id` | `<spike>-<UTC timestamp basic format>-v<criteria version>` |
-| `kind` | `spike-run` or `repro` (three-run record, SC-004); the review sub-record of S2.7 is a further kind `review` (below) |
+| `kind` | `spike-run` or `repro` (three-run record, SC-004); the review sub-record of S2.7 is a further kind `review` (below). A repeat run (`--repeat 3`) writes one `repro` record per spike and never a `spike-run` record |
+| `repro_runs` | `kind: repro` only: the run ids of the three consecutive clean runs. They are not separate records: their per-scenario outcomes are combined in this record's `scenarios` (`pass` only if all three passed, `flaky` if they differ, otherwise the common outcome) and their evidence is in this record's archive |
 | `gating` | X1 records only: `false`. The experiment never gates an ADR; absent on S1 to S5 records |
 | `spike`, `criteria_version`, `criteria_sha256` | What was judged; must equal a line of `frozen.lock` |
 | `environment` | Environment revision: repository commit, `flake.lock` SHA-256, nixpkgs revision, tool versions observed inside the guest, topology profile, host class descriptor (CPU model class, vCPU count, memory), QEMU version, KVM yes/no, kernel config pre-flight results |
@@ -218,6 +225,7 @@ S2 record with automated S2.7 checks pass and a passing review, all other scenar
 S2 record with automated S2.7 checks pass and a failing review --> FAIL (fallback_decision required)
 record for current version, all scenarios pass --> PASS
 record for current version, any other outcome --> FAIL (fallback_decision required for S1 to S5)
+newest repro record of the current version, not older than the newest spike-run, verdict FAIL --> FAIL (proposed rule, U8)
 new criteria version frozen --> none (old verdicts void)
 ```
 
