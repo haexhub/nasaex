@@ -139,6 +139,7 @@ def test_copy_rename_and_delete_change_the_tree_as_a_client_would(cifs, share_di
 
 def test_rename_of_a_directory_onto_an_existing_name_does_not_nest_it(cifs, share_dir):
     (share_dir / "target").mkdir()
+    (share_dir / "target" / "keep.txt").write_text("")
 
     with pytest.raises(AssertionError):
         cifs.rename("dir", "target")  # mv -T: an existing non-empty target is not entered
