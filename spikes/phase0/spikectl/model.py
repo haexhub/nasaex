@@ -137,6 +137,18 @@ def schema_errors(root: Path, schema_name: str, doc: dict) -> list[str]:
     ]
 
 
+def criteria_rule_errors(doc: dict) -> list[str]:
+    """Rules on a schema-valid criteria document that criteria.schema.json does not carry yet
+    (mirroring them there is a reviewed docs PR): S2 has S2.7 as its reviewed scenario, so S2
+    cannot pass without a human judgement of the recovery procedure (finding U11)."""
+    if doc["spike"] == "S2" and not any(
+        s.get("id") == "S2.7" and s.get("review") is True and s.get("review_kind") == "review"
+        for s in doc["scenarios"]
+    ):
+        return ["S2 needs scenario S2.7 with review: true and review_kind: review"]
+    return []
+
+
 def record_paths(root: Path) -> list[Path]:
     """Every docs/phase0/results/<group>/<record-id>/record.json."""
     return sorted((root / RESULTS_DIR).glob("*/*/record.json"))
