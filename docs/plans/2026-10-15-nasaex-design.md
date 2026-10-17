@@ -136,8 +136,13 @@ Phase n+1 starts only when phase n passes its tests.
   stacking depth defaults 0, 1 and 2, xattrs, whiteouts, renames with `redirect_dir`, large
   files and the mover changing layers while the overlay is mounted. It can be skipped
   without affecting any ADR.
+- **X2 — ZFS mirror pool experiment (optional, non-gating)**: compares a ZFS mirror with the
+  btrfs RAID1 pool as the pool branch under the same tiered-cache setup (filesystem
+  behaviour behind the share, a device failure and replacement, adding and replacing
+  capacity, memory use, the kernel pin). It runs only after S1 to S4 and can be skipped
+  without affecting any ADR.
 
-ADR-0002 needs S1 to S4 to pass. X1 never gates it.
+ADR-0002 needs S1 to S4 to pass. X1 and X2 never gate it.
 
 ## Open questions
 
@@ -148,3 +153,5 @@ ADR-0002 needs S1 to S4 to pass. X1 never gates it.
 - Create policy of the cache pool: `ff` or `lus` (mergerfs recommends `ff`, `lus` or `lfs`
   for a cache pool). Default until decided: `ff` with the archive branches set to no-create.
 - Whether a copy-up enhancement (variant B) is worth adding later: decided by X1, not before.
+- Whether a ZFS mirror would be the better fast pool: compared by X2; btrfs RAID1 stays unless
+  X2 shows an advantage and a reviewed amendment of ADR-0002 adopts it.
