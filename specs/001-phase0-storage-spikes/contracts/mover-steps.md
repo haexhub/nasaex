@@ -49,7 +49,14 @@ rule was dropped by the clarification of 2026-10-16 (task T081).
   The retention period of the trash is a parameter fixed in the S3 criteria; purging the trash is out of
   Phase 0. That the trash is hidden from both pools, that the rename into it is atomic and that its content
   survives a single device failure are expected behaviours (UNVERIFIED): S1 scenario 1 and S3 scenario 7 (e)
-  must prove them.
+   must prove them.
+- **M1 staging directory**: a mover-owned directory at the root of the archive data subvolume, outside both
+  the archive branch and the trash, for example `.nasaex-mover-staging`. It is on the same filesystem as the
+  target archive directory and is not a branch of either pool, so a rename from staging into the archive branch
+  remains atomic without making an incomplete copy visible through the share. The mover creates a fresh child
+  directory for each run with an exclusive ownership marker; cleanup may descend only into child directories
+  with a valid marker belonging to an earlier run. Markerless directories and everything outside this staging
+  root are left untouched.
 - **Base pool**: the mergerfs pool over the archive branches only. The mover writes into the archive
   through the base pool, never through the share.
 - **Cache pool**: the mergerfs pool (pool branch first, archive branches after it, no-create) that is
@@ -115,31 +122,27 @@ rule was dropped by the clarification of 2026-10-16 (task T081).
   hash mismatch, nothing is trashed, the mover deletes nothing, and no data is lost because the client
   deleted the file. The oracle tells it from a mover deletion by the host's record of the branches that held
   item 1 right after the delete (see the hook protocol).
-- **Temporary file of M1**: the file under which M1 writes the archive copy before the rename, named
-  `.<name>.tmp-<pid>` in the target archive directory (`<name>` the final name, `<pid>` the process id of the
-  copying mover). It is never an archive copy (M1 has not renamed it and M2 has not compared it) and never a
-  live file; the mover and the oracle treat it as neither. It lies in an archive branch directory, so it is
-  listed through the share while it exists (measured by probe T037f). A **stale temporary file** is one that a
-  run left behind: by a failure of M1 (for example the copy failing because a client deleted its source during
-  M1, or `fault:M1:enospc`) or by a `kill` or `poweroff` at `mid:M1:tmp-created`, `mid:M1:tmp-partial` or
-  `mid:M1:tmp-data-synced`. **Proposed decision (maintainer review)**: a run that fails in M1 reports the name
-  of the temporary file it leaves together with the failing step; the next run removes, at the start of M1 and
-  before its first copy, every stale temporary file in the archive branch directories (a file whose name has
-  this form and whose `<pid>` is not its own), reports each removal on standard error as `stale-temp-removed`,
-  removes no file of any other name and never touches the trash; and selection never selects a pool file whose
-  name has this form, so the mover never archives a live file under such a name. The removal is not a crash
-  point: it is one unlink of a file that is neither live nor an archive copy, the states before and after it
-  are both permitted, and a crash at it leaves a state that the next run handles the same way (the reasoning
-  that also keeps the creation of missing trash directories out of the point list); counting it as a point
-  (`mid:M1:stale-temp-removed`) would make 22 crash points and 44 cases. While a stale temporary file exists,
-  its listing through the share is recorded as a finding of the case, not a failure: FR-019 (d) judges the
-  content of live files (a partial copy under a temporary name is a permitted state before `post:M1`, and every
-  M1 shows its temporary file through the share), and the exclusion of S1 scenario 1 and FR-012 concerns the
-  trash, which a temporary file is not. A stale temporary file still present after the next run has completed
-  is a failure: of S3 scenario 3 for a crash case (the final state of an uninterrupted run holds no temporary
-  file) and of S3 scenario 7 (e) for `inject:delete-pool-at:M1:tmp-partial`. Limit (UNVERIFIED, not tested in
-  Phase 0): the rule knows a temporary file by its name only, so an archived file that a client renames in place
-  to a name of this form (S1 scenario 6) would be removed by it.
+- **Temporary file of M1**: the file under which M1 writes the archive copy before the rename, named with the
+  final pool-relative path and run identifier inside that run's mover-owned staging directory. It is never an
+  archive copy (M1 has not renamed it and M2 has not compared it) and never a live file; the mover and the
+  oracle treat it as neither. It is outside both pool branches and is not visible through the share. A **stale
+  temporary file** is one left in a mover-owned run directory by a failure of M1 (for example the copy failing
+  because a client deleted its source during M1, or `fault:M1:enospc`) or by a `kill` or `poweroff` at
+  `mid:M1:tmp-created`, `mid:M1:tmp-partial` or `mid:M1:tmp-data-synced`. **Proposed decision (maintainer
+  review)**: a run that fails in M1 reports the staging path of the temporary file together with the failing
+  step; the next run removes, at the start of M1 and before its first copy, every temporary file in an earlier
+  run directory whose mover ownership marker validates, reports each removal on standard error as
+  `stale-temp-removed`, removes no file from a markerless directory or any other path, and never touches the
+  archive branches or the trash. The removal is not a crash point: it is one unlink of a file that is neither
+  live nor an archive copy, the states before and after it are both permitted, and a crash at it leaves a state
+  that the next run handles the same way (the reasoning that also keeps the creation of missing trash
+  directories out of the point list); counting it as a point (`mid:M1:stale-temp-removed`) would make 22 crash
+  points and 44 cases. The staging directory is not exposed through the share, so a stale temporary file is
+  recorded by its direct host-side staging path, not as a share visibility finding. A stale temporary file
+  still present after the next run has completed is a failure: of S3 scenario 3 for a crash case (the final
+  state of an uninterrupted run holds no temporary file) and of S3 scenario 7 (e) for
+  `inject:delete-pool-at:M1:tmp-partial`. A client-renamed archive file cannot be removed by this cleanup,
+  because cleanup never traverses an archive branch and only accepts a mover-owned staging marker.
 - **Snapshot-supported sync**: `snapraid sync` run through the snapshot tooling selected in the plan
   (open item O15): new read-only btrfs snapshots of the data disks are taken, the sync runs against
   them, and the snapshots are kept until the next sync completes.
@@ -152,7 +155,7 @@ rule was dropped by the clarification of 2026-10-16 (task T081).
 
 | Step | Name | Action | Durable effects (each is a mid-step point) | Postcondition at `post:M<k>` |
 | --- | --- | --- | --- | --- |
-| M1 | copy | First remove the stale temporary files of earlier runs (see "Temporary file of M1"; proposed, not a point). Then for each copy item: record its copy-time identity, then copy the pool file through the base pool to a temporary name in the target archive directory together with the metadata listed under "Metadata preservation", fsync, rename to the final name (for a replacement the rename atomically replaces the old archived version), fsync the directory; then record the copy-time record of the archive copy | `tmp-created`, `tmp-partial` (half of the bytes written, not yet synced), `tmp-data-synced`, `renamed`, `parent-synced` (for item 1), `item-1-done` | Every copy item has a complete archive copy under its final name with the metadata preserved; no temporary file of the mover remains in an archive branch directory; pool copies are untouched; the copy-time identity and the copy-time record of the archive copy of every item are held in memory |
+| M1 | copy | First remove the stale temporary files of earlier runs (see "Temporary file of M1"; proposed, not a point). Then for each copy item: record its copy-time identity, then copy the pool file through the base pool to a temporary name in the mover-owned staging directory together with the metadata listed under "Metadata preservation", fsync, rename to the final name in the target archive directory (for a replacement the rename atomically replaces the old archived version), fsync the target directory; then record the copy-time record of the archive copy | `tmp-created`, `tmp-partial` (half of the bytes written, not yet synced), `tmp-data-synced`, `renamed`, `parent-synced` (for item 1), `item-1-done` | Every copy item has a complete archive copy under its final name with the metadata preserved; no temporary file of the mover remains in the mover-owned staging directory; pool copies are untouched; the copy-time identity and the copy-time record of the archive copy of every item are held in memory |
 | M2 | checksum | For each copy item: hash the pool file, then read its identity again; if the pool file is gone the item is a vanished item (no pool hash; the archive copy is hashed and compared with the copy-time hash only; if the archive copy is gone too, the item is a vanished item without archive copy, reported and out of the run, not a mismatch); if the identity differs from the copy-time identity the item is a changed item and is skipped; otherwise hash the archive copy (archive side read after dropping caches so it comes from the disk) and compare the content hash and the metadata fields | `pool-hashed`, `archive-hashed` (no durable effects; read only) | For every unchanged item the hashes and the metadata fields are equal; changed items are reported and out of the run; vanished items that remain in the run are reported and have an archive copy equal to their copy-time hash; a vanished item without archive copy is reported and out of the run; a content or metadata mismatch of an unchanged item, or a hash mismatch of a vanished item's archive copy, stops the run at M2, reports it, and changes nothing else |
 | M3 | sync | Snapshot-supported `snapraid sync` for the archive, if at least one unchanged or vanished item remains. The mover holds no lock on the pool; client I/O is neither blocked nor delayed while it runs | `sync-pos` (`snapraid -l` progress position reached, or a sync limited with `-B`), see the fault-points contract | Sync completed with exit status 0; content file saved; the snapshot set of this sync is marked complete; no client write waited for it (S3 scenario 7 (c)) |
 | M4 | verification | Verify that every unchanged or retained vanished copy item is covered by completed parity: the item exists with the expected hash in the snapshot set of the completed sync, there are no pending changes for the item paths, and a check of those paths succeeds | `checked` (no durable effects) | Parity coverage verified for every unchanged and every retained vanished copy item; a vanished item without archive copy was reported and removed from the run at M2 |
@@ -256,7 +259,7 @@ namespace; they are enumerated here, are not crash points and are not counted in
 | `inject:modify-pool-during:M3` | S3.7 (c) | Client write while the sync of M3 is in progress; must complete without delay |
 | `inject:modify-pool-at:M5:residual-window` | S3.7 (d) | Client write between the final check of M5 and the unlink of item 1; the outcome (data lost or not lost) is recorded |
 | `inject:delete-pool-at:M1:tmp-data-synced` | S3.7 (e) | Client delete of the pool file of item 1 while the mover is held at `mid:M1:tmp-data-synced` (temporary copy complete and synced, not renamed). The path of item 1 is on no archive branch yet, so the delete removes only the pool file; the mover's rename then makes the temporary copy the archive copy (measured, probe T037f, two runs: copy exit status 0, archive copy byte-identical). Expected outcome: **trash** (a vanished item with archive copy, found at M2, kept through M3 and M4, moved into the trash at M5); also the precondition of the two trash crash points |
-| `inject:delete-pool-at:M1:tmp-partial` | S3.7 (e) | Variant of the point above, held at `mid:M1:tmp-partial` (half of the bytes written, not synced). Expected outcome: **copy failed** (measured, probe T037f, two runs): the copy fails when it reads the rest of the deleted source (exit status 1), M1 fails and the run stops (failure behaviour), no archive copy and no trash copy of item 1 exist, and the partial temporary file stays on the archive disk, listed through the share, until the next run removes it (a stale temporary file, see "Temporary file of M1") |
+| `inject:delete-pool-at:M1:tmp-partial` | S3.7 (e) | Variant of the point above, held at `mid:M1:tmp-partial` (half of the bytes written, not synced). Expected outcome: **copy failed** (measured, probe T037f, two runs): the copy fails when it reads the rest of the deleted source (exit status 1), M1 fails and the run stops (failure behaviour), no archive copy and no trash copy of item 1 exist, and the partial temporary file stays in mover-owned staging, outside the share, until the next run removes it (a stale temporary file, see "Temporary file of M1") |
 | `inject:delete-pool-after:M1` | S3.7 (e) | Client delete of the pool file of item 1 after M1. Under the unlink policy `epall` the delete removes the archive copy too (measured, probe T037c, two runs). Expected outcome: **archive gone** (a vanished item without archive copy, found at M2 and reported `vanished-archive-gone`; nothing is trashed) |
 | `inject:delete-pool-after:M3` | S3.7 (e) | Client delete of the pool file of item 1 after M3. Expected outcome under `epall`: **archive gone**, as after M1, found at M5 (the same policy; not measured at this point, UNVERIFIED until S3 scenario 7 (e) runs) |
 | `inject:modify-archive-after-delete:M4` | S3.7 (e) | Client write through the share to the path of item 1 after M4, in a case that also arms a delete injection. With `inject:delete-pool-after:M3` the delete removed the archive copy (archive gone), so the write creates a new pool file and M5 treats item 1 as a changed item. **Proposed** second case (maintainer review) with `inject:delete-pool-at:M1:tmp-data-synced`, the only delete that leaves an archive copy under `epall`: the write changes that archive copy in place (S1 scenario 3), so M5 finds it no longer matching its copy-time record and leaves it as `vanished-archive-changed`. M4 is the only step: a client change of the archive copy before M4 has completed is expected to be found by M2 (hash mismatch) or M4 (verification) and to stop the run (failure behaviour) |
@@ -291,20 +294,22 @@ See [fault-points.md](fault-points.md).
    the path of item 1; the host records on which branch the written file is found afterwards). For the four delete
    points the host deletes (unlinks) the pool path of item 1 through the share, again without waiting for the
    mover, then lists the directory of item 1 directly on the pool branch and on every archive branch (temporary
-   names included, kept in the case evidence) and records which branches still hold item 1
+   names included, kept in the case evidence), inspects mover-owned staging directly, and records which branches
+   or staging copies still hold item 1
    (`branches_after_delete`): a branch holds it if it has the path of item 1, or, for the two delete points
-   during M1, a temporary file of the mover for item 1 whose content hash equals the hash the fixture expects
-   for item 1 (a complete temporary copy, which the rename turns into the archive copy; a partial temporary file
-   is not a holder). The host then reads the effective unlink policy of the cache pool (`func.unlink`, expected
+   during M1, a complete temporary file in mover-owned staging for item 1 whose content hash equals the hash the
+   fixture expects for item 1 (the rename turns it into the archive copy; a partial temporary file is not a
+   holder). The host then reads the effective unlink policy of the cache pool (`func.unlink`, expected
    `epall`) and reads the share path of item 1 once before it releases the hook. The read
    (`visible_before_trash`) is recorded, not judged: it is true only where an archive copy of item 1 exists under
    its path (it then shows through until the trash move); under `epall` it was false after the delete at
    `post:M1` (probe T037c). For the delete points during M1 the path is on no branch until the mover's rename, so
    the host arms `post:M1` as a release-only point and reads the share path once more there (at
-   `mid:M1:tmp-partial` the run fails before `post:M1`, and the host reads it after the run instead); probe
-   T037f saw the renamed copy at once through the cache pool on the server and an `actimeo=0` mount, but not by
-   `stat` through a default mount within 35 s, so this value depends on the client's caching and is recorded,
-   not judged. The mover then completes the run, and the checks of S3 scenario 7 run: after `inject:modify-pool-after:M1` and
+   `mid:M1:tmp-partial` the run fails before `post:M1`, and the host reads staging after the run instead); probe
+   T037f measured the copy failure and the renamed archive visibility under the earlier in-branch temporary-file
+   layout. The accepted contract keeps temporary files outside the pool views, so staging presence is recorded
+   directly on the host and is not a share-visibility finding. The mover then completes the run, and the checks
+   of S3 scenario 7 run: after `inject:modify-pool-after:M1` and
    `inject:modify-pool-after:M2` the pool copy of item 1 was kept as a changed item, the newer pool version
    is available through the share and is not deleted or hidden by the stale archive copy, and a later run
    supersedes the archive copy; after `inject:modify-pool-during:M3` the write completed within the bound;
@@ -321,8 +326,8 @@ See [fault-points.md](fault-points.md).
    `branches_after_delete` names no branch, the run stopped in M1 and reported M1 as the failing step with the
    name of the temporary file it left, no trash copy exists, every other pool copy is in place, and a second,
    uninterrupted mover run of the case removes the stale temporary file and ends in the final state of an
-   uninterrupted run without item 1 (the listing of the temporary file through the share before that run is a
-   finding, see "Temporary file of M1"). A case whose `branches_after_delete` or final state does not match
+   uninterrupted run without item 1 (the direct staging path and ownership marker before that run are recorded,
+   see "Temporary file of M1"). A case whose `branches_after_delete` or final state does not match
    the expected outcome of its injection fails; the case records the outcome it reached together with
    `func.unlink`. After `inject:modify-archive-after-delete:M4` the content of
    the client's write is visible through the share at the path of item 1, nothing is trashed and nothing is
@@ -391,7 +396,7 @@ S3.5 passes only if it does.
 
 | Phase | Pool copy of a copy item | Archive copy of a copy item |
 | --- | --- | --- |
-| before `post:M1` | present | absent, partial under a temporary name, or complete; a stale temporary file of an earlier run may also be present until the start of this run's M1 removes it |
+| before `post:M1` | present | absent, partial under a temporary name in staging, or complete; a stale temporary file of an earlier run may also be present in staging until the start of this run's M1 removes it |
 | `post:M1` to `post:M4` | present | complete; hash-equal if unchanged, but may be stale while a newer pool copy remains |
 | during M5 | present for items not yet unlinked and for changed items, absent only for unchanged items already verified and parity-covered (M3, M4 completed) | complete |
 | `post:M5` | absent for unchanged items; present for changed items | complete and parity-covered for unchanged items; stale (older than the pool copy) for changed items until the next run |
@@ -400,13 +405,13 @@ For a vanished item (the host deleted the pool file by injection, so its absence
 
 | Phase | Pool copy | Archive copy (branch directory) | Trash copy |
 | --- | --- | --- | --- |
-| delete during M1 at `mid:M1:tmp-data-synced` (`inject:delete-pool-at:M1:tmp-data-synced`), from the delete to `mid:M1:renamed` | absent (deleted by the client) | complete under the temporary name only, not under the final name; the path is not visible through the share | absent |
+| delete during M1 at `mid:M1:tmp-data-synced` (`inject:delete-pool-at:M1:tmp-data-synced`), from the delete to `mid:M1:renamed` | absent (deleted by the client) | complete in staging only, not under the final name; the path is not visible through the share | absent |
 | from the delete (from `mid:M1:renamed` for a delete during M1) to `mid:M5:trash-renamed` | absent (deleted by the client) | complete under its final name, hash-equal to its copy-time hash; shows through the share until the trash move (measured) | absent |
 | between `mid:M5:trash-renamed` and `mid:M5:trash-parent-synced` | absent | absent or complete under its final name (after a `poweroff` the rename may not be durable) | complete and hash-equal if the rename is durable, otherwise absent; never both partial |
 | from `mid:M5:trash-parent-synced` and at `post:M5` | absent | absent | exactly one, complete, byte-identical to the copy-time hash; the file is not visible through the share |
 | archive copy changed in place by `inject:modify-archive-after-delete:M4` (the delete left it in place), from the write to `post:M5` | absent | complete under its final name with the client's content (no longer equal to the copy-time hash); visible through the share; M5 leaves it and reports `vanished-archive-changed` | absent |
 | vanished item without archive copy: from the delete on (the host recorded `branches_after_delete` without an archive branch) | absent (deleted by the client) | absent (removed by the client's delete through the share) | absent; the file is not visible through the share; the mover reports `vanished-archive-gone` |
-| copy failed: delete during M1 at `mid:M1:tmp-partial` (`inject:delete-pool-at:M1:tmp-partial`), from the delete on | absent (deleted by the client) | absent under the final name; a partial stale temporary file stays until the next run's M1 removes it (listed through the share, a finding) | absent; the path is not visible through the share; the run fails in M1 and reports the temporary file it left |
+| copy failed: delete during M1 at `mid:M1:tmp-partial` (`inject:delete-pool-at:M1:tmp-partial`), from the delete on | absent (deleted by the client) | absent under the final name; a partial stale temporary file stays in staging until the next run's M1 removes it (recorded by direct host inspection) | absent; the path is not visible through the share; the run fails in M1 and reports the staging path it left |
 
 At no phase may the content of a vanished item exist nowhere (neither in the archive branch nor in the trash),
 except for a vanished item without archive copy, whose content the client deleted (as recorded by the host
@@ -419,8 +424,8 @@ FR-019 (b), unless the host's own delete injection removed it.
 A failure of M1 (including out-of-space), M2 (content or metadata mismatch of an unchanged item, or a hash mismatch of a vanished item's archive copy), M3 (sync
 failure) or M4 (verification failure) stops the run, reports the failing step on standard error and in the
 exit status, and leaves every pool copy in place. A changed item is not a failure (see "Changed item"). A
-later run starts again from the on-disk state. A failure of M1 leaves the temporary file of the item it was
-copying; the run reports its name with the failing step, and the next run removes it (proposed, see
+  later run starts again from the on-disk state. A failure of M1 leaves the temporary file of the item it was
+  copying in mover-owned staging; the run reports its staging path with the failing step, and the next run removes it (proposed, see
 "Temporary file of M1"). A pool file that a client deletes while M1 copies it makes the copy fail when the
 remaining bytes are read (measured, probe T037f, at `mid:M1:tmp-partial`: exit status 1); that is an M1
 failure like any other: the run stops, and every pool copy that still exists stays in place until the next
@@ -439,9 +444,9 @@ by the oracle.
    during M1 before the rename, see point 4), the archive copy of the file shows through the cache pool from
    the mover's rename until the trash move, because the pool file that hid it is gone. Probe T037f saw it at
    once through the cache pool on the server and through an `actimeo=0` mount and still 35 s later; a default
-   `mount.cifs` mount did not find it by `stat` within 35 s and listed the stale temporary name until the next
-   change through SMB in that directory (why is not measured). The window is measured (`visible_before_trash`)
-   and not bounded in Phase 0.
+   `mount.cifs` mount did not find it by `stat` within 35 s. The temporary-file visibility observed by that
+   probe belonged to the earlier in-branch layout; under this contract staging is outside both pool views.
+   The window is measured (`visible_before_trash`) and not bounded in Phase 0.
 2. **Crash before the trash move.** After a `kill` or `poweroff` before the trash move is durable, the next
    run does not select the file (its pool file is gone), so it cannot tell the stale archive copy from an
    ordinary archived file and cannot trash it. The deleted file then stays visible. S3 records this for the two

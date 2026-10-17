@@ -25,7 +25,9 @@ Two tiers, built on the tiered-cache pattern documented by mergerfs.
   disk. There is no overlayfs, no copy-up and no whiteout.
 - The mover follows the documented pattern (move files from the cache branch into the base
   pool, on a schedule) with the project's safety rule: copy with a checksum and keep the
-  source, run and verify `snapraid sync`, and only then delete the pool copy. The stock
+  source, run and verify `snapraid sync`, and only then delete the pool copy. M1 uses a
+  mover-owned staging directory outside the archive branch but on the same filesystem, so
+  cleanup can verify ownership before removing an interrupted temporary copy. The stock
   `--remove-source-files` behaviour is not acceptable.
 - A client delete through the share removes every copy of the file: the cache pool keeps the
   mergerfs default unlink policy `epall`, so a delete after the mover has copied a selected
@@ -107,10 +109,12 @@ adopts the change.
   the failed disk that was added or changed after the last sync is not recoverable.
 - A full pool must not spill into the archive: the archive branches are no-create and
   mergerfs `moveonenospc` is off in the cache pool (to be confirmed by S1).
-- A client delete of a selected pool file has a measured visibility window until the
-  trash rename. A crash before that rename is durable may leave the stale archive copy
-  visible on retry; this is an explicit S3 failure condition and requires a reviewed
-  correction before the tiered model can be accepted.
+- A client delete of a selected pool file during M1, before the mover renames its staged
+  copy into the archive branch, has a measured visibility window from that rename until
+  the trash rename. A delete after the M1 rename removes the archive copy under `epall`,
+  so it has no archive visibility window. A crash before the trash rename is durable may
+  leave the stale archive copy visible on retry; this is an explicit S3 failure condition
+  and requires a reviewed correction before the tiered model can be accepted.
 - The mover is the critical component and needs crash-safety tests.
 - The decision is only accepted when the spikes show that the tiered-cache share works with
   Samba, renames and large files (S1), that the SnapRAID failure and snapshot behaviour
