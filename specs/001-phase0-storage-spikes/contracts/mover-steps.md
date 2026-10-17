@@ -190,7 +190,7 @@ criteria version.
   M2 and M5 read only, so the count of crash points and cases is unchanged by it. Selection is covered by
   `pre:M1`. What it changes is where item 1 comes from (the replacing item, which also instruments S3
   scenario 8) and the injection points below, which are not crash points and are not counted in SC-005.
-- The trash amendment of 2026-10-16/17 (a client delete of a selected pool file) adds one durable effect pair to
+- The trash amendment of 2026-10-16 (a client delete of a selected pool file) adds one durable effect pair to
   M5, the rename of the archive copy into the trash and the sync of both directories. Both are durable effects
   and, by the rule that every durable effect is a point, two points: `mid:M5:trash-renamed` and
   `mid:M5:trash-parent-synced` (the move is one rename plus the directory syncs, so there is no further
