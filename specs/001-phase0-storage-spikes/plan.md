@@ -114,7 +114,7 @@ to a Phase 0 consisting of docs, Nix, Python and shell are listed once.
 | Test code in files separate from production code | Pass | There is no production code. Inside `spikes/phase0/`, test scripts, oracle, fixtures and in-VM scaffolding are separate files. |
 | Hand-maintained file clearly over 500 LoC must be split or justified | Pass at implementation | Layout splits per spike and per concern; implementation tasks must keep files under the bound. `spec.md` and `research.md` are documents. |
 | Graphify-first authoring before new named functions, classes, modules, CLI commands | Applies at implementation | The plan authors no code. Every implementation task that introduces a named function, module or CLI command (`spikectl` subcommands, `spikelib` modules) must first consult `graphify` and record the candidates evaluated. The current graph is docs-only, so the expected outcome is "no candidate". |
-| Ponytail: minimum code, leave one runnable check, no speculative abstraction | Pass | `spikectl` is limited to run/freeze/verify/verdict; negative controls limited to a handful of mutants; the harness has no plugin or config layer. Open item O5 lets the maintainers cut the negative controls if they judge them excessive. |
+| Ponytail: minimum code, leave one runnable check, no speculative abstraction | Pass | `spikectl` is limited to run/freeze/verify/verdict/review (`review` builds the S2.7 review sub-record with the existing record builder, task T080a); negative controls limited to a handful of mutants; the harness has no plugin or config layer. Open item O5 lets the maintainers cut the negative controls if they judge them excessive. |
 | Go, JavaScript/TypeScript guidelines | Not applicable | No Go or TS code. If `spikectl` is ever rewritten in Go, the Go MUSTs apply from then on. |
 | Self-modifying instructions review-gated; external sources opt-in per project | Not applicable / Pass | No skill, instruction or permission file is changed. No external harness content is adopted. |
 | Constitution amendment rules | Not applicable | No amendment proposed. |
@@ -164,7 +164,7 @@ spikes/phase0/                        # THROWAWAY scaffolding; never imported by
 ├── testlib/                          # scenario recorder, fixtures, oracle, faults, hook client
 ├── guest/                            # in-VM scaffolding: reference mover, snapshot-supported sync/fix wrapper, lockd, spike_hook, apply-config
 ├── controls/                         # known-bad mover variants (negative controls), including the stock rsync mover
-├── spikectl/                         # run, freeze, verify, verdict
+├── spikectl/                         # run, freeze, verify, verdict, review
 └── tests/                            # pure-Python unit tests (oracle, manifests, spikectl)
 
 .github/workflows/phase0.yml          # created in the implementation phase (static, suite, repro)
@@ -185,7 +185,7 @@ never lives under `spikes/`.
 | `apps.suite` | The one command (SC-009, FR-011): all spikes, schedule, budget, records or scratch output, verdict matrix |
 | `apps.s1` .. `apps.s5`, `apps.controls` | One spike, or only the negative controls |
 | `apps.x1` | The optional, non-gating overlayfs experiment (own profile `x1`); not part of `apps.suite` unless `--include-x1` |
-| `apps.spikectl` | `freeze`, `verify`, `verdict` |
+| `apps.spikectl` | `freeze`, `verify`, `verdict`, `review` (S2.7 review sub-record, T080a), `run` (T049a, T138) |
 | `packages.driver-s1` .. `driver-s5`, `packages.driver-x1`, `packages.driver-interactive-s1` .. | Cached test drivers; interactive ones for debugging |
 | `checks.criteria`, `checks.records`, `checks.oracle-unit`, `checks.formatting` | Cheap checks, no KVM, run by `nix flake check` and the static CI job |
 | `devShells.default` | Nix, Python with pytest/pyyaml/jsonschema, QEMU tools |
@@ -239,4 +239,4 @@ After `data-model.md`, `contracts/` and `quickstart.md`, and again after the bas
 ADR-0002. The record schema
 excludes host paths, user names and host names by construction (fields hold identifiers and hashes);
 the sanitiser and verifier enforce it for free text. The plan adds no abstraction beyond `spikectl`'s
-four verbs, and the mover and lock scripts are explicitly scaffolding. **PASS.**
+five verbs (`run`, `freeze`, `verify`, `verdict`, `review`), and the mover and lock scripts are explicitly scaffolding. **PASS.**

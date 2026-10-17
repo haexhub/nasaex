@@ -114,10 +114,21 @@ no record is written and S3 has no verdict.
 
 1. Commit the record directories in a PR (`docs(phase0): record S1-S4 results`).
 2. Run `nix run ./spikes/phase0#spikectl -- verdict` and read the gate matrix.
-3. In a separate reviewed docs-only PR change the `Status:` line of ADR-0002 (S1 to S4 all PASS) or
+3. If S2 is `pending` (the automated S2.7 checks and every other S2 scenario passed), the reviewer judges the
+   written recovery procedure in the evidence of the newest S2 spike-run and creates the review sub-record:
+
+   ```text
+   nix run ./spikes/phase0#spikectl -- review <S2 record id> --outcome pass --reviewer <public handle> \
+     --evidence <entry of the reviewed evidence archive>
+   ```
+
+   Commit it through its own PR (`docs(phase0): review S2.7 recovery procedure`) after the reviewed record
+   is merged; `verdict` then shows S2 as `PASS` or `FAIL` (a failing review carries the S2 fallback). An S2
+   run that is already `FAIL` needs no review.
+4. In a separate reviewed docs-only PR change the `Status:` line of ADR-0002 (S1 to S4 all PASS) or
    ADR-0005 (S5 PASS) and reference the record paths. On a gating S1 to S5 FAIL, adopt the fallback from the
    criteria and update the ADR and the design document in that PR (FR-007).
-4. CI runs `spikectl verify` on the PR; it fails if the ADR claims more than the records support.
+5. CI runs `spikectl verify` on the PR; it fails if the ADR claims more than the records support.
 
 ## Debugging
 
