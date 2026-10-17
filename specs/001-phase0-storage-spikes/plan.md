@@ -13,10 +13,13 @@ into ADR decisions. The plan delivers **test, specification and decision artifac
 The storage baseline (variant A, decided 2026-10-15, [research.md](research.md) section 7) is the
 tiered-cache pattern documented by mergerfs: a btrfs RAID1 pool, btrfs archive disks with SnapRAID
 parity and a snapshot-supported sync and fix, and two mergerfs pools (base pool and cache pool) as
-the share. The former overlayfs stack is only the optional, non-gating experiment **X1**.
+the share. The former overlayfs stack is only the optional, non-gating experiment **X1**. A ZFS
+mirror as the fast pool is only the optional, non-gating experiment **X2** (maintainer decision
+2026-10-17, spec User Story 8); btrfs RAID1 stays the pool unless X2 shows an advantage and a
+reviewed ADR-0002 amendment adopts it.
 
 Approach: one pinned flake of its own (`spikes/phase0/`) defines five gating NixOS VM tests plus the
-optional X1 test
+optional X1 and X2 tests
 (`runNixOSTest`, Python scripts) that are built as cached derivations but **executed outside the
 sandbox** by a small runner, so every run is fresh and every FAIL keeps its evidence. Faults are
 injected from the host through the QEMU monitor and the test driver's `crash()`, always at named
@@ -62,10 +65,12 @@ build; deterministic fault points only (FR-010); no committed host paths, secret
 no product code.
 
 **Scale/Scope**: 5 gating spikes and the optional X1; 44 gating acceptance scenarios (11+9+9+7+8)
-plus 10 optional X1 scenarios; S3 enumerates 21 crash points (6 boundaries and 15 mid-step points, listed in
+plus 10 optional X1 scenarios and 5 optional X2 scenarios; S3 enumerates 21 crash points (6 boundaries and 15 mid-step points, listed in
 contracts/mover-steps.md), each in 2 kill modes (42 cases), plus 11 named fault and injection points that are not
 crash points (the eleventh, `inject:modify-archive-after-delete:M4`, was added on 2026-10-17); topology profiles `large` (S1) and `small` (S2-S4), one single-machine
-topology for S5, and the `x1` profile (the `large` disks with the overlay stack) for X1.
+topology for S5, the `x1` profile (the `large` disks with the overlay stack) for X1, and an `x2`
+profile (the `large` disks with the two pool devices as a ZFS mirror) for X2, which the record
+contract does not yet allow (task T163).
 
 ## Decisions at a glance
 
@@ -75,18 +80,18 @@ Rationale, alternatives and sources for each are in [research.md](research.md) (
 | --- | --- |
 | Pin | Dedicated flake `spikes/phase0`, nixpkgs by full commit SHA from `nixos-26.05`, `flake.lock` committed, one pin for all of Phase 0 [D1] |
 | Harness | `pkgs.testers.runNixOSTest`, Python scripts, driver run outside the sandbox with `forceAccel`, fresh state per run, own scenario recorder (the driver's `subtest` aborts on error) [D2] |
-| Baseline | Variant A: btrfs RAID1 pool, btrfs archive disks with SnapRAID, mergerfs base pool and cache pool (pool branch first, archive branches no-create, `moveonenospc` off), snapshot-supported sync and fix; overlayfs only as optional X1 [section 7] |
+| Baseline | Variant A: btrfs RAID1 pool, btrfs archive disks with SnapRAID, mergerfs base pool and cache pool (pool branch first, archive branches no-create, `moveonenospc` off), snapshot-supported sync and fix; overlayfs only as optional X1 [section 7]; a ZFS mirror pool only as optional X2 (spec User Story 8) |
 | Disks | `emptyDiskImages` with stable serials; `large` profile (S1: pool 2x8 GiB, archive 6/10/4 GiB btrfs, parity 12 GiB ext4) and `small` profile (S2-S4); sparse qcow2 [D3] |
 | SMB client | Second VM with `mount.cifs` plus `smbclient`; minimal smb.conf [D4] |
 | Fault injection | `machine.crash()` (QEMU process termination; host-power-loss semantics unverified), in-guest `kill -9` while blocked at a hook, QEMU `device_del`/`drive_del` for device failure, filler file for out-of-space, guest-side byte flips for corruption; all at named points [D5] |
 | Mover hooks | Throwaway reference mover (five steps, 21 points; idle-file selection, no lock that clients must honour, compare-and-delete at M5, and a trash move at M5 for a selected pool file that a client deleted: the archive copy goes into a trash directory beside the branch directory on the same archive disk, expected to be hidden from the pool view, UNVERIFIED) calls blocking `spike_hook <point>`; host kills at the point or injects a client write or delete; every durable effect is a point; the stock `rsync --remove-source-files` mover is a mandatory negative control [D6, D7] |
 | Oracle | Host-side seeded fixtures give expected manifests; observed state read from share and raw layers; parity coverage proven by device-failure drill on a copied machine state; S2 predictions at block granularity; negative controls validate the oracle [D7] |
 | Criteria and records | YAML in `docs/phase0/criteria/`, append-only `frozen.lock` (SHA-256), versioned amendments, JSON records plus `evidence.tar.xz` in `docs/phase0/results/<spike>/<record-id>/` [D8] |
-| ADR gate | Tool never edits ADRs; records land by PR; a separate reviewed docs PR changes ADR status; `spikectl verify` checks it in CI; X1 is never a gate input [D9] |
+| ADR gate | Tool never edits ADRs; records land by PR; a separate reviewed docs PR changes ADR status; `spikectl verify` checks it in CI; X1 and X2 are never gate inputs [D9] |
 | S5 | Single VM with bootloader, tmpfs root, persistent `/nix` and state disk, offline rebuild; backend-equivalent apply script supplies the restoration that `nixos-rebuild` does not [D10] |
 | Degraded locks | Kernel-enforced read-only remount of archive and parity filesystems plus a status/refusal layer [D11] |
-| Layout and flake | Scaffolding only under `spikes/phase0/`; decisions under `docs/phase0/`; apps `suite`, `s1..s5`, `x1` (optional), `controls`, `spikectl`; cheap `checks` without KVM [D12] |
-| Entry point | `nix run ./spikes/phase0#suite -- --mode record [--repeat 3] [--include-x1]`; `shakedown` mode never records [D13] |
+| Layout and flake | Scaffolding only under `spikes/phase0/`; decisions under `docs/phase0/`; apps `suite`, `s1..s5`, `x1` and `x2` (optional), `controls`, `spikectl`; cheap `checks` without KVM [D12] |
+| Entry point | `nix run ./spikes/phase0#suite -- --mode record [--repeat 3] [--include-x1] [--include-x2]`; `shakedown` mode never records [D13] |
 | CI | `static` (no KVM), `suite` (KVM runner where one exists, dispatch/label, shakedown by default), `repro` (optional, three chained clean jobs); record runs are local on the reference runner (spec, "Reference runner"); actions pinned by SHA; budget table in research (adjusted 2026-10-15 for an S3 matrix of 38 cases instead of 68; the matrix is now 42 cases, which the shakedown re-measures), S3 sharded [D14] |
 | Reproducibility | `--repeat 3` from clean state, per-scenario comparison, any difference is `flaky` = FAIL [D13] |
 
@@ -107,7 +112,7 @@ to a Phase 0 consisting of docs, Nix, Python and shell are listed once.
 | No secrets in git; no committed paths that assume one OS layout (home-directory style paths of any OS) | Pass | Contracts forbid host paths, user names and host names in records; the sanitiser strips them from evidence; `spikectl verify` scans committed docs and records for them. Guest paths (`/mnt/...`) are VM-internal. |
 | Cross-repo references use repository + full commit SHA + path | Pass | Upstream sources in research are pinned by SHA (research section 1); nixpkgs by full SHA and lock. Living documents (btrfs docs, SnapRAID manual URL) are cited as such and cross-checked with the pinned source where possible. |
 | Phasing discipline: later phases not implemented before prerequisites | Pass | Only Phase 0; no backend, API, UI or module code. The mover, lock and apply scripts are scaffolding and say so. |
-| Design decisions materially affecting a Core Principle need an ADR | Pass | The storage baseline and the client-delete trash decision are recorded in ADR-0002. The ADR-affecting outcomes (accept or fallback) are produced by the gate, not by the plan. |
+| Design decisions materially affecting a Core Principle need an ADR | Pass | The storage baseline, the client-delete trash decision and the ZFS alternative (archive tier not adopted, fast pool measured by X2) are recorded in ADR-0002. The ADR-affecting outcomes (accept or fallback) are produced by the gate, not by the plan. |
 | `/speckit-plan` checks the plan against the constitution; conflicts resolved by changing the plan | Pass | This section; no conflict found; no exception granted. |
 | Follow the workflow `.specify/workflows/speckit/workflow.yml` | Pass | Specify, review-spec, plan, review-plan and tasks are done and implement is in progress (the Foundation tasks are done, see `tasks.md`). Spec and contract changes after the plan gate go through `/speckit-clarify` (recorded as Clarifications entries in `spec.md`) and are checked by `/speckit-analyze` in reviewed docs PRs (`checklists/analysis-2026-10-16.md`, `checklists/analysis-rerun-1.md`). |
 | Add or update tests with behavior changes; run formatter, static checks and relevant tests; report what was run | Pass at implementation | This contract-only amendment has no runtime implementation to test. The new oracle tests, concurrent-delete probe and S3 checks are scheduled before the harness tasks that rely on them (`T018a`, `T019a`, `T037c`, `T098a`); `spikectl verify` is the runnable check for this docs change. |
@@ -148,9 +153,10 @@ docs/phase0/                          # decision artifacts: outlive the scaffold
 ├── criteria/
 │   ├── S1.yaml ... S5.yaml           # version 1; amendments are S<n>.v2.yaml, ...
 │   ├── X1.yaml                       # optional, non-gating; exists only if X1 is run
+│   ├── X2.yaml                       # optional, non-gating; exists only if X2 is run
 │   └── frozen.lock                   # append-only: <file> <version> <sha256>
 └── results/
-    ├── S1/ ... S5/, X1/ (optional)
+    ├── S1/ ... S5/, X1/ and X2/ (optional)
     │   └── <record-id>/              # e.g. S3-20261022T101500Z-v1
     │       ├── record.json           # contracts/result-record.schema.json
     │       └── evidence.tar.xz       # target <= 2 MiB, sanitised
@@ -160,7 +166,7 @@ spikes/phase0/                        # THROWAWAY scaffolding; never imported by
 ├── flake.nix                         # own flake, own flake.lock (nixpkgs pin)
 ├── flake.lock
 ├── nix/                              # topology profiles, node definitions, mkSpike helper
-├── vm-tests/                         # s1..s5 and x1 test modules and their Python scenario scripts
+├── vm-tests/                         # s1..s5, x1 and x2 test modules and their Python scenario scripts
 ├── testlib/                          # scenario recorder, fixtures, oracle, faults, hook client
 ├── guest/                            # in-VM scaffolding: reference mover, snapshot-supported sync/fix wrapper, lockd, spike_hook, apply-config
 ├── controls/                         # known-bad mover variants (negative controls), including the stock rsync mover
@@ -185,8 +191,9 @@ never lives under `spikes/`.
 | `apps.suite` | The one command (SC-009, FR-011): all spikes, schedule, budget, records or scratch output, verdict matrix |
 | `apps.s1` .. `apps.s5`, `apps.controls` | One spike, or only the negative controls |
 | `apps.x1` | The optional, non-gating overlayfs experiment (own profile `x1`); not part of `apps.suite` unless `--include-x1` |
+| `apps.x2` | The optional, non-gating ZFS mirror pool experiment (own profile `x2`, after S1 to S4); not part of `apps.suite` unless `--include-x2` |
 | `apps.spikectl` | `freeze`, `verify`, `verdict`, `review` (S2.7 review sub-record, T080a), `run` (T049a, T138) |
-| `packages.driver-s1` .. `driver-s5`, `packages.driver-x1`, `packages.driver-interactive-s1` .. | Cached test drivers; interactive ones for debugging |
+| `packages.driver-s1` .. `driver-s5`, `packages.driver-x1`, `packages.driver-x2`, `packages.driver-interactive-s1` .. | Cached test drivers; interactive ones for debugging |
 | `checks.criteria`, `checks.records`, `checks.oracle-unit`, `checks.formatting` | Cheap checks, no KVM, run by `nix flake check` and the static CI job |
 | `devShells.default` | Nix, Python with pytest/pyyaml/jsonschema, QEMU tools |
 
@@ -227,6 +234,7 @@ never lives under `spikes/`.
 | O16 | Create policy and cache pool settings: `ff` or `lus` (mergerfs names `ff`, `lus` and `lfs` for a cache pool), whether archive branches are `NC`, `moveonenospc`, `minfreespace` (research F10, 7.2). | Default: `ff`, archive branches `NC`, `moveonenospc=false`, explicit low `minfreespace`. S1 scenario 2 gates on `ff`, and `lus` is an informational variant (`gating: false`); S1 scenarios 2 and 9 record what is required (FR-013). With only one create-eligible branch the two policies behave the same, so `lus` only matters if `NC` is dropped. **Decided 2026-10-15: the default is adopted.** |
 | O17 | Where the mover puts the archive copy of a pool file that a client deleted after selection (maintainer decision 2026-10-16): the stale archive copy would make the file reappear through the share, and deleting it would lose a file that vanished through a device error. | Trash directory on the same archive disk, beside the branch directory inside the data subvolume, so that it is outside every pool branch (expected hidden from both pool views, UNVERIFIED) and a rename into it stays in one subvolume (a rename across btrfs subvolumes is not expected to work, UNVERIFIED). S1 scenario 1 proves the exclusion, S3 scenario 7 (e) the move; the retention period is an S3 criteria parameter and purging is out of Phase 0. Known limits (a visible window until the trash move, a crash before the move is durable) are recorded as S3 findings, see the mover contract. If the exclusion or the rename does not hold, the layout is corrected before the S1 and S3 criteria freeze. **Open since 2026-10-17 (U7)**: under the default unlink policy `epall` of mergerfs 2.41.1 (pinned source) a client delete through the share is expected to remove the archive copy too, so the trash path may be unreachable without another unlink policy; S1 scenario 4 and the probe T037c measure the branches a delete removes and the effective policy (`func.unlink=ff` is an UNVERIFIED candidate), a vanished item without archive copy is a valid, reported outcome, and any unlink setting is adopted only as a measured required setting through a reviewed amendment before the S1 and S3 freeze (spec Clarifications 2026-10-17). |
 | O18 | Whether durable state across a crash is needed for the trash handling of the mover (see O17; maintainer rule: measure first, add nothing to the contract beforehand). | Decided by measurement in S3, not beforehand. If S3 shows the vanished-path case losing the hidden state (known limit 2 of the mover contract: after a crash the pool file is gone, so the next run does not select the item and cannot trash its archive copy), the correction is durable state through a reviewed amendment of the mover contract before S3 is re-run, as the contract and the spec edge case say; candidates are the copy-time identity stored as an extended attribute on the archive copy, a journal or a tombstone. A different fsync order is not a remedy for known limit 2, because the gap is that no later run knows the item, not the order of the writes. Nothing is added to the mover contract before the measurement. |
+| O19 | Would a ZFS mirror as the fast pool (the pool branch of the cache pool) have an advantage over btrfs RAID1 (maintainer decision 2026-10-17, spec User Story 8, ADR-0002 Alternatives)? ZFS for the archive tier is not adopted and not tested. Measured at the pin (evaluation only): `pkgs.zfs` is OpenZFS 2.4.4 and its module for the default kernel 6.18.56 is not marked broken; loading it in a guest is UNVERIFIED. The record and criteria contracts and `spikectl` know only X1 as a non-gating spike. | Run X2 only after the S1 to S4 checkpoints (`T056`, `T080`, `T105`, `T120`), as the optional, non-gating Phase 10 of `tasks.md`: first a reviewed contract extension (`T163`), then the tooling (`T164`), a probe of the module in the pinned guest (`T165`), the two-case comparison under the same tiered-cache setup and a comparison table in the X2 record. Without an `advantage` row btrfs RAID1 stays; with one, a separate reviewed amendment of ADR-0002 decides. The two-case model (btrfs reference gives the outcome, ZFS case `gating: false`) is **proposed** and confirmed by the maintainer in the review. |
 
 ## Complexity Tracking
 
