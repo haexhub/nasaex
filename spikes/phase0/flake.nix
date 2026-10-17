@@ -27,6 +27,9 @@
       probeFaults = import ./vm-tests/probes/faults.nix { inherit mkSpike; };
       probeDelete = import ./vm-tests/probes/concurrent_delete.nix { inherit mkSpike; };
       probeSmbAttrs = import ./vm-tests/probes/smb_attrs.nix { inherit mkSpike; };
+      # The spikes' VM tests.
+      s1 = import ./vm-tests/s1/default.nix { inherit mkSpike; };
+
       probeDeleteMidCopy = import ./vm-tests/probes/concurrent_delete.nix {
         inherit mkSpike;
         name = "probe-concurrent-delete-mid-copy";
@@ -35,7 +38,7 @@
 
       app = pkg: { type = "app"; program = lib.getExe pkg; };
       placeholders = lib.genAttrs
-        [ "s1" "s2" "s3" "s4" "s5" "x1" "controls" "suite" ]
+        [ "s2" "s3" "s4" "s5" "x1" "controls" "suite" ]
         apps.placeholder;
     in
     {
@@ -50,6 +53,8 @@
 
       apps.${system} = lib.mapAttrs (_: app) (placeholders // {
         spikectl = apps.spikectl;
+        # `nix run ./spikes/phase0#s1 -- --mode shakedown|record [--only <id>]` (spikectl run).
+        s1 = apps.spikeRun "S1";
         probe-faults = apps.runDriver "probe-faults" probeFaults.driver;
         probe-concurrent-delete = apps.runDriver "probe-concurrent-delete" probeDelete.default.driver;
         probe-concurrent-delete-ff = apps.runDriver "probe-concurrent-delete-ff" probeDelete.ff.driver;
@@ -61,6 +66,8 @@
       });
 
       packages.${system} = {
+        driver-s1 = s1.driver;
+        driver-interactive-s1 = s1.driverInteractive;
         driver-probe-faults = probeFaults.driver;
         driver-probe-concurrent-delete = probeDelete.default.driver;
         driver-probe-concurrent-delete-ff = probeDelete.ff.driver;
@@ -68,9 +75,9 @@
         driver-probe-concurrent-delete-mid-copy = probeDeleteMidCopy.default.driver;
         driver-probe-concurrent-delete-mid-copy-ff = probeDeleteMidCopy.ff.driver;
       }
-      # Cached test drivers of the spikes; US1 to US5 and X1 replace these placeholders.
+      # Cached test drivers of the spikes; US2 to US5 and X1 replace these placeholders.
       // lib.genAttrs
-        [ "driver-s1" "driver-s2" "driver-s3" "driver-s4" "driver-s5" "driver-x1" ]
+        [ "driver-s2" "driver-s3" "driver-s4" "driver-s5" "driver-x1" ]
         apps.placeholder;
 
       devShells.${system}.default = import ./nix/devshell.nix { inherit pkgs pythonEnv; };
