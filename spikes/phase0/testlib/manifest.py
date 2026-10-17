@@ -100,6 +100,14 @@ def compare(
     return differences
 
 
+def subtree(manifest: Manifest, rel: str) -> Manifest:
+    """The entries below directory `rel` (not `rel` itself), keyed relative to it."""
+    if not rel:
+        return dict(manifest)
+    prefix = rel.rstrip("/") + "/"
+    return {path[len(prefix) :]: item for path, item in manifest.items() if path.startswith(prefix)}
+
+
 def describe(differences: list[Difference], limit: int | None = 20) -> str:
     """The differences in one line, for the note of a failed check; modes in octal."""
 

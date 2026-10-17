@@ -20,6 +20,7 @@ import json
 import shlex
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from s1.fixture import ARCHIVE, POOL
@@ -56,6 +57,16 @@ with open(sys.argv[2], "wb") as handle:
         handle.write(chunk)"""
 _GETXATTR = """import os, sys
 print(os.getxattr(sys.argv[1], sys.argv[2]).decode())"""
+
+
+@dataclass(frozen=True)
+class Variant:
+    """One case of a mount-variants scenario: its name, whether it gates, and the cache-pool
+    options it changes against the baseline (criteria tables.mount_variants)."""
+
+    name: str
+    gating: bool
+    overrides: Mapping[str, str]
 
 
 def _split(options: str) -> list[tuple[str, str | None]]:
