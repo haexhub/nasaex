@@ -71,9 +71,13 @@ Expected, unattended, on the reference runner (the maintainer's workstation with
 
 ```text
 S1 PASS  S2 pending  S3 PASS  S4 PASS  S5 PASS
-ADR-0002 eligible: yes (S1..S4 PASS)   ADR-0005 eligible: yes (S5 PASS)
+ADR-0002 eligible: no (S1..S4 must all PASS)   ADR-0005 eligible: yes (S5 must PASS)
 X1 not run (optional, non-gating)
+S2 pending: automated checks pass, the review record is missing; no ADR gate may be applied
 ```
+
+While S2 is `pending` ADR-0002 is not eligible; it becomes eligible only after the S2.7 review sub-record
+sets S2 to `PASS` (Scenario 7).
 
 A run without KVM, with a dirty git tree, or against criteria that are not frozen refuses to start in
 record mode. A run that exceeds a spike budget marks the unfinished scenarios `error` (counts as failed).
@@ -146,6 +150,6 @@ nix build ./spikes/phase0#driver-interactive-s3
 ## What a reviewer checks at the plan gate
 
 - The constitution check in [plan.md](plan.md) and the findings F1 to F12 and the decision section 7 in [research.md](research.md).
-- The open items O1 to O16 and their recommendations.
+- The open items O1 to O18 and their recommendations.
 - That the contracts describe interfaces (record schema, criteria schema, mover steps, fault points) and no
   implementation code.
