@@ -122,7 +122,7 @@ The outcome of one run of one spike. Immutable once committed. Fields (full sche
 | `verdict` | `PASS` or `FAIL` for a run record; derived only from scenario outcomes. The S2 spike status can additionally be `pending` (derived, never stored) only while every other S2 scenario passed (gating cases only), the automated S2.7 checks pass and no review sub-record exists for the newest spike-run of the current criteria version |
 | `fallback_decision` | Required on `FAIL` for S1 to S5, including a failing S2 review record: which fallback applies (FR-007); omitted for X1, which has no fallback |
 | `coverage` | Counts for SC-005 (crash points enumerated, executed, per kill mode; 21 points, 42 cases as enumerated in the mover contract; the named fault and injection points are not counted), prediction comparisons for SC-006, transitions for SC-007, durations for SC-008 |
-| `required_settings` | Mount or share settings found necessary (FR-013: create policy, branch modes, out-of-space settings, rename setting), the procedure for branch changes made directly by the mover (S1.10), written recovery procedure reference (S2.7) |
+| `required_settings` | Mount or share settings found necessary (FR-013: create policy, branch modes, out-of-space settings, rename setting, the unlink policy of the cache pool, which is the mergerfs default `epall` with no `func.unlink` option), the procedure for branch changes made directly by the mover (S1.10), written recovery procedure reference (S2.7) |
 | `residual_risk` | Fixed statements, at least: device-level volatile caches not emulated, virtual disks stand in for real disks |
 | `supersedes` | Optional record id of an earlier record this run re-runs after a documented design correction (never deletes the earlier one) |
 | `evidence_archive` | Path of `evidence.tar.xz` and its SHA-256 |
@@ -195,7 +195,7 @@ write through share (new files and in-place changes to archived files), sync, sc
 The five steps (copy, checksum, sync, verification, pool copy removal) and their hook points; defined
 in [contracts/mover-steps.md](contracts/mover-steps.md); S3 enumerates crash points from it (21 points,
 42 cases). Beyond the five steps it defines the selection (minimum age, no open handle), the copy-time
-identity compared at M2 and M5, the trash into which M5 moves the archive copy of a pool file that a client deleted, where the delete left the archive copy in place (expected behaviour, UNVERIFIED until S1 and S3 prove it; a vanished item without archive copy, removed by the client's delete under the measured unlink policy, is a reported outcome with nothing to trash), and no lock that clients must honour. A change after Phase 0 reopens S3 (spec assumption). There are no whiteout steps in the
+identity compared at M2 and M5, the trash into which M5 moves the archive copy of a pool file that a client deleted, where an archive copy is still there after the delete (under the unlink policy `epall` of the cache pool only for a delete during the copy of M1, before the rename, measured; the trash move itself is expected behaviour, UNVERIFIED until S1 and S3 prove it; a vanished item without archive copy, removed by a client delete after the rename, is a reported outcome with nothing to trash), the removal of stale temporary files of M1 by the next run (proposed), the named fault and injection points (13, not crash points and not counted in SC-005), and no lock that clients must honour. A change after Phase 0 reopens S3 (spec assumption). There are no whiteout steps in the
 baseline.
 
 ## Relationships
