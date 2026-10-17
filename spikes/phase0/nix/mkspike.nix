@@ -29,7 +29,8 @@ let
   };
 
   python = pkgs.python3;
-  # testlib importable from the Python test script (the driver's Python environment).
+  # testlib importable from the Python test script (the driver's Python environment) and from
+  # the guest Python of every node, where fixtures populate branches and manifests are built.
   testlibPackage = python.pkgs.toPythonModule (pkgs.runCommand "phase0-testlib" { } ''
     mkdir -p $out/${python.sitePackages}
     cp -r ${../testlib} $out/${python.sitePackages}/testlib
@@ -39,7 +40,7 @@ in
 
 let
   nodeDefs = import ./nodes.nix {
-    inherit pkgs lib snapraidBtrfs guestScripts vmSizing;
+    inherit pkgs lib snapraidBtrfs guestScripts vmSizing testlibPackage;
     profile = profiles.${profile};
   };
 

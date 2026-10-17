@@ -12,7 +12,7 @@
 # client: the SMB client VM of S1.
 #
 # No network access inside the VMs: the test vlan only connects the nodes with each other.
-{ pkgs, lib, profile, snapraidBtrfs, guestScripts, vmSizing }:
+{ pkgs, lib, profile, snapraidBtrfs, guestScripts, vmSizing, testlibPackage }:
 
 let
   disks = profile.disks;
@@ -146,7 +146,9 @@ let
     # test vlan between the nodes remains.
     virtualisation.restrictNetwork = true;
     boot.supportedFilesystems = [ "btrfs" "ext4" ];
-    environment.systemPackages = [ pkgs.python3 ];
+    # testlib in the guest: the fixture generator populates branches, testlib.manifest reads
+    # branches on the server and the share on the client (testlib/smb.py).
+    environment.systemPackages = [ (pkgs.python3.withPackages (_: [ testlibPackage ])) ];
   };
 
   server = { ... }: {
