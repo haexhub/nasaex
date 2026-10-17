@@ -4,6 +4,10 @@
 # running `driver` (research D2): every run is then fresh, a FAIL keeps its evidence, and the
 # multi-GiB machine state can live on a disk path. `qemu.forceAccel` makes a missing /dev/kvm
 # a hard error, never a silent TCG fallback.
+#
+# Optional arguments of a spike: `scriptPackages` ({ <package name> = <source directory>; },
+# importable by the test script only, never in the guests: the checks of a spike) and
+# `criteria` (the spike's criteria file, given to the test script parsed as CRITERIA).
 { pkgs, profiles, snapraidBtrfs, guestScripts }:
 
 let
@@ -29,14 +33,24 @@ let
   };
 
   python = pkgs.python3;
+  # A source directory as an importable Python package of the given name.
+  pythonModule = module: src: python.pkgs.toPythonModule (pkgs.runCommand "phase0-${module}" { } ''
+    mkdir -p $out/${python.sitePackages}
+    cp -r ${src} $out/${python.sitePackages}/${module}
+  '');
   # testlib importable from the Python test script (the driver's Python environment) and from
   # the guest Python of every node, where fixtures populate branches and manifests are built.
-  testlibPackage = python.pkgs.toPythonModule (pkgs.runCommand "phase0-testlib" { } ''
-    mkdir -p $out/${python.sitePackages}
-    cp -r ${../testlib} $out/${python.sitePackages}/testlib
-  '');
+  testlibPackage = pythonModule "testlib" ../testlib;
 in
-{ name, profile, machines ? [ "server" ], budget, testScript, extraModules ? { } }:
+{ name
+, profile
+, machines ? [ "server" ]
+, budget
+, testScript
+, extraModules ? { }
+, scriptPackages ? { }
+, criteria ? null
+}:
 
 let
   nodeDefs = import ./nodes.nix {
@@ -70,7 +84,9 @@ let
     qemu.forceAccel = true;
     qemu.package = pkgs.qemu_test;
     globalTimeout = budgetMinutes.${budget} * 60;
-    extraPythonPackages = _: [ testlibPackage ];
+    extraPythonPackages = p: [ testlibPackage ]
+      ++ lib.mapAttrsToList pythonModule scriptPackages
+      ++ lib.optional (criteria != null) p.pyyaml;
     nodes = lib.genAttrs machines (m: {
       imports = [ nodeDefs.${m} ] ++ (extraModules.${m} or [ ]);
     });
@@ -80,6 +96,11 @@ let
       TOPOLOGY = json.loads(${builtins.toJSON (builtins.toJSON topology)})
       # Host tools the test script calls itself (the driver's PATH does not carry them).
       QEMU_IMG = "${pkgs.qemu_test}/bin/qemu-img"
+
+    '' + lib.optionalString (criteria != null) ''
+      import yaml
+
+      CRITERIA = yaml.safe_load(${builtins.toJSON (builtins.readFile criteria)})
 
     '' + builtins.readFile testScript;
   };
