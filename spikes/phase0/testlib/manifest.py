@@ -100,6 +100,22 @@ def compare(
     return differences
 
 
+def describe(differences: list[Difference], limit: int | None = 20) -> str:
+    """The differences in one line, for the note of a failed check; modes in octal."""
+
+    def show(field: str | None, value: object) -> str:
+        return oct(value) if field == "mode" and isinstance(value, int) else repr(value)
+
+    parts = [
+        f"{d.path} {d.kind}"
+        if d.kind != "mismatch"
+        else f"{d.path} {d.field} {show(d.field, d.expected)} -> {show(d.field, d.observed)}"
+        for d in differences[:limit]
+    ]
+    rest = len(differences) - len(parts)
+    return ", ".join(parts) + (f" (+{rest} more)" if rest > 0 else "")
+
+
 def tree_hash(manifest: Manifest) -> str:
     """One hash over every path and every compared field of a branch's manifest."""
     digest = hashlib.sha256()
