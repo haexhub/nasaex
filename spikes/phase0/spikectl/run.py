@@ -8,7 +8,8 @@ sandbox in a fresh state directory on disk (research D2), bound it by the spike'
 write scratch output (shakedown) or the record (record mode).
 
 The test script of a spike runs with its output directory as working directory and reads the
-environment variable SPIKE_ONLY (a scenario id, or unset). It writes `spike-result.json` there:
+environment variable SPIKE_ONLY (a scenario id, or unset). It writes `spike-result.json` there
+(testlib.spike_result):
 {"scenarios": <Recorder.scenarios()>, "tool_versions": {...}} and optionally "required_settings"
 and "coverage". Every expected scenario the result lacks becomes `error`."""
 
@@ -37,6 +38,7 @@ from spikectl.record import (
 )
 from testlib.evidence import build_evidence
 from testlib.sanitiser import Sanitiser
+from testlib.spike_result import RESULT_FILE
 
 FLAKE = "./spikes/phase0"  # relative to the repository root
 FLAKE_LOCK = Path("spikes/phase0/flake.lock")
@@ -49,7 +51,6 @@ MAX_STATE_PATH = 70
 # The driver ends itself at its globalTimeout (the budget) and stops its VMs; the outer kill
 # only catches a driver that does not.
 GRACE_S = 120
-RESULT_FILE = "spike-result.json"
 GIB = 2**30
 
 

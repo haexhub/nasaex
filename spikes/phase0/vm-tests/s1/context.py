@@ -132,6 +132,7 @@ class Lab:
         self.roots = dict(roots)
         self.recorder = recorder
         self.user = user
+        self.password = password
         share = Share("server", share_name, user or "", password)
         self.share = CifsMount(client, share, "/mnt/share")
         self.second = CifsMount(client, share, "/mnt/share2", ("nosharesock", "actimeo=0"))

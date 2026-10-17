@@ -6,10 +6,10 @@ import json
 import jsonschema
 import pytest
 from helpers import CONTRACTS, REPO_ROOT
-from testlib.spike_result import RESULT_FILE, version, write_spike_result
 
 from spikectl import run
 from testlib.recorder import Recorder
+from testlib.spike_result import RESULT_FILE, version, write_spike_result
 
 VERSIONS = {"kernel": "6.18.56", "qemu": "qemu-img version 10.2.4", "samba": "4.23.10"}
 
