@@ -2,7 +2,7 @@
 # runs from this directory, they are not an installable distribution.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = [".", "vm-tests"]
 addopts = "-ra"
 
 [tool.ruff]

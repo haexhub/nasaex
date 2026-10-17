@@ -4,13 +4,10 @@ for the mount point, through a machine that executes the commands in a local she
 smbclient need the VMs, so for them the commands the driver sends are checked. Which command
 exposes which attribute in the real stack is measured by the probe vm-tests/probes."""
 
-import os
 import shlex
-import subprocess
-from pathlib import Path
 
 import pytest
-from helpers import xattrs_supported
+from helpers import LocalMachine, RecordingMachine, xattrs_supported
 
 from testlib.manifest import Item, build_manifest
 from testlib.smb import (
@@ -23,49 +20,7 @@ from testlib.smb import (
     parse_dos_attributes,
 )
 
-PHASE0 = Path(__file__).resolve().parents[1]
 SHARE = Share(server="server", name="cache", user="spike", password="secret")
-
-
-class LocalMachine:
-    """Runs commands in a local bash, like the driver runs them in the guest; testlib is
-    importable, as it is in the guest Python."""
-
-    def __init__(self):
-        self.commands: list[str] = []
-
-    def execute(self, command, **_):
-        self.commands.append(command)
-        env = {**os.environ, "PYTHONPATH": str(PHASE0)}
-        done = subprocess.run(
-            ["bash", "-c", f"set -euo pipefail; {command}"],
-            capture_output=True,
-            text=True,
-            env=env,
-            check=False,
-        )
-        return done.returncode, done.stdout
-
-    def succeed(self, command, **_):
-        status, out = self.execute(command)
-        if status != 0:
-            raise AssertionError(f"command failed ({status}): {command}")
-        return out
-
-
-class RecordingMachine:
-    """Records commands; `outputs` maps a command prefix to the output it produces."""
-
-    def __init__(self, outputs=None):
-        self.commands: list[str] = []
-        self.outputs = outputs or {}
-
-    def succeed(self, command, **_):
-        self.commands.append(command)
-        return next((out for prefix, out in self.outputs.items() if prefix in command), "")
-
-    def execute(self, command, **_):
-        return 0, self.succeed(command)
 
 
 @pytest.fixture
