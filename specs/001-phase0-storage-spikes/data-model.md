@@ -181,7 +181,7 @@ write through share (new files and in-place changes to archived files), sync, sc
 The five steps (copy, checksum, sync, verification, pool copy removal) and their hook points; defined
 in [contracts/mover-steps.md](contracts/mover-steps.md); S3 enumerates crash points from it (21 points,
 42 cases). Beyond the five steps it defines the selection (minimum age, no open handle), the copy-time
-identity compared at M2 and M5, the trash into which M5 moves the archive copy of a pool file that a client deleted (expected behaviour, UNVERIFIED until S1 and S3 prove it), and no lock that clients must honour. A change after Phase 0 reopens S3 (spec assumption). There are no whiteout steps in the
+identity compared at M2 and M5, the trash into which M5 moves the archive copy of a pool file that a client deleted, where the delete left the archive copy in place (expected behaviour, UNVERIFIED until S1 and S3 prove it; a vanished item without archive copy, removed by the client's delete under the measured unlink policy, is a reported outcome with nothing to trash), and no lock that clients must honour. A change after Phase 0 reopens S3 (spec assumption). There are no whiteout steps in the
 baseline.
 
 ## Relationships
