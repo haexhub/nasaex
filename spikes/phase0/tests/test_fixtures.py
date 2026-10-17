@@ -15,6 +15,7 @@ from testlib.fixtures import (
     content_sha256,
     edge_cases,
     expected_manifest,
+    flipped_sha256,
     populate,
 )
 from testlib.manifest import build_manifest, compare
@@ -179,3 +180,19 @@ def test_populate_leaves_holes_in_sparse_files(tmp_path):
     stat = (root / "sparse.bin").stat()
     assert stat.st_size == 8 * CHUNK_SIZE
     assert stat.st_blocks * 512 < 2 * CHUNK_SIZE
+
+
+def test_flipped_sha256_is_the_hash_after_inverting_the_bits_of_each_named_byte():
+    entry = Entry("f.bin", "pool", size=2 * CHUNK_SIZE + 5)
+    data = bytearray(b"".join(content_chunks("seed", entry)))
+    offsets = (0, CHUNK_SIZE - 1, CHUNK_SIZE, 2 * CHUNK_SIZE + 4)
+    for offset in offsets:
+        data[offset] ^= 0xFF
+
+    assert flipped_sha256("seed", entry, offsets) == hashlib.sha256(data).hexdigest()
+    assert flipped_sha256("seed", entry, ()) == content_sha256("seed", entry)
+
+
+def test_flipped_sha256_refuses_an_offset_outside_the_file():
+    with pytest.raises(ValueError, match="offset 10"):
+        flipped_sha256("seed", Entry("f.bin", "pool", size=10), (10,))
