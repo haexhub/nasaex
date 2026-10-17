@@ -1,6 +1,6 @@
-"""Builders shared by the spikectl unit tests: a throwaway repository root with
-criteria files, lock lines, result records and real git history; and a probe for user xattrs on
-the test filesystem."""
+"""Builders shared by the unit tests: a throwaway repository root with criteria files, lock
+lines, result records and real git history; a probe for user xattrs on the test filesystem; and
+two stand-ins for a driver machine (a local shell, and a recorder of commands)."""
 
 import hashlib
 import json
@@ -12,6 +12,7 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+PHASE0 = Path(__file__).resolve().parents[1]
 CONTRACTS = Path("specs/001-phase0-storage-spikes/contracts")
 CRITERIA = Path("docs/phase0/criteria")
 RESULTS = Path("docs/phase0/results")
@@ -208,3 +209,44 @@ def xattrs_supported(path: Path) -> bool:
         return False
     finally:
         probe.unlink()
+
+
+class LocalMachine:
+    """Runs commands in a local bash, like the driver runs them in the guest; testlib is
+    importable, as it is in the guest Python."""
+
+    def __init__(self):
+        self.commands: list[str] = []
+
+    def execute(self, command, **_):
+        self.commands.append(command)
+        env = {**os.environ, "PYTHONPATH": str(PHASE0)}
+        done = subprocess.run(
+            ["bash", "-c", f"set -euo pipefail; {command}"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        return done.returncode, done.stdout
+
+    def succeed(self, command, **_):
+        status, out = self.execute(command)
+        if status != 0:
+            raise AssertionError(f"command failed ({status}): {command}")
+        return out
+
+
+class RecordingMachine:
+    """Records commands; `outputs` maps a command prefix to the output it produces."""
+
+    def __init__(self, outputs=None):
+        self.commands: list[str] = []
+        self.outputs = outputs or {}
+
+    def succeed(self, command, **_):
+        self.commands.append(command)
+        return next((out for prefix, out in self.outputs.items() if prefix in command), "")
+
+    def execute(self, command, **_):
+        return 0, self.succeed(command)
