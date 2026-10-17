@@ -1,9 +1,18 @@
 """Rules on criteria and records that the schemas do not carry yet (mirroring them in the
 contracts is a later reviewed docs PR): the S2 criteria carry S2.7 as the reviewed scenario
-(finding U11, T037d)."""
+(finding U11, T037d), and the records of S1 to S4 describe their disks (finding I19, FR-009,
+T037e)."""
 
 import pytest
-from helpers import LOCK, criteria_doc, lock_lines, make_root, write_criteria
+from helpers import (
+    LOCK,
+    criteria_doc,
+    lock_lines,
+    make_root,
+    record_doc,
+    write_criteria,
+    write_record,
+)
 
 from spikectl.freeze import FreezeError, freeze
 from spikectl.verify import verify
@@ -78,3 +87,52 @@ def test_freeze_accepts_s2_criteria_with_the_reviewed_s2_7(root):
     entry = freeze(root, "S2")
 
     assert (entry.file, entry.version) == ("S2.yaml", 1)
+
+
+# --- records of S1 to S4 carry environment.disks ----------------------------
+
+
+def locked_record(root, spike, kind="spike-run", disks="keep"):
+    """A record of `spike` that names a frozen criteria file, with `disks` kept, removed
+    (None) or replaced."""
+    write_criteria(root, doc=criteria_doc(spike, scenarios=7, review=spike == "S2"))
+    entry = freeze(root, spike)
+    doc = record_doc(spike, entry.version, entry.sha256)
+    if kind == "repro":
+        doc.update(kind="repro", record_id=f"repro-{doc['record_id']}", repro_runs=["a", "b", "c"])
+    if disks is None:
+        del doc["environment"]["disks"]
+    elif disks != "keep":
+        doc["environment"]["disks"] = disks
+    write_record(root, doc)
+
+
+@pytest.mark.parametrize("spike", ["S1", "S2", "S3", "S4"])
+@pytest.mark.parametrize("kind", ["spike-run", "repro"])
+def test_a_record_of_s1_to_s4_without_disks_is_reported(root, spike, kind):
+    locked_record(root, spike, kind, disks=None)
+
+    findings = verify(root, only=("records",))
+
+    assert checks(findings) == {"record-disks"}
+    assert "environment.disks" in findings[0].message
+
+
+def test_a_record_of_s1_to_s4_with_an_empty_disk_list_is_reported(root):
+    locked_record(root, "S3", disks=[])
+
+    assert checks(verify(root, only=("records",))) == {"record-disks"}
+
+
+@pytest.mark.parametrize("spike", ["S1", "S2", "S3", "S4"])
+def test_a_record_of_s1_to_s4_with_disks_is_accepted(root, spike):
+    locked_record(root, spike)
+
+    assert verify(root, only=("records",)) == []
+
+
+@pytest.mark.parametrize("spike", ["S5", "X1"])
+def test_records_of_s5_and_x1_need_no_disks(root, spike):
+    locked_record(root, spike, disks=None)
+
+    assert verify(root, only=("records",)) == []

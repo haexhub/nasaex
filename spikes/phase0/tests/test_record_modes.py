@@ -6,6 +6,7 @@ import json
 import pytest
 from helpers import (
     CRITERIA,
+    DISKS,
     RESULTS,
     S2_OUTCOMES,
     commit_all,
@@ -37,6 +38,7 @@ ENVIRONMENT = {
     "flake_lock_sha256": "2" * 64,
     "nixpkgs_rev": "3" * 40,
     "profile": "large",
+    "disks": DISKS,
     "tool_versions": {"kernel": "6.18.56", "qemu": "10.2.4"},
     "host": {"cpu_class": "test", "vcpus": 2, "memory_gib": 8},
     "kvm": True,

@@ -88,6 +88,15 @@ def lock_lines(root: Path) -> list[str]:
     return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
 
 
+# The disks of a run (FR-009), required in the records of S1 to S4 by spikectl verify (T037e).
+DISKS = [
+    {"serial": "pool0", "role": "pool", "size_mib": 1024, "filesystem": "btrfs"},
+    {"serial": "pool1", "role": "pool", "size_mib": 1024, "filesystem": "btrfs"},
+    {"serial": "arch0", "role": "archive", "size_mib": 640, "filesystem": "btrfs"},
+    {"serial": "parity0", "role": "parity", "size_mib": 1280, "filesystem": "ext4"},
+]
+
+
 def record_doc(spike="S1", version=1, sha="0" * 64, outcomes=None, stamp="20261022T101500Z"):
     outcomes = outcomes or {f"{spike}.1": "pass", f"{spike}.2": "pass"}
     record_id = f"{spike}-{stamp}-v{version}"
@@ -102,6 +111,7 @@ def record_doc(spike="S1", version=1, sha="0" * 64, outcomes=None, stamp="202610
             "flake_lock_sha256": "2" * 64,
             "nixpkgs_rev": "3" * 40,
             "profile": "small",
+            "disks": [dict(disk) for disk in DISKS],
             "tool_versions": {"kernel": "6.18.56", "qemu": "10.2.4"},
             "host": {"cpu_class": "test", "vcpus": 2, "memory_gib": 8},
             "kvm": True,
