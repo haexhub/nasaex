@@ -16,7 +16,7 @@ nasaex stakes its storage safety on two untested ideas: a two-tier layout (mirro
 
 The "users" of this feature are the project maintainers, who must decide whether to accept ADR-0002 and ADR-0005. The product's end users (NAS owners and their SMB clients) appear only as the people whose data the spikes protect.
 
-Spike identifiers used throughout: **S1** tiered-cache share, **S2** parity recovery, **S3** mover crash safety, **S4** degraded modes, **S5** declarative rebuild, and the optional, non-gating experiment **X1** overlayfs variant (User Story 7).
+Spike identifiers used throughout: **S1** tiered-cache share, **S2** parity recovery, **S3** mover crash safety, **S4** degraded modes, **S5** declarative rebuild, and the optional, non-gating experiments **X1** overlayfs variant (User Story 7) and **X2** ZFS mirror as the fast pool (User Story 8).
 
 ## Clarifications
 
@@ -52,6 +52,14 @@ Review fixes for the analysis re-run (`checklists/analysis-rerun-1.md`; finding 
 - Q (U8): Which records does a reproducibility run (`--repeat 3`) write, how does a flaky or failed repro reach the verdict, and does a repro need a review of its own? → A: A repeat run writes one record of kind `repro` per spike and never a `spike-run` record. Its three runs are named by run ids in `repro_runs`; their per-scenario outcomes and evidence are carried in the repro record itself, not in separate records. Per scenario the repro record holds `pass` only if the scenario passed in all three runs, `flaky` if the runs differ, otherwise the common outcome; its verdict is derived from these outcomes like that of any record, and a FAIL carries the fallback decision. The review scope stays the newest spike-run: a repeat run writes no spike-run, so the review of the run recorded by the S2 checkpoint remains the applicable one, and a repro compares the automated S2.7 step checks only, never the review judgement (SC-004). The spec already states that a flaky scenario counts as failed (Verdict model, Edge Cases) and that every scenario must give the same verdict on three consecutive runs (FR-011, SC-004), but it leaves open how a repro record reaches the spike verdict. **Proposed** minimal rule that keeps the verdict binary: the current verdict of a spike is FAIL when any `repro` record of the current criteria version that is not older than the newest `spike-run` of that version has the verdict FAIL; otherwise it is derived from the newest spike-run as before. A passing repro never changes a verdict, and a newer spike-run supersedes repro results from before it, so a repro cannot turn a FAIL or a `pending` S2 into PASS (Verdict model and FR-003 unchanged; data-model, `contracts/result-record.schema.json` description of `repro_runs`, quickstart Scenario 5, tasks T137, T138, T138a, T141, T145).
 - Q (G5): Which named point injects the copy fault of S3.6? → A: `fault:M1:enospc`, which serves S3.6 (a fault in the copy step) as well as S3.9; no further point is added (`contracts/mover-steps.md`, task T097).
 
+### Session 2026-10-17 (ZFS)
+
+Maintainer decision of 2026-10-17. An entry marked **proposed** is a proposal that the maintainer confirms or rejects in the review of the PR that carries it.
+
+- Q: Is ZFS an alternative to the storage model of ADR-0002, and does Phase 0 test it? → A: ADR-0002 records ZFS as an alternative judged per tier: ZFS for the archive tier is not adopted (it does not replace the mixed-size parity model of SnapRAID), and a ZFS mirror for the fast pool is an open question. Phase 0 gains the **optional, non-gating experiment X2** (User Story 8): would a ZFS mirror as the fast pool have an advantage over btrfs RAID1 under the same mergerfs tiered-cache setup? If not, btrfs RAID1 stays. X2 never gates ADR-0002 (like X1), runs only after S1 to S4 have their records, and its output is a comparison table, not a decision; adopting a ZFS pool needs a separate reviewed amendment of ADR-0002 (User Story 8, Verdict model, FR-001, FR-007, FR-031, FR-035, FR-036, Key Entities, SC-009, SC-012, Out of Scope, Assumptions, ADR-0002, plan O19, tasks Phase 10).
+- Q (**proposed**): How does an X2 scenario get an outcome under the existing verdict model when its ZFS cases are informational? → A: Every X2 scenario runs the same check as two cases: the `btrfs-raid1` reference case, which gives the scenario its outcome inside the non-gating X2 record, and the `zfs-mirror` case with `gating: false`. The X2 verdict therefore says whether the reference reproduced the baseline inside the X2 setup; the ZFS outcome enters only the comparison table. No new verdict rule is introduced (User Story 8).
+- Q: Do the current contracts and tools carry X2? → A: No (verified 2026-10-17): `contracts/criteria.schema.json` and `contracts/result-record.schema.json` allow the spike ids `S1` to `S5` and `X1` only, the record profile enum has no X2 profile, neither has a field for the comparison table, and `spikectl` (`model.py`, `verdict.py`, `record.py`) knows `X1` as the only non-gating spike. Before any X2 criteria are written, a separate reviewed docs-only PR extends the contracts (rule 6 of tasks.md), and a tooling task follows it; this amendment changes no schema (tasks T163, T164).
+
 ## Verdict model *(applies to every spike)*
 
 - **Criteria first.** The acceptance criteria of a spike are written down and committed before the spike is run for the first time (a run as defined in the next bullet). The criteria of a spike are frozen at that point. Changing them later is allowed only as a recorded amendment that states the reason, and any verdict obtained under the old wording is void.
@@ -64,9 +72,9 @@ Review fixes for the analysis re-run (`checklists/analysis-rerun-1.md`; finding 
   - A **clear** or **defined error** is a named errno together with the corresponding SMB status as seen by the client: `ENOSPC` for out of space, `EROFS` for a refused write to a read-only layer, `EIO` where a device error is injected. The criteria name the SMB status of each case.
   - A **bounded time** (and "nothing hangs") is a numeric bound that the criteria MUST fix before the freeze. The initial defaults are 30 s for a client operation and 5 s for a client write during the mover's sync step; both are initial targets, not derived from measurements.
   - The **same view** means an identical manifest of path, type, size, mtime, mode and content hash before and after a mover run.
-- **Recorded result.** Every valid record-mode run produces a result record kept in version control next to the criteria: spike, criteria version, environment revision, date, per-scenario outcome, evidence reference and verdict. Shakedown runs and invalid runs caused by a harness defect produce no record. A failed S1 to S5 run or review record also carries the applicable fallback decision; X1 has no fallback.
+- **Recorded result.** Every valid record-mode run produces a result record kept in version control next to the criteria: spike, criteria version, environment revision, date, per-scenario outcome, evidence reference and verdict. Shakedown runs and invalid runs caused by a harness defect produce no record. A failed S1 to S5 run or review record also carries the applicable fallback decision; X1 and X2 have no fallback.
 - **Re-runs.** After a documented design correction a spike may be re-run. A failed run is never deleted; the new run is a new record that references the earlier one.
-- **ADR gate.** ADR-0002 moves from proposed to accepted only when S1, S2, S3 and S4 all PASS. ADR-0005 moves from proposed to accepted only when S5 PASSES. If a gating spike FAILS, the ADR stays proposed until the documented fallback has been adopted and the ADR text updated to say so. While a gating spike's verdict is `pending` or `none`, no ADR gate may be applied. X1 never gates an ADR: it may be run or skipped, and neither its verdict nor its absence changes any ADR status.
+- **ADR gate.** ADR-0002 moves from proposed to accepted only when S1, S2, S3 and S4 all PASS. ADR-0005 moves from proposed to accepted only when S5 PASSES. If a gating spike FAILS, the ADR stays proposed until the documented fallback has been adopted and the ADR text updated to say so. While a gating spike's verdict is `pending` or `none`, no ADR gate may be applied. X1 and X2 never gate an ADR: each may be run or skipped, and neither its verdict nor its absence changes any ADR status.
 
 ## Reference runner *(applies to FR-011 and SC-009)*
 
@@ -223,11 +231,11 @@ A maintainer reading the result needs, for each ADR, a recorded and reproducible
 
 **Acceptance Scenarios**:
 
-1. **Given** the spikes have not been run, **When** the history is reviewed, **Then** frozen criteria for all five spikes exist and the first result record is committed after them (and, if X1 is run, its criteria precede its record in the same way).
-2. **Given** all five spikes have run, **When** the results are reviewed, **Then** each spike has a PASS or FAIL record that names its scenarios, evidence and environment revision (S2 additionally needs the reviewed sub-record of S2.7 before its verdict can be PASS; a failed automated S2.7 check or any other failed S2 scenario makes it FAIL without a review). An X1 record, if present, is marked non-gating and no ADR cites it as a condition.
+1. **Given** the spikes have not been run, **When** the history is reviewed, **Then** frozen criteria for all five spikes exist and the first result record is committed after them (and, if X1 or X2 is run, its criteria precede its record in the same way).
+2. **Given** all five spikes have run, **When** the results are reviewed, **Then** each spike has a PASS or FAIL record that names its scenarios, evidence and environment revision (S2 additionally needs the reviewed sub-record of S2.7 before its verdict can be PASS; a failed automated S2.7 check or any other failed S2 scenario makes it FAIL without a review). An X1 or X2 record, if present, is marked non-gating and no ADR cites it as a condition.
 3. **Given** S1 to S4 are PASS, **When** ADR-0002 is updated, **Then** its status is accepted and references the result records. Given S5 is PASS, ADR-0005 is accepted the same way.
 4. **Given** a gating spike S1 to S5 FAILED, **When** the gate is applied, **Then** the ADR is not accepted, the fallback decision is recorded, and the ADR text and the design document are updated to reflect the fallback.
-5. **Given** a clean machine with KVM and the pinned inputs, **When** the full suite (S1 to S5) is started with one command, **Then** it runs unattended to completion and produces the same verdicts as the recorded ones. X1 runs only when asked for explicitly.
+5. **Given** a clean machine with KVM and the pinned inputs, **When** the full suite (S1 to S5) is started with one command, **Then** it runs unattended to completion and produces the same verdicts as the recorded ones. X1 and X2 run only when asked for explicitly.
 
 ---
 
@@ -256,6 +264,49 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 
 ---
 
+### User Story 8 - X2: A ZFS mirror as the fast pool, as an optional experiment (Priority: P3, non-gating)
+
+A maintainer who wants to know whether a ZFS mirror would have an advantage over btrfs RAID1 as the fast pool (the pool branch of the cache pool) needs a comparison of the two under the same tiered-cache setup. X2 produces that comparison and nothing else. If it shows no advantage, btrfs RAID1 stays (maintainer decision 2026-10-17).
+
+**Why this priority**: The baseline pool is btrfs RAID1 (ADR-0002). ADR-0002 names a ZFS mirror for the fast pool as an open alternative; ZFS for the archive tier is not adopted and not tested here. X2 can be skipped without affecting any ADR, S1 to S5, the ADR gate or the suite budget. It starts only after S1 to S4 have their checkpoints, because it reuses their checks and compares with their records.
+
+**Independent Test**: In a VM test with the S1 disk layout, run two server variants that differ only in the pool branch: the btrfs RAID1 pool of S1 (the reference) and a ZFS mirror over the same two pool devices. Both use the same mergerfs base pool and cache pool settings (the S1 baseline and the required settings S1 recorded), the same archive disks and the same SMB client VM. Run the same checks against both and compare client-visible results, on-disk contents and measured values.
+
+**Statement of independence**: X2 has its own frozen criteria and, if run, its own result record with `gating: false` and a PASS or FAIL verdict. A FAIL, a PASS or the absence of any X2 record changes no ADR status and triggers no fallback. Adopting a ZFS pool is possible only through a separate reviewed amendment of ADR-0002 after the X2 record is merged; which spikes such an amendment reopens is decided in that amendment.
+
+**Case model** (**proposed**, Clarifications 2026-10-17 (ZFS)): every X2 scenario runs the same check as two cases, the `btrfs-raid1` reference case, which gives the scenario its outcome, and the `zfs-mirror` case with `gating: false`. The verdict model is unchanged.
+
+**Decision output**: the X2 record carries a written comparison table with one row per dimension (X2.1 split per S1 behaviour, then X2.2 to X2.5). Each row states, for the ZFS mirror relative to btrfs RAID1, `advantage`, `no advantage` or `disadvantage`, derived without interpretation by rules that the X2 criteria fix before the freeze from the outcomes and measured values of the two cases (for example: a ZFS case that fails a check the reference passes is a `disadvantage`). The table is not a verdict and gates nothing. Without an `advantage` row btrfs RAID1 stays and nothing further follows.
+
+**Kernel pin (measured 2026-10-17, evaluation only, nothing built or booted)**: the input to X2.5. At the Phase 0 pin (nixpkgs `a033e66ab94a6bedf2c3d58d93a36319d3cbbbaf`, read through `spikes/phase0/flake.lock`), from the repository root:
+
+```text
+nix eval --impure --json --expr 'let pkgs = (builtins.getFlake (toString ./spikes/phase0)).inputs.nixpkgs.legacyPackages.x86_64-linux; lp = pkgs.linuxPackages; info = n: { version = lp.${n}.version; broken = lp.${n}.meta.broken; }; in { nixpkgsRev = pkgs.lib.trivial.revisionWithDefault "unknown"; kernel = lp.kernel.version; zfsUserland = pkgs.zfs.version; zfsModuleAttribute = pkgs.zfs.kernelModuleAttribute; zfs_2_3 = info "zfs_2_3"; zfs_2_4 = info "zfs_2_4"; }'
+```
+
+returned `{"kernel":"6.18.56","nixpkgsRev":"a033e66ab94a6bedf2c3d58d93a36319d3cbbbaf","zfsModuleAttribute":"zfs_2_4","zfsUserland":"2.4.4","zfs_2_3":{"broken":false,"version":"2.3.9"},"zfs_2_4":{"broken":false,"version":"2.4.4"}}`. The default package `pkgs.zfs` is OpenZFS 2.4.4, its module for the default kernel 6.18.56 is not marked broken, and the package source declares the supported kernel range 4.18 to 7.2 (`pkgs/os-specific/linux/zfs/2_4.nix`; `meta.broken` is derived from that range in `generic.nix`). The alias `linuxPackages.zfs` is removed at the pin (its evaluation fails with "linuxPackages.zfs has been removed, use zfs_* instead"). A minimal NixOS configuration with ZFS enabled also evaluates:
+
+```text
+nix eval --impure --json --expr 'let nixpkgs = (builtins.getFlake (toString ./spikes/phase0)).inputs.nixpkgs; c = (nixpkgs.lib.nixosSystem { system = "x86_64-linux"; modules = [ { boot.supportedFilesystems = [ "zfs" ]; networking.hostId = "00000000"; fileSystems."/" = { device = "/dev/vda"; fsType = "ext4"; }; boot.loader.grub.enable = false; system.stateVersion = "26.05"; } ]; }).config; in { kernel = c.boot.kernelPackages.kernel.version; zfsPackage = c.boot.zfs.package.name; zfsModules = map (p: p.name) (builtins.filter (p: builtins.match "zfs.*" p.name != null) c.boot.extraModulePackages); toplevelInstantiates = builtins.isString c.system.build.toplevel.drvPath; }'
+```
+
+returned `{"kernel":"6.18.56","toplevelInstantiates":true,"zfsModules":["zfs-kernel-2.4.4-6.18.56"],"zfsPackage":"zfs-user-2.4.4"}`, with the evaluation warning that `boot.zfs.forceImportRoot` uses its default `true`. The public binary cache holds both outputs, `zfs-kernel-2.4.4-6.18.56` and `zfs-user-2.4.4`; the query printed both store paths:
+
+```text
+nix path-info --store https://cache.nixos.org "$(nix eval --impure --raw --expr '(builtins.getFlake (toString ./spikes/phase0)).inputs.nixpkgs.legacyPackages.x86_64-linux.linuxPackages.zfs_2_4.outPath')" "$(nix eval --impure --raw --expr '(builtins.getFlake (toString ./spikes/phase0)).inputs.nixpkgs.legacyPackages.x86_64-linux.zfs.outPath')"
+```
+ Whether the module loads in the guest and a mirror can be created and imported there is UNVERIFIED until the X2 probe has run.
+
+**Acceptance Scenarios** (each run as the two cases of the case model):
+
+1. **Given** the cache pool with the ZFS mirror (or the btrfs RAID1 pool) as its pool branch, **When** the S1 checks whose outcome depends on the filesystem of the pool branch are run unchanged (placement of new files and directories, S1.2; in-place change, delete and delete-then-recreate, S1.3 to S1.5; renames, xattrs and SMB attributes, S1.6 and S1.7; the sparse file of the S1 data set; out of space with the mergerfs `minfreespace` of the S1 baseline, S1.9), **Then** the outcome of each check is recorded per case, with the S1 expectations unchanged.
+2. **Given** a populated pool, **When** one device of the mirror fails and is then replaced, **Then** per case it is recorded whether the data stays available through the share during the degraded state, whether the resync (resilver or btrfs replace and balance) completes, and whether any data is lost (judged by the independent oracle); the result is compared with the pool cells of S4 (S4.1, S4.6) in the S4 record.
+3. **Given** a populated pool, **When** capacity is added (a third device) and a smaller pool device is replaced by a larger one, **Then** per case it is recorded which operations each filesystem performs in place, without recreating the pool, how much capacity becomes usable after each step, and whether the data is unchanged.
+4. **Given** the S1 data set is written and read through the share, **When** guest memory is sampled, **Then** per case the peak memory use of the filesystem cache (for ZFS the ARC size and its configured maximum, read from the module's ARC statistics; the statistics path in the pinned guest is UNVERIFIED) and the guest's available memory are recorded against the 8 GiB VM budget of the reference runner.
+5. **Given** the pinned kernel, **When** the guest boots with ZFS enabled, **Then** the loaded ZFS module version, the kernel version and whether the module loaded are recorded and compared with the evaluated facts above; the btrfs case records its in-tree module.
+
+---
+
 ### Edge Cases
 
 - **Branch mutation while mounted.** The mover changes the archive branches and the pool branch underneath a mounted cache pool, and mergerfs caches name lookups and attributes for a configurable time (default 1 second). Whether the share is consistent without intervention is not known; S1 scenario 10 must settle this before S3 relies on it.
@@ -276,13 +327,13 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 
 **Process and records**
 
-- **FR-001**: The project MUST have written acceptance criteria for each of S1 to S5 (and for X1 if it is run), committed before the first run of that spike, with each scenario carrying a stable identifier, a precondition, an action and an observable, checkable expected outcome.
+- **FR-001**: The project MUST have written acceptance criteria for each of S1 to S5 (and for X1 or X2 if it is run), committed before the first run of that spike, with each scenario carrying a stable identifier, a precondition, an action and an observable, checkable expected outcome.
 - **FR-002**: Every acceptance scenario MUST be judged by an automated check that yields pass or fail without human interpretation. The only exception is the review judgement of the written recovery procedure of S2 scenario 7: its step checks are automated, and the judgement is carried by a separate reviewed sub-record (kind review, committed through a PR) that sets S2.7 to `pass` or `fail`. The S2 verdict is `pending` only while every other S2 scenario passed (gating cases only), the automated S2.7 checks passed and no review sub-record exists for the newest spike-run of the current criteria version; a failed check or a failed other scenario is `FAIL` at once, and no ADR gate may be applied while `pending`.
 - **FR-003**: Every valid record-mode run of a spike MUST produce a result record in version control. A completed spike MUST end in a PASS or FAIL verdict under the verdict model above; S2 is `pending` only while every other S2 scenario passed (gating cases only), its automated S2.7 checks pass and no review sub-record exists for the newest spike-run of the current criteria version, and an invalid run caused by a harness defect produces no verdict.
 - **FR-004**: A criteria amendment after a first run MUST be recorded with its reason and MUST invalidate the verdict obtained under the earlier wording.
 - **FR-005**: Each result record MUST identify the exact environment inputs (the pinned revisions of the operating system and tools) so the run can be reproduced.
 - **FR-006**: ADR-0002 MUST NOT be marked accepted unless S1, S2, S3 and S4 all have a PASS record; ADR-0005 MUST NOT be marked accepted unless S5 has a PASS record. The accepted ADR MUST reference those records.
-- **FR-007**: For each gating spike S1 to S5 that FAILS, the result record MUST state which fallback applies, and the affected ADR and the design document MUST be updated accordingly. X1 has no fallback and does not update an ADR.
+- **FR-007**: For each gating spike S1 to S5 that FAILS, the result record MUST state which fallback applies, and the affected ADR and the design document MUST be updated accordingly. X1 and X2 have no fallback and do not update an ADR.
 
 **Environment**
 
@@ -327,23 +378,26 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 
 **Fallbacks**
 
-- **FR-031**: The spike criteria MUST state the fallback for each gating spike S1 to S5, as follows, and the result records MUST apply it on FAIL. X1 has no fallback:
+- **FR-031**: The spike criteria MUST state the fallback for each gating spike S1 to S5, as follows, and the result records MUST apply it on FAIL. X1 and X2 have no fallback:
   - **S1 FAIL**: the tiered-cache share is abandoned; ADR-0002 falls back to direct archive access, read-only when degraded (the fallback already written in ADR-0002). The merged share is dropped; how the pool is exposed in that case, and whether the mover design survives, is decided in the ADR update.
   - **S2 FAIL** (recovery or gating does not behave as ADR-0002 assumes): the same ADR-0002 fallback applies, and the safe-sequence assumptions in the ADR are corrected before any further decision. If only the snapshot scenario (S2 scenario 9) fails, ADR-0002 stays proposed and the model is amended so that archived files are no longer changed in place (for example a read-only archive with changes taken into the pool, which is what X1 would provide) before S2 is re-run (confirmed by the maintainer 2026-10-15).
   - **S3 FAIL**: the mover sequence is corrected and S3 is re-run. If the residual window of M5 can lose a completed client write (S3 scenario 7 (d)), the correction is the **rename-to-quarantine-and-recheck** protocol: M5 renames the pool copy into a quarantine directory on the same pool filesystem (an atomic rename that keeps the inode), compares ctime, size and inode of the quarantined file with the values recorded at copy time, unlinks the quarantined file only if nothing changed, and otherwise renames it back to its original path without overwriting anything (if the path was taken meanwhile, the quarantined file is kept and reported, never deleted). The quarantine protocol adds its own points to the mover contract by a reviewed amendment before S3 is re-run. If no sequence is found that satisfies all invariants, the tiered model is dropped and the ADR-0002 fallback applies.
   - **S4 FAIL**: the lock design is corrected and S4 is re-run. Both the tiered model and the fallback need the lockouts, so S4 has no fallback of its own: ADR-0002 stays proposed until S4 passes.
   - **S5 FAIL** (decided 2026-10-15): ADR-0005 stays proposed, the decision is amended (for example build and test before switching) and S5 is re-run. Writing the configuration files directly, without rebuilds, is adopted only if no amendment passes.
   - **X1**: no fallback and no consequence for any ADR, whatever its verdict.
+  - **X2**: no fallback and no consequence for any ADR, whatever its verdict or its comparison table; a change of the pool filesystem needs a separate reviewed amendment of ADR-0002.
 
-**Negative control and optional experiment**
+**Negative control and optional experiments**
 
 - **FR-032**: S3 MUST include the stock mover pattern (source deleted immediately after the copy, before parity covers the copy) as a negative control that the S3 checks flag as a failure; a control that is not flagged invalidates the S3 run: it is a harness defect, no record is written and S3 has no verdict.
 - **FR-033**: X1 MUST have its own written criteria (frozen before its first run, with the same verdict model) covering: the stacking depth at its default, `0` and `2`; reading, copy-up, deletion, whiteouts and recreation; renames with and without the directory-redirect setting; extended attributes; files larger than 4 GiB and pool out of space; the mover changing the lower and upper layer while the overlay is mounted; persistence across reboot.
 - **FR-034**: X1 MUST be runnable and skippable on its own. Its result record MUST state that it is non-gating; the ADR gate, the suite verdict matrix and `SC-001` to `SC-010` MUST NOT depend on it, and its absence MUST NOT block Phase 1. *Verified by* (last clause): T140 (an X1 record or its absence never changes the ADR gate result), T156 (`spikectl verify` passes with and without an X1 record) and T147 (the Phase 1 gate names the five gating verdicts only).
+- **FR-035**: X2 MUST have its own written criteria (frozen before its first run, with the same verdict model and the case model of User Story 8) covering: the S1 behaviours that depend on the filesystem of the pool branch, a single device failure of the pool and its replacement, adding capacity and replacing a smaller pool device by a larger one, memory use under the S1 data set against the VM budget, and the ZFS module of the pinned kernel; and the rules by which the comparison table is derived from the two cases.
+- **FR-036**: X2 MUST be runnable and skippable on its own and MUST NOT start before S1 to S4 have their checkpoints. Its result record MUST state that it is non-gating and MUST carry the comparison table; the ADR gate, the suite verdict matrix and `SC-001` to `SC-010` MUST NOT depend on it, and its absence MUST NOT block Phase 1. *Verified by*: T164 (tooling treats X2 like X1) and T176 (`spikectl verify` passes with and without an X2 record).
 
 ### Key Entities
 
-- **Spike**: one of S1 to S5, or the optional experiment X1; has a name, frozen criteria, scenarios, and zero or more result records. Only S1 to S5 can gate an ADR.
+- **Spike**: one of S1 to S5, or one of the optional experiments X1 and X2; has a name, frozen criteria, scenarios, and zero or more result records. Only S1 to S5 can gate an ADR.
 - **Acceptance scenario**: a precondition, an action and an observable expected outcome with a stable identifier; judged pass or fail automatically, except for the reviewed judgement of S2.7 after its automated step checks.
 - **Criteria version**: the frozen wording of a spike's scenarios; amendments create a new version and void earlier verdicts.
 - **Result record**: the outcome of one record-mode run of one spike: criteria version, environment revision, date, per-scenario outcome (variant outcomes marked `gating: false` in the evidence and case list), evidence reference and verdict; failed S1 to S5 run or review records also carry a fallback decision. The reviewed sub-record (kind review) of S2.7 is a separate record that references the S2 record.
@@ -359,15 +413,16 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 
 - **SC-001**: All five spikes have a recorded PASS or FAIL verdict (5 of 5), each traceable to a result record naming its criteria version and environment revision; for S2, a PASS requires the reviewed sub-record of S2.7, while a failed automated S2.7 check or any other failed S2 scenario establishes FAIL without that review.
 - **SC-002**: For 5 of 5 spikes, the criteria are committed before the first result record; for 0 spikes does a verdict stand that was obtained under criteria later amended.
-- **SC-003**: 0 ADR status changes happen without a matching verdict record: ADR-0002 is accepted only with 4 of 4 PASS (S1 to S4), ADR-0005 only with S5 PASS, and each failed gating spike has its fallback decision recorded and applied to the ADR text. X1 never produces an ADR fallback.
+- **SC-003**: 0 ADR status changes happen without a matching verdict record: ADR-0002 is accepted only with 4 of 4 PASS (S1 to S4), ADR-0005 only with S5 PASS, and each failed gating spike has its fallback decision recorded and applied to the ADR text. X1 and X2 never produce an ADR fallback.
 - **SC-004**: Every acceptance scenario is automated except the review judgement of S2.7 (its step checks are automated), and 100% of scenarios return the same verdict on 3 consecutive clean runs.
 - **SC-005**: S3 kills the mover at 100% of the enumerated step boundaries and mid-step points, each in both kill modes, and records the number of crash points covered; the result is zero lost live files and zero premature pool-copy removals, and the stock-pattern negative control is flagged as a failure.
 - **SC-006**: S2 recovers 100% of the files predicted as recoverable bit-exact in every scenario, and the set of files reported lost equals the predicted set exactly (no more, no fewer).
 - **SC-007**: S4 covers all transitions in the state table (healthy to each degraded state, both-degraded in both orders and simultaneously, and repair back) and 100% of lockout attempts are refused with archive and parity unchanged.
 - **SC-008**: S5 reports rebuild duration (median and worst case over at least 5 warm runs per change class, plus one cold run, judged by the worst class median) and 100% of failed builds and failed activations leave the running system equal to the last known-good generation.
-- **SC-009**: The full suite (S1 to S5, without X1) starts with one command, runs without manual steps, and completes within 2 hours of wall time in one record-mode run on the reference runner (see Reference runner: the maintainer's workstation within the 8 GiB VM memory budget). The 2 hours are an initial target; they are revisited after the shakedown, with the reason recorded.
+- **SC-009**: The full suite (S1 to S5, without X1 and X2) starts with one command, runs without manual steps, and completes within 2 hours of wall time in one record-mode run on the reference runner (see Reference runner: the maintainer's workstation within the 8 GiB VM memory budget). The 2 hours are an initial target; they are revisited after the shakedown, with the reason recorded.
 - **SC-010**: At the end of Phase 0 the repository contains test, specification and decision artifacts only; no product code was added for the sake of the spikes.
 - **SC-011**: If X1 is run, it has a recorded PASS or FAIL verdict traceable to its own frozen criteria; 0 ADR status changes, fallbacks or Phase 1 decisions depend on whether it was run or on its verdict.
+- **SC-012**: If X2 is run, it has a recorded PASS or FAIL verdict traceable to its own frozen criteria and a comparison table with one row per dimension; 0 ADR status changes, fallbacks or Phase 1 decisions depend on whether it was run, on its verdict or on its table.
 
 ## Out of Scope
 
@@ -378,13 +433,13 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 - Production SMB configuration (users, permissions, tuning); only what S1 needs to prove client access is configured.
 - Fill-level policies and schedules for selecting what the mover moves. The minimum-age and no-open-handle selection rule is in scope only as far as S3 scenario 7 tests it; the S3 fixture names the candidate files and the criteria fix the minimum age.
 - Purging the trash that the mover fills (S3 scenario 7 (e)): only the retention period is a parameter of the S3 criteria; no purge exists in Phase 0.
-- Real-time parity, alternative storage layouts beyond the documented fallback and the optional experiment X1, and revisiting ADR-0001, ADR-0003 and ADR-0004.
+- Real-time parity, alternative storage layouts beyond the documented fallback and the optional experiments X1 and X2 (X2 compares only the fast pool; ZFS for the archive tier is not tested), and revisiting ADR-0001, ADR-0003 and ADR-0004.
 - Choosing between the candidate snapshot tools for the archive (see the plan's open items); S2 measures the workflow the plan selects.
 - Choosing a project licence.
 
 ## Assumptions
 
-- The audience is the project maintainers. Because the spikes exist to test named technologies chosen in the ADRs (a pool filesystem, a union filesystem with a tiered-cache pattern, a parity tool with btrfs snapshots, NixOS, and for X1 an overlay filesystem), those names appear where they are the subject under test; this is not a choice of implementation made by this spec.
+- The audience is the project maintainers. Because the spikes exist to test named technologies chosen in the ADRs (a pool filesystem, a union filesystem with a tiered-cache pattern, a parity tool with btrfs snapshots, NixOS, for X1 an overlay filesystem, and for X2 a second pool filesystem), those names appear where they are the subject under test; this is not a choice of implementation made by this spec.
 - Tests run as NixOS VM tests on a host with hardware virtualisation. Record-mode runs happen on the reference runner (the maintainer's workstation, see Reference runner). CI offers the `static` job and shakedown runs only where a runner offers KVM; no KVM runner is assumed. The unattended-in-CI clause of FR-011 is met by the `static` job and the shakedown runs on runners that offer KVM; the local record run is not a CI run (FR-011, Reference runner).
 - Virtual disks stand in for real disks. Failures, crashes and power-off are injected from the host side. Findings that depend on real hardware behaviour are out of scope and noted as residual risk in the result records.
 - Operating system and tool revisions are pinned for the whole phase, so a verdict is tied to a known environment.
@@ -400,7 +455,7 @@ A maintainer who wants to know whether the former design (overlayfs with the arc
 - The recovery procedure produced by S2 and the mover step list used by S3 are the same artifacts the product will later implement; a change to either after Phase 0 reopens the corresponding spike.
 - Phase 0 deliverables land on `main` through pull requests under the project's workflow, like all other changes.
 - Phase 1 does not start until all five verdicts are recorded and each ADR is either accepted or its fallback adopted (design rule: phase n+1 starts only when phase n passes its tests).
-- The 2-hour suite budget (SC-009) is an initial target measured on the reference runner under its 8 GiB VM memory budget, which limits how many VMs run in parallel. It is revisited after the shakedown, and the plan may revise it with a recorded reason if large-file and crash-point coverage need more. X1 is outside this budget.
+- The 2-hour suite budget (SC-009) is an initial target measured on the reference runner under its 8 GiB VM memory budget, which limits how many VMs run in parallel. It is revisited after the shakedown, and the plan may revise it with a recorded reason if large-file and crash-point coverage need more. X1 and X2 are outside this budget.
 
 ## Open Questions
 
