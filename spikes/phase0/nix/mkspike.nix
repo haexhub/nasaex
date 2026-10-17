@@ -82,7 +82,8 @@ let
       budgetMinutes = budgetMinutes.${budget};
     };
     qemu.forceAccel = true;
-    qemu.package = pkgs.qemu_test;
+    # mkDefault: the interactive driver sets its own QEMU (nixos/lib/testing/interactive.nix).
+    qemu.package = lib.mkDefault pkgs.qemu_test;
     globalTimeout = budgetMinutes.${budget} * 60;
     extraPythonPackages = p: [ testlibPackage ]
       ++ lib.mapAttrsToList pythonModule scriptPackages
@@ -108,4 +109,5 @@ in
 {
   inherit test topology vmResources totalVmRamMiB;
   driver = test.config.driver;
+  driverInteractive = test.driverInteractive;
 }

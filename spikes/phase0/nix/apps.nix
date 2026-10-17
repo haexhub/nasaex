@@ -1,12 +1,27 @@
-# Runnable entry points of the flake: spikectl, the driver runner and placeholders.
+# Runnable entry points of the flake: spikectl, the spike runs, the driver runner and placeholders.
 { pkgs, pythonEnv, spikectlSrc }:
 
+let
+  inherit (pkgs) lib;
+in
 {
   spikectl = pkgs.writeShellApplication {
     name = "spikectl";
     runtimeInputs = [ pythonEnv pkgs.git ];
     text = ''
       PYTHONPATH=${spikectlSrc} exec python -m spikectl.cli "$@"
+    '';
+  };
+
+  # One spike through `spikectl run <spike>` (the single-spike core, spikectl/run.py): it builds
+  # packages.driver-<spike>, runs the preflight and the mode gate, runs the driver outside the
+  # sandbox and writes scratch output or the record. Run from the repository; it calls the
+  # host's nix.
+  spikeRun = spike: pkgs.writeShellApplication {
+    name = "run-${lib.toLower spike}";
+    runtimeInputs = [ pythonEnv pkgs.git ];
+    text = ''
+      PYTHONPATH=${spikectlSrc} exec python -m spikectl.cli run ${spike} "$@"
     '';
   };
 
