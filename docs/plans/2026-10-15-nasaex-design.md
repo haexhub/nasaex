@@ -69,11 +69,14 @@ The earlier idea of stacking overlayfs on top of mergerfs is not part of the bas
   retry. The mover takes no lock that SMB clients would have to honour: it selects only
   pool files that have been idle for a minimum age and are not open, and it removes a pool
   copy only if its ctime, size and inode are unchanged since the copy (compare and delete);
-  a file changed meanwhile stays in the pool for a later run. If a client deletes a selected
-  pool file after the copy while the archive copy is still there, the mover moves the
-  archive copy into a trash directory beside the archive branch on the same disk instead of
-  deleting it. Whether a client delete through the share leaves that archive copy in place,
-  and how the trash behaves, are subject to the S1 and S3 spikes.
+  a file changed meanwhile stays in the pool for a later run. A client delete through the
+  share removes every copy of the file (the cache pool keeps the mergerfs default unlink
+  policy `epall`), so a delete after the copy leaves no archive copy behind. If the archive
+  copy is still there when the mover finds the pool file missing (a client delete during the
+  copy, before the mover renames the copy into place, or a pool file that vanished for
+  another reason), the mover moves the archive copy into a trash directory beside the
+  archive branch on the same disk instead of deleting it. How the trash behaves is subject
+  to the S1 and S3 spikes.
 - **Protection**: a file on the pool is protected by the mirror. A file in the archive is
   protected by parity as of the last completed sync. Changes made to archived files in
   place since that sync (the unprotected window) are what the snapshot workflow addresses
