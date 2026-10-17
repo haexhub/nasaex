@@ -149,6 +149,19 @@ def criteria_rule_errors(doc: dict) -> list[str]:
     return []
 
 
+def record_rule_errors(record: dict) -> list[str]:
+    """Rules on a schema-valid record that result-record.schema.json does not carry yet
+    (mirroring them there is a reviewed docs PR): a run of S1 to S4 describes its disks
+    (FR-009, finding I19)."""
+    if (
+        record["kind"] in ("spike-run", "repro")
+        and record["spike"] in GATING_SPIKES[:4]
+        and not record["environment"].get("disks")
+    ):
+        return [f"a {record['kind']} record of {record['spike']} needs environment.disks"]
+    return []
+
+
 def record_paths(root: Path) -> list[Path]:
     """Every docs/phase0/results/<group>/<record-id>/record.json."""
     return sorted((root / RESULTS_DIR).glob("*/*/record.json"))
