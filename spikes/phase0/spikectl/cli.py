@@ -1,4 +1,5 @@
-"""spikectl command line: freeze, verify, verdict (the run verb is added with US6).
+"""spikectl command line: freeze, verify, verdict and run (the single-spike core of T049a; the
+suite orchestration follows in T138).
 
 Scaffolding for the Phase 0 spikes, not product code."""
 
@@ -8,6 +9,8 @@ from pathlib import Path
 
 from spikectl.freeze import FreezeError, freeze
 from spikectl.model import SPIKES, find_root
+from spikectl.record import MODES, RecordError
+from spikectl.run import RunError, run_spike
 from spikectl.verdict import current_verdicts, format_matrix
 from spikectl.verify import GROUPS, verify
 
@@ -30,6 +33,11 @@ def _parser() -> argparse.ArgumentParser:
     )
 
     commands.add_parser("verdict", help="print verdicts and the advisory gate matrix")
+
+    run_cmd = commands.add_parser("run", help="run one spike's VM test outside the nix sandbox")
+    run_cmd.add_argument("spike", choices=SPIKES)
+    run_cmd.add_argument("--mode", choices=MODES, required=True)
+    run_cmd.add_argument("--only", help="run only this scenario id")
     return parser
 
 
@@ -58,6 +66,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{finding.check}: {finding.message}")
         print("verify: ok" if not findings else f"verify: {len(findings)} finding(s)")
         return 1 if findings else 0
+
+    if args.command == "run":
+        try:
+            target = run_spike(root, args.spike, args.mode, only=args.only)
+        except (RecordError, RunError) as error:
+            print(f"run: {error}", file=sys.stderr)
+            return 1
+        print(f"run: {args.mode} output in {target}")
+        return 0
 
     verdicts = current_verdicts(root)
     print(format_matrix(verdicts))
