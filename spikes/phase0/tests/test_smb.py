@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from helpers import xattrs_supported
 
 from testlib.manifest import Item, build_manifest
 from testlib.smb import (
@@ -65,18 +66,6 @@ class RecordingMachine:
 
     def execute(self, command, **_):
         return 0, self.succeed(command)
-
-
-def xattrs_supported(path: Path) -> bool:
-    probe = path / ".xattr-probe"
-    probe.write_text("")
-    try:
-        os.setxattr(probe, "user.probe", b"1")
-        return True
-    except OSError:
-        return False
-    finally:
-        probe.unlink()
 
 
 @pytest.fixture

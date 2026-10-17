@@ -1,8 +1,10 @@
 """Builders shared by the spikectl unit tests: a throwaway repository root with
-criteria files, lock lines, result records and real git history."""
+criteria files, lock lines, result records and real git history; and a probe for user xattrs on
+the test filesystem."""
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -193,3 +195,16 @@ def commit_all(root: Path, message: str = "c") -> str:
     git(root, "add", "-A")
     git(root, "commit", "-q", "--allow-empty", "-m", message)
     return git(root, "rev-parse", "HEAD")
+
+
+def xattrs_supported(path: Path) -> bool:
+    """Whether the filesystem of `path` takes user xattrs (some build sandboxes do not)."""
+    probe = path / ".xattr-probe"
+    probe.write_bytes(b"")
+    try:
+        os.setxattr(probe, "user.probe", b"1")
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.unlink()
