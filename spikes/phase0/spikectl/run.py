@@ -77,6 +77,13 @@ def _launch(argv: list[str], cwd: Path, env: dict, log: Path, timeout_s: float) 
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
             return None
+        except BaseException:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            raise
 
 
 @dataclass
@@ -276,15 +283,17 @@ def run_spike(
     if only is not None:
         driver_env["SPIKE_ONLY"] = only
     argv = [str(driver.path / "bin/nixos-test-driver"), "--output_directory", str(out)]
-    status = host.launch(
-        [*argv, "--junit-xml", "junit.xml"],
-        out,
-        driver_env,
-        out / "driver.log",
-        driver.budget_s + GRACE_S,
-    )
-    end = host.clock()
-    shutil.rmtree(state / "run")  # multi-GiB machine state, never evidence
+    try:
+        status = host.launch(
+            [*argv, "--junit-xml", "junit.xml"],
+            out,
+            driver_env,
+            out / "driver.log",
+            driver.budget_s + GRACE_S,
+        )
+        end = host.clock()
+    finally:
+        shutil.rmtree(state / "run", ignore_errors=True)  # multi-GiB machine state, never evidence
 
     result = _read_result(out / RESULT_FILE)
     if status is None:
