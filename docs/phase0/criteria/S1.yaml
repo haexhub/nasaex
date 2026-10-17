@@ -1,0 +1,284 @@
+# Acceptance criteria of spike S1 (spec User Story 1, FR-012 to FR-014). Draft: the shakedown
+# (task T051) may change the structure of a check, never an expected value derived here; every
+# pre-freeze edit is noted in `changelog`. Checks: spikes/phase0/vm-tests/s1/.
+spike: S1
+criteria_version: 1
+status: draft
+name: The tiered-cache share behaves like a normal filesystem
+gates: ADR-0002
+fallback: >-
+  S1 FAIL: the tiered-cache share is abandoned; ADR-0002 falls back to direct archive access,
+  read-only when degraded (the fallback already written in ADR-0002). The merged share is
+  dropped; how the pool is exposed in that case, and whether the mover design survives, is
+  decided in the ADR update (spec FR-031).
+
+tables:
+  # The one SMB share of the server (task T041) and the keys the probe of task T039 measured as
+  # required: without them a DOS attribute change is lost and user xattrs fail with EOPNOTSUPP.
+  share:
+    name: cache
+    path: /mnt/cache
+    user: spike
+    required_keys:
+      store dos attributes: "yes"
+      ea support: "yes"
+  # The baseline mount of the cache pool (plan O16 and O9, spikes/phase0/nix/tiered-cache.nix).
+  # The unlink policy is the mergerfs default: no func.unlink option is set and the effective
+  # policy, read at run time, is expected to be epall (spec Clarifications 2026-10-17).
+  baseline:
+    category.create: ff
+    archive_branch_mode: NC
+    moveonenospc: "false"
+    minfreespace: 64M
+    passthrough.io: "off"
+    cache.files: "off"
+    func.unlink: epall
+  # The mount options each variant of a mount-variants scenario changes against the baseline.
+  mount_variants:
+    ff: {}
+    lus:
+      category.create: lus
+    baseline: {}
+    passthrough-rw-auto-full:
+      passthrough.io: rw
+      cache.files: auto-full
+  # Bounded times of the verdict model (initial targets, not measured).
+  bounds:
+    client_operation_s: 30
+    view_consistency_s: 30
+  # S1.8: the byte whose bits a case flips in place in the archived file above 4 GiB (beyond
+  # 2**32, so 64-bit offsets are exercised); each case flips its own byte.
+  large_file:
+    flip_offset:
+      baseline: 4294967301
+      passthrough-rw-auto-full: 4294967302
+  # S1.9: the filler leaves `leave_bytes` free on the pool, above `minfreespace`, so the create
+  # policy still selects the pool and the write of `write_bytes` fails there (research F10).
+  out_of_space:
+    errno: ENOSPC
+    smb_status: NT_STATUS_DISK_FULL
+    leave_bytes: 100663296
+    write_bytes: 268435456
+  # S1.10: the points of the move primitives (contracts/mover-steps.md, M1 and M5) at which the
+  # share is observed, and the refresh procedure, none until the shakedown finds one is needed.
+  mover_view:
+    points:
+      - mid:M1:tmp-created
+      - mid:M1:tmp-partial
+      - mid:M1:tmp-data-synced
+      - mid:M1:renamed
+      - mid:M1:parent-synced
+      - mid:M1:item-1-done
+      - mid:M5:item-validated
+      - mid:M5:unlinked
+      - mid:M5:item-1-done
+    refresh_procedure: []
+
+scenarios:
+  - id: S1.1
+    title: Archive-only files read through the share equal the reference, and the trash stays hidden
+    precondition: >-
+      The share is the cache pool (pool branch first, archive branches after it in mode NC); the S1
+      data set is populated (spikes/phase0/vm-tests/s1/fixture.py), including trash entries beside
+      the branch directory of arch0 and arch2, one of them at the path shared/trashed-then-created.txt.
+    action: >-
+      The client lists, reads and checksums every archive-only file and directory through the
+      mount.cifs mount and checksums the archive-only files with smbclient; the server lists the
+      cache pool and the base pool; the client creates shared/trashed-then-created.txt through the
+      share.
+    observable: >-
+      For every path of the archive branches the client manifest equals the reference manifest
+      derived from the data set in name, type, size, mtime, mode, user xattrs and SHA-256, and the
+      smbclient checksums equal the reference; no trash directory and no trash entry appears in the
+      client manifest or in the listing of the cache pool or the base pool; the created file shows
+      its own content through the share, lies on the pool branch only, and the trash directories
+      equal their reference manifests (no collision).
+    check: archive_view
+  - id: S1.2
+    title: New files and directories land on the pool only
+    precondition: >-
+      The cache pool with the variant's create policy and the archive branches in mode NC; a
+      directory that exists only on an archive disk.
+    action: >-
+      The client creates a file and a directory inside the archive-only directory and a new
+      top-level directory with a file; then, with the NC mode removed from the archive branches, the
+      client creates one more file inside the archive-only directory.
+    observable: >-
+      Every new path exists on the pool branch with its expected content and on no archive branch;
+      the tree hash of every archive branch is the same before and after; the client manifest shows
+      the archive-only and the new content as one tree. The branch that held the file created without
+      NC is recorded as evidence and is not a pass condition. Required settings recorded: create
+      policy and archive branch mode.
+    check: new_data_placement
+    cases: mount-variants
+    variants:
+      - case: ff
+        gating: true
+        description: Baseline create policy ff.
+      - case: lus
+        gating: false
+        description: Informational create policy lus.
+  - id: S1.3
+    title: An archive-only file is modified in place
+    precondition: A file that exists only on the archive branch arch1.
+    action: The client flips the bits of three bytes of the file in place through the share.
+    observable: >-
+      The client reads the expected new content; the file on arch1 has the expected new content and
+      the same inode; no path of it exists on the pool branch; every other file on the pool and the
+      archive branches has the same type, size and SHA-256 as before, and no path appeared or
+      disappeared.
+    check: inplace_modify
+  - id: S1.4
+    title: An archive-only file is deleted in place
+    precondition: >-
+      A file that exists only on the archive branch arch0; for the measurement, a file with the same
+      content at the same path on the pool branch and on arch1.
+    action: >-
+      The client deletes the archive-only file through the share; for the measurement the client
+      deletes the file held on two branches through the share.
+    observable: >-
+      The archive-only file is not visible through the share and exists on no branch; the manifest of
+      the pool branch is unchanged (no marker, no copy). Recorded in the evidence, not a pass
+      condition: the branches that held the two-branch file before and after its delete, whether it
+      was visible afterwards, and the effective func.unlink of the cache pool.
+    check: inplace_delete
+  - id: S1.5
+    title: A deleted archive file or directory recreated through the share shows only new content
+    precondition: >-
+      An archive-only file on arch0 and an archive-only directory with entries on arch0 and arch1.
+    action: >-
+      The client deletes the file and creates a new file with other content at the same path; it
+      deletes the directory with its entries, creates a directory at the same path and a file in it;
+      the client mounts the share again and reads once more.
+    observable: >-
+      Before and after the new mount the file shows the new content and the directory lists only the
+      new file; no branch holds the old file content at the path or any old entry of the directory.
+    check: delete_then_recreate
+  - id: S1.6
+    title: Renames and moves of every origin succeed completely
+    precondition: >-
+      Through the share: an archive-only file, a pool-only file, an archive-only directory on two
+      archive disks, a pool-only directory, a directory on the pool and an archive branch, a pool-only
+      target directory and an archive-only target directory.
+    action: >-
+      The client renames each file and directory within its parent, moves an archive-only file into
+      the pool-only directory and a pool-only file into the archive-only directory.
+    observable: >-
+      Every rename exits with status 0; the client manifest under each new name equals the manifest
+      under the old name before the rename (type, size, mtime, mode, user xattrs, SHA-256), and
+      nothing is visible under any old name. A rename error (for example EXDEV) or a partial result is
+      a FAIL of the baseline unless a setting recorded as required makes it succeed.
+    check: rename_move
+    cases: mount-variants
+    variants:
+      - case: baseline
+        gating: true
+        description: Baseline passthrough.io=off and cache.files=off.
+      - case: passthrough-rw-auto-full
+        gating: false
+        description: Informational passthrough.io=rw with cache.files=auto-full (plan O9).
+  - id: S1.7
+    title: Extended attributes and SMB attributes survive rename, remount, a second client and the mover
+    precondition: >-
+      An archive-only file and a pool-only file, each carrying a user xattr set on its branch.
+    action: >-
+      The client sets a user xattr through the mount.cifs mount and the hidden and system DOS
+      attributes with smbclient setmode on each file, then renames each file, mounts the share again,
+      reads through a second SMB session (a second mount.cifs mount with nosharesock and actimeo=0)
+      and smbclient, and the pool file is moved into the archive with the move primitives of the
+      mover.
+    observable: >-
+      After every step the user xattr set by the client and the xattr already present on the branch
+      read back with their values through the mount.cifs mounts, and smbclient allinfo shows the
+      hidden and system bits. DOS attributes are read with smbclient allinfo only, never through the
+      cifs pseudo-xattr.
+    check: attributes_preserved
+  - id: S1.8
+    title: Files larger than 4 GiB keep their content end to end
+    precondition: >-
+      large/archived.bin (4 GiB plus one chunk and one byte) on the archive branch arch1.
+    action: >-
+      The client checksums the archived file through mount.cifs and smbclient, copies it within the
+      share and checksums the copy, writes large/new-through-share.bin (above 4 GiB) through the
+      share, and flips the bits of the case's byte above 4 GiB of the archived file in place.
+    observable: >-
+      Every checksum equals the reference; the copy and the new file lie on the pool branch only; after
+      the flip the archived file reads with the expected new SHA-256 through the share and on arch1,
+      keeps its inode, and no copy of it exists on the pool branch.
+    check: large_files
+    cases: mount-variants
+    variants:
+      - case: baseline
+        gating: true
+        description: Baseline passthrough.io=off and cache.files=off.
+      - case: passthrough-rw-auto-full
+        gating: false
+        description: Informational passthrough.io=rw with cache.files=auto-full (plan O9).
+  - id: S1.9
+    title: A full pool gives a clean out-of-space error
+    precondition: >-
+      A filler file on the pool leaves leave_bytes free, above minfreespace; a pool file to append to.
+    action: >-
+      The client creates a file of write_bytes through mount.cifs, uploads one of the same size with
+      smbclient put, and appends write_bytes to the pool file through mount.cifs.
+    observable: >-
+      The mount.cifs create and append fail with errno ENOSPC and smbclient reports
+      NT_STATUS_DISK_FULL; the tree hash of every archive branch is unchanged; no file at either new
+      path is visible with fewer bytes than written; the appended file still begins with its original
+      bytes. Required settings recorded: archive branch mode, moveonenospc and minfreespace.
+    check: pool_out_of_space
+  - id: S1.10
+    title: A file moved the mover's way keeps the same view through the share
+    precondition: A pool-only file with a user xattr, read through the share; a client reader holds it open.
+    action: >-
+      The server moves the file with the move primitives of the mover (copy through the base pool,
+      then unlink of the pool copy) and stops at each point of tables.mover_view.points; the reader
+      finishes reading after the move.
+    observable: >-
+      At every point the file is visible through the share with its full size and expected SHA-256;
+      the reader reads the complete expected content; the mover exits with status 0; after the move
+      the client manifest of the file's directory (path, type, size, mtime, mode, SHA-256) equals the
+      manifest before the move within bounds.view_consistency_s without intervention, or after the
+      verified refresh procedure of tables.mover_view.refresh_procedure. A differing view after both
+      is a FAIL; the time to a consistent view is recorded.
+    check: mover_view
+  - id: S1.11
+    title: The share comes back after a reboot with the same view
+    precondition: The share populated with archive and pool files.
+    action: The server reboots; nothing is mounted or started by hand on the server.
+    observable: >-
+      The base pool, the cache pool and smbd are active after the boot, and the client manifest of the
+      whole share (path, type, size, mtime, mode, user xattrs, SHA-256) is identical before and after.
+    check: reboot_view
+
+changelog:
+  - >-
+    2026-10-17, draft (task T042): scenarios S1.1 to S1.11 from spec User Story 1; S1.2 runs the
+    baseline ff and the informational lus, S1.6 and S1.8 the baseline and the informational
+    passthrough.io=rw with cache.files=auto-full (plan O9); S1.10 has no refresh procedure yet.
+  - >-
+    Probe T039 (2026-10-17, Samba 4.23.10, kernel cifs client of 6.18.56, mergerfs 2.41.1,
+    cache-pool share): DOS attributes are read with smbclient allinfo and changed with smbclient
+    setmode; the cifs pseudo-xattr user.cifs.dosattrib shows them and can set them, but it showed a
+    stale value after a change by smbclient until the share was mounted again, so it is not used to
+    judge. User xattrs are set and read through the mount.cifs mount as user.* and are stored under
+    the same name on the branch that holds the file; xattrs already on a branch file are visible
+    through the share. Samba stores DOS attributes in user.DOSATTRIB on the branch file (through
+    mergerfs). With store dos attributes = no a setmode reports success but the change is lost, and
+    with ea support = no a client cannot set user xattrs (EOPNOTSUPP) and does not see branch
+    xattrs. Both keys are yes by default in 4.23.10 and are set explicitly (tables.share).
+  - >-
+    Probes T037c and T037f (2026-10-17, mergerfs 2.41.1, Samba 4.23.10): with no func.unlink option
+    the effective unlink policy of the cache pool is epall, and a client delete through the share of
+    a file held on the pool branch and an archive branch removed both copies; with func.unlink=ff
+    the archive copy stayed and was visible. S1 scenarios 4 and 5 behaved as required under both.
+    Decision of 2026-10-17 (spec Clarifications, unlink policy): epall stays, no func.unlink option;
+    S1.4 records the effective policy, it is not a pass condition.
+  - >-
+    Open before the freeze (S1.1 permissions): the probe of T039 saw client modes 0555 and 0755
+    that follow the DOS readonly bit (smb_attrs.results.md, other observations; inferred, not
+    measured), so a mount.cifs mode is not the branch mode; S1.1 compares the mode as spec User
+    Story 1 scenario 1 states, and the shakedown (T051) shows what the client reports.
+  - >-
+    Open for the shakedown (T051): the time to a consistent view after a move (S1.10) or the
+    refresh procedure, and whether NC excludes a branch from moveonenospc (research F10).
