@@ -153,7 +153,7 @@ def test_a_variant_remounts_the_cache_pool_only_after_the_clients_and_smbd_let_g
     assert stop_smbd < stop_unit < mount
     assert "category.create=lus" in inside[mount] and WHAT in inside[mount]
     assert inside[-1] == "systemctl start samba-smbd.service"
-    assert after.index("umount /mnt/cache") < after.index("systemctl start mnt-cache.mount")
+    assert after.index("umount /mnt/cache || true") < after.index("systemctl start mnt-cache.mount")
     assert after[-1] == "systemctl start samba-smbd.service"
     assert client.commands[-1].startswith("mkdir -p /mnt/share2")
 
@@ -177,3 +177,25 @@ def test_a_variant_without_the_no_create_mode_drops_it_from_the_archive_branches
 
     assert "=NC" not in mount
     assert "/mnt/pool:/mnt/archive/arch0/branch:/mnt/archive/arch1/branch" in mount
+
+
+class FailingMount(RecordingMachine):
+    def succeed(self, command, **kwargs):
+        out = super().succeed(command, **kwargs)
+        if command.startswith("mergerfs "):
+            raise RuntimeError("mergerfs: invalid option")
+        return out
+
+
+def test_a_variant_that_fails_to_mount_restores_the_baseline_mount_and_smbd():
+    server = FailingMount(dict([unit("What", WHAT), unit("Options", CONFIGURED)]))
+    lab = Lab(server, RecordingMachine(), {"pool": "/mnt/pool"}, Recorder())
+
+    with pytest.raises(RuntimeError, match="invalid option"):
+        with lab.variant({"cache.files": "bogus"}):
+            pass
+
+    assert server.commands[-2:] == [
+        "systemctl start mnt-cache.mount",
+        "systemctl start samba-smbd.service",
+    ]
