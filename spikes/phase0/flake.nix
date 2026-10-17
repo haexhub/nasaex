@@ -27,6 +27,11 @@
       probeFaults = import ./vm-tests/probes/faults.nix { inherit mkSpike; };
       probeDelete = import ./vm-tests/probes/concurrent_delete.nix { inherit mkSpike; };
       probeSmbAttrs = import ./vm-tests/probes/smb_attrs.nix { inherit mkSpike; };
+      probeDeleteMidCopy = import ./vm-tests/probes/concurrent_delete.nix {
+        inherit mkSpike;
+        name = "probe-concurrent-delete-mid-copy";
+        script = ./vm-tests/probes/probe_concurrent_delete_mid_copy.py;
+      };
 
       app = pkg: { type = "app"; program = lib.getExe pkg; };
       placeholders = lib.genAttrs
@@ -49,6 +54,10 @@
         probe-concurrent-delete = apps.runDriver "probe-concurrent-delete" probeDelete.default.driver;
         probe-concurrent-delete-ff = apps.runDriver "probe-concurrent-delete-ff" probeDelete.ff.driver;
         probe-smb-attrs = apps.runDriver "probe-smb-attrs" probeSmbAttrs.driver;
+        probe-concurrent-delete-mid-copy =
+          apps.runDriver "probe-concurrent-delete-mid-copy" probeDeleteMidCopy.default.driver;
+        probe-concurrent-delete-mid-copy-ff =
+          apps.runDriver "probe-concurrent-delete-mid-copy-ff" probeDeleteMidCopy.ff.driver;
       });
 
       packages.${system} = {
@@ -56,6 +65,8 @@
         driver-probe-concurrent-delete = probeDelete.default.driver;
         driver-probe-concurrent-delete-ff = probeDelete.ff.driver;
         driver-probe-smb-attrs = probeSmbAttrs.driver;
+        driver-probe-concurrent-delete-mid-copy = probeDeleteMidCopy.default.driver;
+        driver-probe-concurrent-delete-mid-copy-ff = probeDeleteMidCopy.ff.driver;
       }
       # Cached test drivers of the spikes; US1 to US5 and X1 replace these placeholders.
       // lib.genAttrs
