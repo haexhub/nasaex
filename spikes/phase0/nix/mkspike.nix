@@ -56,8 +56,17 @@ let
     disks = nodeDefs.diskTable;
   };
 
+  # Sum over the VMs that run at the same time: input of the spikectl RAM-budget preflight.
+  totalVmRamMiB = lib.foldl' (sum: m: sum + m.memory_mib) 0 (lib.attrValues vmResources);
+
   test = pkgs.testers.runNixOSTest {
     inherit name;
+    # Read by `spikectl run` (`nix eval <flake>#driver-<spike>.spike`) before the driver starts;
+    # passthru is no input of the derivation, so the cached driver keeps its store path.
+    passthru.spike = {
+      inherit topology totalVmRamMiB;
+      budgetMinutes = budgetMinutes.${budget};
+    };
     qemu.forceAccel = true;
     qemu.package = pkgs.qemu_test;
     globalTimeout = budgetMinutes.${budget} * 60;
@@ -76,8 +85,6 @@ let
   };
 in
 {
-  inherit test topology vmResources;
+  inherit test topology vmResources totalVmRamMiB;
   driver = test.config.driver;
-  # Sum over the VMs that run at the same time: input of the spikectl RAM-budget preflight.
-  totalVmRamMiB = lib.foldl' (sum: m: sum + m.memory_mib) 0 (lib.attrValues vmResources);
 }
