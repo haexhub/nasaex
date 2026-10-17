@@ -32,10 +32,13 @@
         apps.placeholder;
     in
     {
-      checks.${system} = import ./nix/checks.nix {
-        inherit pkgs pythonEnv spikectlSrc;
-        src = ./.;
-        repoRoot = ../..;
+      checks.${system} = import ./nix/checks.nix
+        {
+          inherit pkgs pythonEnv spikectlSrc;
+          src = ./.;
+          repoRoot = ../..;
+        } // {
+        tiered-cache-layout = import ./tests/tiered_cache_layout.nix { inherit pkgs mkSpike; };
       };
 
       apps.${system} = lib.mapAttrs (_: app) (placeholders // {
