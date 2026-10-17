@@ -27,11 +27,17 @@ Two tiers, built on the tiered-cache pattern documented by mergerfs.
   pool, on a schedule) with the project's safety rule: copy with a checksum and keep the
   source, run and verify `snapraid sync`, and only then delete the pool copy. The stock
   `--remove-source-files` behaviour is not acceptable.
-- If a client deletes a selected pool file after the mover copied it, the mover keeps the
-  archive copy and, after parity coverage, renames it into a trash directory beside the
-  archive branch on the same data subvolume. The trash is outside both mergerfs pools, is
-  never purged in Phase 0, and its exclusion from the pool views and recovery behaviour
-  remain subject to the S1/S3 spikes.
+- A client delete through the share removes every copy of the file: the cache pool keeps the
+  mergerfs default unlink policy `epall`, so a delete after the mover has copied a selected
+  pool file into place also removes that archive copy (measured in Phase 0, probe T037c).
+  `func.unlink=ff` is not used, because with it the archive copy stays and the deleted file
+  reappears. Where an archive copy is still there when the mover finds the pool file missing
+  (a client delete during the copy, before the mover renames the copy into place, or a pool
+  file that vanished for another reason), the mover keeps the archive copy and, after
+  parity coverage, renames it into a trash directory beside the archive branch on the same
+  data subvolume. The trash is outside both mergerfs pools, is never purged in Phase 0, and
+  its exclusion from the pool views and recovery behaviour remain subject to the S1/S3
+  spikes.
 - In the degraded state, sync, scrub and the mover are locked and the archive is
   read-only.
 
