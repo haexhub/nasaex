@@ -5,7 +5,16 @@ import os
 
 import pytest
 
-from testlib.manifest import Item, build_manifest, compare, from_json, to_json, tree_hash
+from testlib.manifest import (
+    Difference,
+    Item,
+    build_manifest,
+    compare,
+    describe,
+    from_json,
+    to_json,
+    tree_hash,
+)
 
 
 def make_tree(root):
@@ -125,3 +134,23 @@ def test_item_equality_is_by_value():
     a = Item(kind="file", size=1, mode=0o644, mtime=5, xattrs=(), sha256="a" * 64)
 
     assert a == Item(kind="file", size=1, mode=0o644, mtime=5, xattrs=(), sha256="a" * 64)
+
+
+def test_describe_names_each_difference_in_one_line_with_modes_in_octal():
+    differences = [
+        Difference("a.txt", "missing"),
+        Difference("b.txt", "unexpected"),
+        Difference("c.txt", "mismatch", "mode", 0o644, 0o755),
+        Difference("c.txt", "mismatch", "size", 1, 2),
+    ]
+
+    assert describe(differences) == (
+        "a.txt missing, b.txt unexpected, c.txt mode 0o644 -> 0o755, c.txt size 1 -> 2"
+    )
+
+
+def test_describe_cuts_a_long_list_and_counts_the_rest():
+    differences = [Difference(f"{n}.txt", "missing") for n in range(5)]
+
+    assert describe(differences, limit=2) == "0.txt missing, 1.txt missing (+3 more)"
+    assert describe([]) == ""
