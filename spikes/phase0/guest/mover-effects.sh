@@ -23,19 +23,34 @@ _hook_first() { # <first> <point>
 # A filesystem without hole reporting returns the whole range as data.
 _data_extents() {
     python3 - "$@" <<'PY'
+import errno
 import os, sys
 src, lo, hi = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 fd = os.open(src, os.O_RDONLY)
-offset = lo
-while offset < hi:
-    try:
-        start = os.lseek(fd, offset, os.SEEK_DATA)
-    except OSError:  # ENXIO: only a hole remains
-        break
-    if start >= hi:
-        break
-    offset = os.lseek(fd, start, os.SEEK_HOLE)
-    print(start, min(offset, hi))
+try:
+    offset = lo
+    while offset < hi:
+        try:
+            start = os.lseek(fd, offset, os.SEEK_DATA)
+        except OSError as error:
+            if error.errno == errno.ENXIO:  # only a hole remains
+                break
+            if error.errno in (errno.EINVAL, errno.ENOTSUP):  # no hole reporting
+                print(lo, hi)
+                break
+            raise
+        if start >= hi:
+            break
+        try:
+            offset = os.lseek(fd, start, os.SEEK_HOLE)
+        except OSError as error:
+            if error.errno in (errno.EINVAL, errno.ENOTSUP):  # no hole reporting
+                print(start, hi)
+                break
+            raise
+        print(start, min(offset, hi))
+finally:
+    os.close(fd)
 PY
 }
 
