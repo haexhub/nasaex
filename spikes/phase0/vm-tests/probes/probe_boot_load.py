@@ -68,16 +68,19 @@ print(json.dumps({"checked_from_s": round(end - float(sys.argv[2]), 3), "seen_s"
 
 
 def guest_python(code: str, *args: str, timeout: int = 60) -> dict:
+    """Run Python in the guest with quoted arguments and decode its JSON output."""
     quoted = " ".join(shlex.quote(a) for a in args)
     return json.loads(run(f"python3 -c {shlex.quote(code)} {quoted}", timeout=timeout))
 
 
 def host_memory() -> dict:
+    """Return host MemAvailable, Dirty and Writeback in KiB, or None when absent."""
     info = read_meminfo()
     return {key: info.get(key) for key in MEM_KEYS}
 
 
 def heavy_io(index: int) -> list[dict]:
+    """Run the guest IO steps with this cycle's flip offset and record each outcome and time."""
     steps = heavy_io_steps(
         "/mnt/cache", BRANCHES[ARCHIVED.branch], ARCHIVED.path, NEW_LARGE.size, 2**32 + 1 + index
     )
@@ -93,6 +96,7 @@ def heavy_io(index: int) -> list[dict]:
 
 
 def failure_detail() -> dict:
+    """Wait for missing label links and collect guest udev, systemd and IO diagnostics."""
     labels = ",".join(LABELS)
     detail: dict = {"links_seen": guest_python(_WAIT_LINKS, labels, "120", timeout=180)}
     detail["link_times_after_wait"] = guest_python(_LINK_TIMES, labels)
@@ -110,12 +114,14 @@ def failure_detail() -> dict:
 
 
 def recover() -> dict:
+    """Attempt to start the guest mounts and SMB service, returning status and output tail."""
     units = " ".join(MOUNT_UNITS.values())
     status, out = server.execute(f"systemctl start {units} samba-smbd.service 2>&1", timeout=300)
     return {"status": status, "out": out[-2000:]}
 
 
 def save_load() -> None:
+    """Update the load-aware boot summary and rewrite the probe's JSON output file."""
     RESULT["summary"] = summarize_load(RESULT["boots"])
     OUTPUT.write_text(json.dumps(RESULT, indent=2, sort_keys=True))
 
