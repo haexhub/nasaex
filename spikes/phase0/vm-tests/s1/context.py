@@ -197,7 +197,8 @@ class Lab:
 
     def effective(self, option: str) -> str:
         """The value of a mergerfs option of the running cache pool (runtime xattr)."""
-        return self.python(self.server, _GETXATTR, f"{CACHE}/.mergerfs", f"user.mergerfs.{option}")
+        value = self.python(self.server, _GETXATTR, f"{CACHE}/.mergerfs", f"user.mergerfs.{option}")
+        return value.strip()
 
     # --- client ------------------------------------------------------------------------------
 
