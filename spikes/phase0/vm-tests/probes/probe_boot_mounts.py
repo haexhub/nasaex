@@ -56,16 +56,19 @@ RESULT: dict = {"environment": {}, "commands": [], "boots": []}
 
 
 def run(command: str, timeout: int = 60) -> str:
+    """Record a distinct server command and return its output, requiring success."""
     if command not in RESULT["commands"]:
         RESULT["commands"].append(command)
     return server.succeed(command, timeout=timeout)
 
 
 def unit_of(path: str, suffix: str) -> str:
+    """Return the systemd unit name for a path and unit suffix."""
     return run(f"systemd-escape -p --suffix={suffix} {path}").strip()
 
 
 def show(unit: str, props: str = UNIT_PROPS) -> dict:
+    """Return the requested systemd properties of a unit as a dictionary."""
     return parse_properties(run(f"systemctl show -p {props} {shlex.quote(unit)}"))
 
 
@@ -80,6 +83,7 @@ def with_seconds(props: dict) -> dict:
 
 
 def host_pressure() -> dict:
+    """Read the first pressure-stall summary line for each available host resource."""
     found = {}
     for resource in ("cpu", "io", "memory"):
         path = Path("/proc/pressure") / resource
@@ -89,10 +93,12 @@ def host_pressure() -> dict:
 
 
 def settle() -> None:
+    """Wait up to 300 seconds for the server systemd job queue to become empty."""
     server.wait_until_succeeds('test -z "$(systemctl list-jobs --no-legend)"', timeout=300)
 
 
 def collect(index: int, host_load, pressure, timings: dict) -> dict:
+    """Collect one boot record with host metrics, device and mount states, and logs."""
     manager = with_seconds(parse_properties(run(f"systemctl show -p {MANAGER_PROPS}")))
     lines = journal_lines(run("journalctl -b -o short-monotonic --no-pager", timeout=120))
     stage2 = manager.get("Userspace_s") or 0.0
@@ -148,6 +154,7 @@ def collect(index: int, host_load, pressure, timings: dict) -> dict:
 
 
 def save() -> None:
+    """Refresh the boot summary and write all collected results to OUTPUT as JSON."""
     RESULT["summary"] = summarize(RESULT["boots"])
     OUTPUT.write_text(json.dumps(RESULT, indent=2, sort_keys=True))
 

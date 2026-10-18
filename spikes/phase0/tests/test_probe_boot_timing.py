@@ -31,12 +31,14 @@ not a journal line
 
 
 def boot(index, load, up, label_s=None):
+    """Build a boot record with controlled mount state, host load and label timing."""
     devices = {"arch0": {"active_s": label_s}, "spikepool": {"active_s": label_s}}
     mounts = {"mnt-pool.mount": {"ActiveState": "active" if up else "failed"}}
     return {"index": index, "host_load": [load, 0.0, 0.0], "devices": devices, "mounts": mounts}
 
 
 def test_properties_are_parsed_by_key():
+    """Check property parsing preserves values and accepts empty output."""
     props = parse_properties(SHOW)
     assert props["ActiveState"] == "active"
     assert props["JobRunningTimeoutUSec"] == "10s"
@@ -44,6 +46,7 @@ def test_properties_are_parsed_by_key():
 
 
 def test_monotonic_microseconds_become_seconds_and_zero_means_never():
+    """Check timestamp conversion and the values that denote no activation."""
     assert monotonic_s("4812345") == 4.812345
     assert monotonic_s("0") is None
     assert monotonic_s("") is None
@@ -51,12 +54,14 @@ def test_monotonic_microseconds_become_seconds_and_zero_means_never():
 
 
 def test_journal_lines_carry_their_monotonic_time():
+    """Check journal parsing extracts timestamps and preserves message text."""
     lines = journal_lines(JOURNAL)
     assert [t for t, _ in lines] == [0.0, 4.1, 4.1023, 4.5, 14.9]
     assert lines[3][1].endswith("Found device /dev/disk/by-label/arch0.")
 
 
 def test_window_keeps_the_lines_around_a_time_and_caps_them():
+    """Check window boundaries, result limits and a missing center time."""
     lines = journal_lines(JOURNAL)
     assert [t for t, _ in window(lines, 4.5, before=0.5, after=0.0)] == [4.1, 4.1023, 4.5]
     assert len(window(lines, 4.5, before=10, after=20, limit=2)) == 2
@@ -64,6 +69,7 @@ def test_window_keeps_the_lines_around_a_time_and_caps_them():
 
 
 def test_first_time_finds_the_first_matching_line_at_or_after_a_time():
+    """Check first-match selection respects the time bound and absent messages."""
     lines = journal_lines(JOURNAL)
     assert first_time(lines, "BTRFS: device label spikepool") == 4.1
     assert first_time(lines, "BTRFS: device label spikepool", after=4.101) == 4.1023
@@ -72,12 +78,14 @@ def test_first_time_finds_the_first_matching_line_at_or_after_a_time():
 
 
 def test_a_boot_is_up_only_when_every_mount_is_active():
+    """Check active, failed and empty mount sets determine boot readiness."""
     assert boot_up(boot(0, 1.0, True))
     assert not boot_up(boot(0, 1.0, False))
     assert not boot_up({"mounts": {}})
 
 
 def test_summary_counts_failures_and_splits_times_and_load_by_outcome():
+    """Check failure counts, label timing statistics and load grouping."""
     boots = [boot(0, 1.0, True, 3.0), boot(1, 2.0, True, 5.0), boot(2, 9.0, False, None)]
     summary = summarize(boots)
     assert summary["boots"] == 3
@@ -95,4 +103,5 @@ def test_summary_counts_failures_and_splits_times_and_load_by_outcome():
 
 
 def test_summary_of_no_boot_is_empty_not_an_error():
+    """Check an empty boot sequence has no defined failure rate."""
     assert summarize([])["failure_rate"] is None
