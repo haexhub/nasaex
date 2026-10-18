@@ -159,19 +159,32 @@ for index in range(BOOTS):
     server.shutdown()
     load, pressure, memory = os.getloadavg(), host_pressure(), host_memory()
     loader = HostLoad(DD, LOAD_FILE, floor_mib=FLOOR_MIB) if HOST_IO else None
-    if loader:
-        loader.start()
-        time.sleep(2)
     sampler = HostSampler()
     t1 = time.monotonic()
-    sampler.start()
-    server.start()
-    server.wait_for_unit("multi-user.target")
-    t2 = time.monotonic()
-    settle()
-    t3 = time.monotonic()
-    host_io = loader.stop() if loader else None
-    host_window = sampler.stop(until_multi_user_s=t2 - t1)
+    loader_started = False
+    sampler_started = False
+    t2 = None
+    try:
+        if loader:
+            loader.start()
+            loader_started = True
+            time.sleep(2)
+        sampler.start()
+        sampler_started = True
+        server.start()
+        server.wait_for_unit("multi-user.target")
+        t2 = time.monotonic()
+        settle()
+        t3 = time.monotonic()
+    finally:
+        try:
+            host_io = loader.stop() if loader_started else None
+        finally:
+            host_window = (
+                sampler.stop(until_multi_user_s=t2 - t1 if t2 is not None else None)
+                if sampler_started
+                else None
+            )
     timings = {
         "shutdown_s": round(t1 - t0, 2),
         "start_to_multi_user_s": round(t2 - t1, 2),

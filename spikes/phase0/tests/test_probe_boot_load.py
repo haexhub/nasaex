@@ -110,7 +110,13 @@ def test_summary_splits_pressure_by_outcome_and_bounds_a_clean_run():
             "index": index,
             "host_load": [1.0, 0.0, 0.0],
             "devices": {"spikepool": {"active_s": 5.0 if up else None}},
-            "mounts": {"mnt-pool.mount": {"ActiveState": state}},
+            "mounts": {
+                "mnt-pool.mount": {
+                    "ActiveState": state,
+                    "Result": "success" if up else "dependency",
+                }
+            },
+            "smbd": "active" if up else "inactive",
             "host_window": {"io_some_share": share, "io_some_avg10_max": share * 100},
             "workload_s": 100.0,
         }
