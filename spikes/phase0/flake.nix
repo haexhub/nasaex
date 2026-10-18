@@ -33,6 +33,8 @@
         name = "probe-boot-load";
         script = ./vm-tests/probes/probe_boot_load.py;
       };
+      # The two-device pool race of S1.11 (T051f): one driver per variant of pool_race.nix.
+      probePoolRace = import ./vm-tests/probes/pool_race.nix { inherit mkSpike; };
       probeEnospcControl = import ./vm-tests/probes/enospc.nix { inherit mkSpike; };
       probeNcMoveOnEnospc = import ./vm-tests/probes/enospc.nix {
         inherit mkSpike;
@@ -84,7 +86,9 @@
           probeBootLoad.no-device-timeout.driver;
         probe-enospc-control = apps.runDriver "probe-enospc-control" probeEnospcControl.driver;
         probe-nc-moveonenospc = apps.runDriver "probe-nc-moveonenospc" probeNcMoveOnEnospc.driver;
-      });
+      } // lib.mapAttrs'
+        (v: p: lib.nameValuePair "probe-pool-race-${v}" (apps.runDriver "probe-pool-race-${v}" p.driver))
+        probePoolRace);
 
       packages.${system} = {
         driver-s1 = s1.driver;
@@ -102,6 +106,7 @@
         driver-probe-enospc-control = probeEnospcControl.driver;
         driver-probe-nc-moveonenospc = probeNcMoveOnEnospc.driver;
       }
+      // lib.mapAttrs' (v: p: lib.nameValuePair "driver-probe-pool-race-${v}" p.driver) probePoolRace
       # Cached test drivers of the spikes; US2 to US5 and X1 replace these placeholders.
       // lib.genAttrs
         [ "driver-s2" "driver-s3" "driver-s4" "driver-s5" "driver-x1" ]
