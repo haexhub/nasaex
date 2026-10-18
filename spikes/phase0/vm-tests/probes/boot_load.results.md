@@ -5,11 +5,13 @@ shared with T051a in `boot_probe_setup.py`), one VM test at a time, KVM, machine
 never writes a record; the full output of each run is `probe-boot-load.json` in the output directory of the
 driver (evidence, not committed). Nothing below changes `nix/nodes.nix` or adopts a mount setting.
 
-Question: in one of three S1 shakedown reboots (S1.11) every by-label device (arch0, arch1, arch2, parity0,
-spikepool) hit `x-systemd.device-timeout=10s` (`nix/nodes.nix:48`, with `nofail`) at about 14.9 s, so no
-mount came up. T051a rebooted an idle server 40 times without a failure. The leading hypothesis (UNVERIFIED
-before this probe): host IO and page-cache write-back pressure after the multi-GiB writes of S1.8 makes the
-guest's block-device probing (udev, blkid) slower than 10 s. This probe creates both conditions directly.
+Question: in one of three S1 shakedown reboots (S1.11) the pool and its mounts did not come up:
+`dev-disk-by\x2dlabel-spikepool.device` hit `x-systemd.device-timeout=10s` (`nix/nodes.nix:48`, with `nofail`), the two
+pool members having been scanned 2.3 ms apart (S1 criteria changelog). Correction (2026-10-18): an earlier version of
+this text described all five labels timing out at about 14.9 s; that is what the first boot of every S1 run logs on blank
+disks (no label exists yet), not the S1.11 failure. T051a rebooted an idle server 40 times without a failure. The leading
+hypothesis (UNVERIFIED before this probe): host IO and page-cache write-back pressure after the multi-GiB writes of S1.8
+makes the guest's block-device probing (udev, blkid) slower than 10 s. This probe creates both conditions directly.
 
 ## Environment
 
