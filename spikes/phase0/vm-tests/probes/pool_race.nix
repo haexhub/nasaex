@@ -25,27 +25,10 @@
 { mkSpike }:
 
 let
+  # Shared with the side-effect probe of T051g (retrigger_effects.nix).
+  inherit (import ./pool_race_modules.nix) poolMembers monitor cpus retrigger;
   poolUuid = "5f0a7c1e-0000-4000-8000-000000051f00"; # fixed, so fstab can name it
-  poolMembers = [ "/dev/disk/by-id/virtio-pool0" "/dev/disk/by-id/virtio-pool1" ];
   nodesOptions = [ "nofail" "x-systemd.device-timeout=10s" ]; # nix/nodes.nix:48
-
-  monitor = { pkgs, ... }: {
-    systemd.services.probe-udev-monitor = {
-      description = "Probe T051f: log block uevents";
-      wantedBy = [ "sysinit.target" ];
-      before = [ "systemd-udev-trigger.service" "shutdown.target" ];
-      conflicts = [ "shutdown.target" ];
-      unitConfig.DefaultDependencies = false;
-      serviceConfig = {
-        Type = "exec";
-        ExecStart = "${pkgs.systemd}/bin/udevadm monitor --kernel --udev --property "
-          + "--subsystem-match=block";
-        StandardOutput = "file:/run/probe-udev-monitor.log";
-      };
-    };
-  };
-
-  cpus = n: { lib, ... }: { virtualisation.cores = lib.mkForce n; };
 
   sleepRule = ready: what: seconds: { pkgs, ... }: {
     services.udev.extraRules = ''
@@ -63,22 +46,6 @@ let
   deviceOptions = { lib, ... }: {
     virtualisation.fileSystems."/mnt/pool".options = lib.mkForce
       ([ "subvol=pool" ] ++ map (m: "device=${m}") poolMembers ++ nodesOptions);
-  };
-
-  retrigger = { pkgs, ... }: {
-    systemd.services.probe-pool-retrigger = {
-      description = "Probe T051f: re-add the pool members after udev settled";
-      wantedBy = [ "local-fs.target" ];
-      before = [ "local-fs.target" ];
-      after = [ "systemd-udev-trigger.service" ];
-      unitConfig.DefaultDependencies = false;
-      serviceConfig = { Type = "oneshot"; RemainAfterExit = true; };
-      path = [ pkgs.systemd ];
-      script = ''
-        udevadm settle --timeout=30
-        udevadm trigger --action=add --settle ${toString poolMembers}
-      '';
-    };
   };
 
   byUuid = { lib, ... }: {

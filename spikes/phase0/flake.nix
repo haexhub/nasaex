@@ -35,6 +35,8 @@
       };
       # The two-device pool race of S1.11 (T051f): one driver per variant of pool_race.nix.
       probePoolRace = import ./vm-tests/probes/pool_race.nix { inherit mkSpike; };
+      # Side effects of the pool retrigger unit of T051f (T051g): one driver per variant.
+      probeRetriggerEffects = import ./vm-tests/probes/retrigger_effects.nix { inherit mkSpike; };
       probeEnospcControl = import ./vm-tests/probes/enospc.nix { inherit mkSpike; };
       probeNcMoveOnEnospc = import ./vm-tests/probes/enospc.nix {
         inherit mkSpike;
@@ -88,7 +90,11 @@
         probe-nc-moveonenospc = apps.runDriver "probe-nc-moveonenospc" probeNcMoveOnEnospc.driver;
       } // lib.mapAttrs'
         (v: p: lib.nameValuePair "probe-pool-race-${v}" (apps.runDriver "probe-pool-race-${v}" p.driver))
-        probePoolRace);
+        probePoolRace
+        // lib.mapAttrs'
+        (v: p: lib.nameValuePair "probe-retrigger-effects-${v}"
+          (apps.runDriver "probe-retrigger-effects-${v}" p.driver))
+        probeRetriggerEffects);
 
       packages.${system} = {
         driver-s1 = s1.driver;
@@ -107,6 +113,9 @@
         driver-probe-nc-moveonenospc = probeNcMoveOnEnospc.driver;
       }
       // lib.mapAttrs' (v: p: lib.nameValuePair "driver-probe-pool-race-${v}" p.driver) probePoolRace
+      // lib.mapAttrs'
+        (v: p: lib.nameValuePair "driver-probe-retrigger-effects-${v}" p.driver)
+        probeRetriggerEffects
       # Cached test drivers of the spikes; US2 to US5 and X1 replace these placeholders.
       // lib.genAttrs
         [ "driver-s2" "driver-s3" "driver-s4" "driver-s5" "driver-x1" ]
