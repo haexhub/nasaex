@@ -204,3 +204,22 @@ def test_summarize_race_bound_when_nothing_failed():
     summary = summarize_race(boots)
     assert summary["failed_boots"] == []
     assert round(summary["zero_failure_bound"], 4) == 0.0295
+
+
+def test_classify_counts_a_retrigger_sent_before_the_add_was_broadcast():
+    # A trigger can find the database (written before RUN and the broadcast) while the add event
+    # is still being finished: its change event is queued behind the add (higher SEQNUM) even
+    # though it is logged before the add's udev broadcast. It still reaches the member.
+    early = """\
+KERNEL[5.285000] change   /devices/pci0000:00/0000:00:0a.0/virtio7/block/vdb (block)
+ACTION=change
+DEVNAME=vdb
+SEQNUM=2005
+SYNTH_UUID=77aa
+
+"""
+    events = parse_monitor(early + MONITOR)
+    events.sort(key=lambda e: e["t"])
+    boot = classify(events, ["vdb", "vdc"], scan_lines(SCANS, "spikepool"), "vdc", 5.296)
+    assert boot["retrigger_changes"] == 2
+    assert boot["retrigger_change_s"] == [5.285, 5.3]

@@ -86,6 +86,22 @@ def state_at(events: Iterable[Mapping], sysname: str, t: float) -> dict | None:
     return _state(last) if last else None
 
 
+def _seqnum(event: Mapping) -> int | None:
+    value = event["props"].get("SEQNUM")
+    return int(value) if value and value.isdigit() else None
+
+
+def _after(event: Mapping, add: Mapping) -> bool:
+    """Whether `event` follows the add event of the same device. udev handles a device's events
+    in SEQNUM order, so a change event whose trigger found the database while the add was still
+    being finished is logged before the add's broadcast and still follows it; the time is the
+    fallback when a SEQNUM is missing."""
+    mine, theirs = _seqnum(event), _seqnum(add)
+    if mine is None or theirs is None:
+        return event["t"] > add["t"]
+    return mine > theirs
+
+
 def classify(
     events: Sequence[Mapping],
     members: list[str],
@@ -106,7 +122,7 @@ def classify(
             not_ready = event
             break
     name = not_ready["sysname"] if not_ready else None
-    later = [e for e in member_events(events, name) if e["t"] > not_ready["t"]] if name else []
+    later = [e for e in member_events(events, name) if _after(e, not_ready)] if name else []
     changes = [e for e in later if e["source"] == "KERNEL" and e["action"] == "change"]
     ready = [e for e in later if e["source"] == "UDEV" and e["props"].get("ID_BTRFS_READY") == "1"]
     scanned = sorted((s["t"], dev) for dev, s in scans.items() if dev in members)
