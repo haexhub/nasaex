@@ -27,6 +27,7 @@ from probes.pool_race import (
     scan_lines,
     state_at,
     summarize_race,
+    until_active_command,
 )
 from s1 import boot_diag
 
@@ -129,9 +130,7 @@ def race_data() -> dict:
 def wait_late(seconds: int) -> float | None:
     """Monotonic guest time at which the pool device unit became active, polling `seconds`."""
     status, out = server.execute(
-        f"timeout {seconds} sh -c 'until systemctl is-active -q {shlex.quote(POOL_UNIT)}; "
-        "do sleep 0.5; done' && cut -d' ' -f1 /proc/uptime",
-        timeout=seconds + 30,
+        until_active_command(POOL_UNIT, seconds, 0.5), timeout=seconds + 30
     )
     return float(out.strip()) if status == 0 else None
 
@@ -142,11 +141,7 @@ def uptime() -> float:
 
 def poll_active(unit: str, seconds: int) -> float | None:
     """Guest uptime at which `unit` was first seen active, polling `seconds` (None: not seen)."""
-    status, out = server.execute(
-        f"timeout {seconds} sh -c 'until systemctl is-active -q {shlex.quote(unit)}; "
-        "do sleep 0.2; done' && cut -d' ' -f1 /proc/uptime",
-        timeout=seconds + 30,
-    )
+    status, out = server.execute(until_active_command(unit, seconds), timeout=seconds + 30)
     return float(out.strip()) if status == 0 else None
 
 

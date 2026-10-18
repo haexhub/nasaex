@@ -2,6 +2,9 @@
 the btrfs scan lines it collects per boot, the per-boot classification of the not-ready pool
 member, and the summary over the boots. The boots themselves need the VM."""
 
+import os
+import subprocess
+
 from probes.pool_race import (
     classify,
     member_events,
@@ -9,6 +12,7 @@ from probes.pool_race import (
     scan_lines,
     state_at,
     summarize_race,
+    until_active_command,
 )
 
 # `udevadm monitor --kernel --udev --property --subsystem-match=block`, shortened: the header,
@@ -223,3 +227,20 @@ SYNTH_UUID=77aa
     boot = classify(events, ["vdb", "vdc"], scan_lines(SCANS, "spikepool"), "vdc", 5.296)
     assert boot["retrigger_changes"] == 2
     assert boot["retrigger_change_s"] == [5.285, 5.3]
+
+
+def test_until_active_command_passes_an_escaped_unit_name_intact(tmp_path):
+    # A fake systemctl that is "active" only for the exact unit name, backslash included.
+    unit = r"dev-disk-by\x2dlabel-spikepool.device"
+    fake = tmp_path / "systemctl"
+    fake.write_text(f"#!/bin/sh\n[ \"$3\" = '{unit}' ]\n")
+    fake.chmod(0o755)
+    env = os.environ | {"PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    found = subprocess.run(["sh", "-c", until_active_command(unit, 2)], env=env, check=False)
+    assert found.returncode == 0
+    other = subprocess.run(
+        ["sh", "-c", until_active_command("dev-disk-byx2dlabel-spikepool.device", 1)],
+        env=env,
+        check=False,
+    )
+    assert other.returncode != 0  # timed out: only the exact name is active

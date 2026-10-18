@@ -10,6 +10,7 @@ received no such change event and never became ready is `stuck`. Standard librar
 probe imports it as the script package `probes`. Scaffolding for the spikes, not product code."""
 
 import re
+import shlex
 import statistics
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
@@ -177,3 +178,13 @@ def summarize_race(boots: Iterable[Mapping]) -> dict:
         "scan_gap_ms": _spread(gaps),
         "zero_failure_bound": zero_failure_bound(len(boots)) if boots and not failed else None,
     }
+
+
+def until_active_command(unit: str, seconds: int, interval: float = 0.2) -> str:
+    """Shell command that waits up to `seconds` for `unit` to be active, then prints the guest
+    uptime; it fails on timeout. The unit is passed as an argument ($0), never spliced into the
+    quoted script, so a name with a backslash (dev-disk-by\\x2dlabel-...) arrives intact."""
+    return (
+        f"timeout {seconds} sh -c 'until systemctl is-active -q \"$0\"; do sleep {interval}; done' "
+        f"{shlex.quote(unit)} && cut -d' ' -f1 /proc/uptime"
+    )
