@@ -1,7 +1,9 @@
-# Probe of the boot race of S1.11 (task T051a). A probe-only addition inside vm-tests/: it never
-# writes a record. The S1 server alone (profile `large`, the disks and mount definitions of
-# nix/nodes.nix, the tiered-cache mounts and the S1 share), rebooted N times; it measures per boot
-# when each by-label device and each mount unit became active, and whether everything came up.
+# Probes of the boot race of S1.11 (tasks T051a and T051d). Probe-only additions inside vm-tests/:
+# they never write a record. The S1 server alone (profile `large`, the disks and mount definitions
+# of nix/nodes.nix, the tiered-cache mounts and the S1 share), rebooted N times; they measure per
+# boot when each by-label device and each mount unit became active, and whether everything came
+# up. `name` and `script` select the probe: the idle reboots of T051a (the default) or the reboots
+# after the S1 heavy IO of T051d. The test script is boot_probe_setup.py followed by `script`.
 # Variants, run one at a time:
 #   default            the mount options of nix/nodes.nix as they are (nofail,
 #                      x-systemd.device-timeout=10s)
@@ -9,7 +11,10 @@
 #                      device timeout applies); nothing else changes. The option lists below
 #                      restate nodes.nix without that one option; the probe records /etc/fstab
 #                      so a drift from nodes.nix shows in the result.
-{ mkSpike }:
+{ mkSpike
+, name ? "probe-boot-mounts"
+, script ? ./probe_boot_mounts.py
+}:
 
 let
   archive = [ "arch0" "arch1" "arch2" ]; # the archive serials of nix/profiles.nix
@@ -40,12 +45,16 @@ let
   };
 
   probe = suffix: overrides: mkSpike {
-    name = "probe-boot-mounts" + suffix;
+    name = name + suffix;
     profile = "large";
     machines = [ "server" ];
     budget = "probe-long";
-    testScript = ./probe_boot_mounts.py;
-    scriptPackages.probes = ./.;
+    testScript = builtins.toFile "${name}${suffix}.py"
+      (builtins.readFile ./boot_probe_setup.py + builtins.readFile script);
+    scriptPackages = {
+      probes = ./.;
+      s1 = ../s1;
+    };
     extraModules.server = [
       share
       { spike.tieredCache.enable = true; }

@@ -28,6 +28,11 @@
       probeDelete = import ./vm-tests/probes/concurrent_delete.nix { inherit mkSpike; };
       probeSmbAttrs = import ./vm-tests/probes/smb_attrs.nix { inherit mkSpike; };
       probeBootMounts = import ./vm-tests/probes/boot_mounts.nix { inherit mkSpike; };
+      probeBootLoad = import ./vm-tests/probes/boot_mounts.nix {
+        inherit mkSpike;
+        name = "probe-boot-load";
+        script = ./vm-tests/probes/probe_boot_load.py;
+      };
       probeEnospcControl = import ./vm-tests/probes/enospc.nix { inherit mkSpike; };
       probeNcMoveOnEnospc = import ./vm-tests/probes/enospc.nix {
         inherit mkSpike;
@@ -73,6 +78,10 @@
         probe-boot-mounts = apps.runDriver "probe-boot-mounts" probeBootMounts.default.driver;
         probe-boot-mounts-no-device-timeout = apps.runDriver "probe-boot-mounts-no-device-timeout"
           probeBootMounts.no-device-timeout.driver;
+        # PROBE_HOST_IO=1 adds the host IO load of variant D2 (probe_boot_load.py).
+        probe-boot-load = apps.runDriver "probe-boot-load" probeBootLoad.default.driver;
+        probe-boot-load-no-device-timeout = apps.runDriver "probe-boot-load-no-device-timeout"
+          probeBootLoad.no-device-timeout.driver;
         probe-enospc-control = apps.runDriver "probe-enospc-control" probeEnospcControl.driver;
         probe-nc-moveonenospc = apps.runDriver "probe-nc-moveonenospc" probeNcMoveOnEnospc.driver;
       });
@@ -88,6 +97,8 @@
         driver-probe-concurrent-delete-mid-copy-ff = probeDeleteMidCopy.ff.driver;
         driver-probe-boot-mounts = probeBootMounts.default.driver;
         driver-probe-boot-mounts-no-device-timeout = probeBootMounts.no-device-timeout.driver;
+        driver-probe-boot-load = probeBootLoad.default.driver;
+        driver-probe-boot-load-no-device-timeout = probeBootLoad.no-device-timeout.driver;
         driver-probe-enospc-control = probeEnospcControl.driver;
         driver-probe-nc-moveonenospc = probeNcMoveOnEnospc.driver;
       }
