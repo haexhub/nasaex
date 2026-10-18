@@ -43,6 +43,11 @@
         name = "probe-nc-moveonenospc";
         script = ./vm-tests/probes/probe_nc_moveonenospc.py;
       };
+      probeRetryTimeline = import ./vm-tests/probes/enospc.nix {
+        inherit mkSpike;
+        name = "probe-retry-timeline";
+        script = ./vm-tests/probes/probe_retry_timeline.py;
+      };
       # The spikes' VM tests.
       s1 = import ./vm-tests/s1/default.nix { inherit mkSpike; };
 
@@ -88,6 +93,7 @@
           probeBootLoad.no-device-timeout.driver;
         probe-enospc-control = apps.runDriver "probe-enospc-control" probeEnospcControl.driver;
         probe-nc-moveonenospc = apps.runDriver "probe-nc-moveonenospc" probeNcMoveOnEnospc.driver;
+        probe-retry-timeline = apps.runDriver "probe-retry-timeline" probeRetryTimeline.driver;
       } // lib.mapAttrs'
         (v: p: lib.nameValuePair "probe-pool-race-${v}" (apps.runDriver "probe-pool-race-${v}" p.driver))
         probePoolRace
@@ -111,6 +117,7 @@
         driver-probe-boot-load-no-device-timeout = probeBootLoad.no-device-timeout.driver;
         driver-probe-enospc-control = probeEnospcControl.driver;
         driver-probe-nc-moveonenospc = probeNcMoveOnEnospc.driver;
+        driver-probe-retry-timeline = probeRetryTimeline.driver;
       }
       // lib.mapAttrs' (v: p: lib.nameValuePair "driver-probe-pool-race-${v}" p.driver) probePoolRace
       // lib.mapAttrs'
