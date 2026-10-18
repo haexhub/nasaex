@@ -23,13 +23,13 @@ def test_the_archive_view_ignores_pool_only_paths_of_the_share():
     assert archive_view_differences(expected, share) == []
 
 
-def test_the_archive_view_reports_a_missing_file_and_every_differing_field():
+def test_the_archive_view_reports_a_missing_file_and_every_judged_differing_field():
+    # The mode mount.cifs reports is recorded, not judged (task T043a).
     expected = {"archive": DIR, "archive/a.txt": FILE, "archive/b.txt": FILE}
     synthetic = Item("file", 4, 0o755, 1_700_000_000, (), "b" * 64)
     share = {"archive": DIR, "archive/a.txt": synthetic}
 
     assert archive_view_differences(expected, share) == [
-        Difference("archive/a.txt", "mismatch", "mode", 0o644, 0o755),
         Difference("archive/a.txt", "mismatch", "sha256", "a" * 64, "b" * 64),
         Difference("archive/b.txt", "missing"),
     ]
