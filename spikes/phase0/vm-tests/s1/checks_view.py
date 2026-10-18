@@ -13,10 +13,13 @@ was UNVERIFIED before this check; its outcome is recorded in the evidence either
 
 S1.11 reboots the server and does nothing by hand there: the base pool, the cache pool and
 smbd must come back by themselves, and the client manifest of the whole share must be
-identical before and after. Scaffolding for the spikes, not product code."""
+identical before and after. A boot that comes up incomplete leaves its diagnostics
+(s1.boot_diag, task T051e) in the evidence first; they never change the outcome. Scaffolding
+for the spikes, not product code."""
 
 from collections.abc import Iterable, Mapping
 
+from s1 import boot_diag
 from s1.context import BASE, BASE_UNIT, CACHE, CACHE_UNIT, SMBD, Lab
 from s1.fixture import ARCHIVE, FIXTURE, NEW_AT_TRASHED_PATH, POOL, TRASHED_PATH, trash, view
 
@@ -122,17 +125,39 @@ def check_archive_view(lab: Lab) -> None:
     assert not failures, "; ".join(failures)
 
 
+def _boot_diagnostics(lab: Lab, units: Mapping[str, bool], settled: bool, host) -> None:
+    """Capture the boot state into the evidence if the boot is incomplete (s1.boot_diag);
+    whatever goes wrong here never reaches the check."""
+    try:
+        data = boot_diag.capture_if_incomplete(
+            lab.server, units, settled=settled, host_at_start=host
+        )
+        if data is not None:
+            lab.evidence("S1.11-boot-diagnostics", data)
+    except Exception:  # the diagnostics are evidence only, never an outcome
+        pass
+
+
 def check_reboot_view(lab: Lab) -> None:
     before = lab.share.manifest()
     lab.umount_clients()
     lab.server.shutdown()
+    try:
+        host = boot_diag.host_state()
+    except Exception:  # evidence only
+        host = None
     lab.server.start()
-    lab.server.wait_for_unit("multi-user.target")
-    lab.server.wait_until_succeeds('test -z "$(systemctl list-jobs --no-legend)"', timeout=120)
+    try:
+        lab.server.wait_for_unit("multi-user.target")
+        lab.server.wait_until_succeeds('test -z "$(systemctl list-jobs --no-legend)"', timeout=120)
+    except Exception:
+        _boot_diagnostics(lab, {}, False, host)
+        raise
     units = {
         unit: lab.server.execute(f"systemctl is-active {unit}")[0] == 0
         for unit in (BASE_UNIT, CACHE_UNIT, SMBD)
     }
+    _boot_diagnostics(lab, units, True, host)
     differences: list[Difference] = []
     if all(units.values()):
         lab.mount_clients()
