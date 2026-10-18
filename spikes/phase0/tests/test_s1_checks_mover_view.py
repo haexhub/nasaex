@@ -1,6 +1,8 @@
 """Check S1.10 (vm-tests/s1/checks_mover_view.py): the decision behind it over fabricated
 observations. Holding the mover at its hooks and reading through the share need the VMs."""
 
+import pytest
+import s1.checks_mover_view as mover_view
 from s1.checks_mover_view import mover_view_failures
 
 EXPECTED = {"size": 10, "sha256": "e" * 64}
@@ -66,3 +68,59 @@ def test_an_inconsistent_view_needs_a_verified_refresh_procedure():
     assert mover_view_failures(**{**GOOD, "consistent_after_s": 31.0}) == [
         "the view differs after 30 s and no refresh procedure is verified"
     ]
+
+
+class Machine:
+    def __init__(self, *, fail_wait=False):
+        self.commands = []
+        self.fail_wait = fail_wait
+
+    def succeed(self, command):
+        self.commands.append(command)
+        if command.startswith("cat /run/s1.10-mover.rc"):
+            return "0\n"
+        return ""
+
+    def wait_for_file(self, path, **_):
+        if self.fail_wait:
+            raise RuntimeError(f"could not wait for {path}")
+
+
+class Share:
+    def path(self, rel):
+        return f"/mnt/share/{rel}"
+
+    def manifest(self, _rel=""):
+        return {}
+
+
+class Lab:
+    def __init__(self):
+        self.server = Machine(fail_wait=True)
+        self.client = Machine()
+        self.share = Share()
+        self.tables = {
+            "mover_view": {"points": [], "refresh_procedure": []},
+            "bounds": {"view_consistency_s": 30},
+        }
+        self.required_settings = {}
+
+    def place(self, _fixture):
+        pass
+
+    def move_command(self, _path, first=0):
+        assert first == 1
+        return "move"
+
+    def evidence(self, *_args):
+        pass
+
+
+def test_reader_is_released_when_mover_observation_fails(monkeypatch):
+    lab = Lab()
+    monkeypatch.setattr(mover_view.faults, "arm", lambda *_args: None)
+
+    with pytest.raises(RuntimeError, match="could not wait"):
+        mover_view.check_mover_view(lab)
+
+    assert "touch /tmp/s1.10-reader.go" in lab.client.commands

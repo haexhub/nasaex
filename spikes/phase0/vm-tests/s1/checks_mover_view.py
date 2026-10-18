@@ -139,29 +139,33 @@ def check_mover_view(lab: Lab) -> None:
     lab.server.succeed(f"({move}; echo $? > {MOVER['rc']}) > {MOVER['log']} 2>&1 &")
     steps = {}
     try:
-        for point in table["points"]:
-            faults.wait_reached(lab.server, point, timeout=300)
-            try:
-                steps[point] = _look(lab)
-            finally:
-                faults.release(lab.server, point)
-        lab.server.wait_for_file(MOVER["rc"])
+        try:
+            for point in table["points"]:
+                faults.wait_reached(lab.server, point, timeout=300)
+                try:
+                    steps[point] = _look(lab)
+                finally:
+                    faults.release(lab.server, point)
+            lab.server.wait_for_file(MOVER["rc"])
+            mover_status = int(lab.server.succeed(f"cat {MOVER['rc']}"))
+
+            consistent_after_s, differences = _wait_for_same_view(lab, before, bound_s)
+            refresh = None
+            if consistent_after_s is None and table["refresh_procedure"]:
+                for command in table["refresh_procedure"]:
+                    lab.client.succeed(command)
+                after_refresh = compare(
+                    before, lab.share.manifest(DIRECTORY), ignore=VIEW_FIELDS_IGNORED
+                )
+                refresh = {"commands": table["refresh_procedure"], "verified": not after_refresh}
+            attributes = compare(
+                before, lab.share.manifest(DIRECTORY), ignore=("size", "mtime", "mode", "sha256")
+            )
+        finally:
+            lab.server.succeed(f"rm -rf {faults.HOOK_DIR}/armed")
     finally:
-        lab.server.succeed(f"rm -rf {faults.HOOK_DIR}/armed")
-    mover_status = int(lab.server.succeed(f"cat {MOVER['rc']}"))
+        lab.client.succeed(f"touch {READER['go']}")
 
-    consistent_after_s, differences = _wait_for_same_view(lab, before, bound_s)
-    refresh = None
-    if consistent_after_s is None and table["refresh_procedure"]:
-        for command in table["refresh_procedure"]:
-            lab.client.succeed(command)
-        after_refresh = compare(before, lab.share.manifest(DIRECTORY), ignore=VIEW_FIELDS_IGNORED)
-        refresh = {"commands": table["refresh_procedure"], "verified": not after_refresh}
-    attributes = compare(
-        before, lab.share.manifest(DIRECTORY), ignore=("size", "mtime", "mode", "sha256")
-    )
-
-    lab.client.succeed(f"touch {READER['go']}")
     lab.client.wait_for_file(READER["out"])
     reader = json.loads(lab.client.succeed(f"cat {READER['out']}"))
     holders = lab.holders(MOVED.path)
