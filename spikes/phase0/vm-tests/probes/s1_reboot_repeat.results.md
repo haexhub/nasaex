@@ -77,20 +77,20 @@ verbatim (escape sequences removed):
 - In every S1.11 boot each by-label device with a `Found device` line was found 0.57 to 0.87 s
   after the first device job started, against the 10 s timeout, in line with T051a and T051d. Pool member scans 0.98 to 2.88 ms apart (four
   runs under 3 ms) came up.
-- Two descriptions of the shakedown failure exist: the criteria changelog names
-  `dev-disk-by\x2dlabel-spikepool.device` alone, with mnt-pool, mnt-base and mnt-cache failed with
-  result 'dependency'; another description names all five labels timing out at about 14.9 s. The
-  second matches, line for line and to the tenth of a second, what the first (blank-disk) boot of
-  every S1 run logs. Whether that description was taken from the first boot of the run and not from
-  the S1.11 boot cannot be checked: the shakedown output is gone. UNVERIFIED.
+- Two descriptions of the shakedown failure existed. The criteria changelog (written while the shakedown
+  output existed) names `dev-disk-by\x2dlabel-spikepool.device` alone, with mnt-pool, mnt-base and
+  mnt-cache failed with result 'dependency'. The other (all five labels timing out at about 14.9 s) matches,
+  line for line, what the first (blank-disk) boot of every S1 run logs; it came from reading the log of the
+  shakedown run and taking the first boot's lines for the S1.11 boot. The changelog description is the record;
+  the shakedown output itself is gone, so it cannot be re-checked. UNVERIFIED.
 - If the failure happens again in an S1 run, `status/S1.11-boot-diagnostics.json` holds the evidence.
 
 ## UNVERIFIED
 
 - The cause of the S1.11 failure of the shakedown; it was not reproduced in 8 runs here, nor in the
   60 boots of T051a and T051d.
-- Whether the "all five labels at about 14.9 s" description belongs to the S1.11 boot or to the
-  first boot of that run.
+- Whether the shakedown failure really was the spikepool-only boot of the changelog; the output that would
+  show it is gone.
 - The capture on a real failing boot: it was exercised on a passing boot only (forced) and on fakes
   in the unit tests.
 
