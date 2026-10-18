@@ -28,6 +28,12 @@
       probeDelete = import ./vm-tests/probes/concurrent_delete.nix { inherit mkSpike; };
       probeSmbAttrs = import ./vm-tests/probes/smb_attrs.nix { inherit mkSpike; };
       probeBootMounts = import ./vm-tests/probes/boot_mounts.nix { inherit mkSpike; };
+      probeEnospcControl = import ./vm-tests/probes/enospc.nix { inherit mkSpike; };
+      probeNcMoveOnEnospc = import ./vm-tests/probes/enospc.nix {
+        inherit mkSpike;
+        name = "probe-nc-moveonenospc";
+        script = ./vm-tests/probes/probe_nc_moveonenospc.py;
+      };
       # The spikes' VM tests.
       s1 = import ./vm-tests/s1/default.nix { inherit mkSpike; };
 
@@ -67,6 +73,8 @@
         probe-boot-mounts = apps.runDriver "probe-boot-mounts" probeBootMounts.default.driver;
         probe-boot-mounts-no-device-timeout = apps.runDriver "probe-boot-mounts-no-device-timeout"
           probeBootMounts.no-device-timeout.driver;
+        probe-enospc-control = apps.runDriver "probe-enospc-control" probeEnospcControl.driver;
+        probe-nc-moveonenospc = apps.runDriver "probe-nc-moveonenospc" probeNcMoveOnEnospc.driver;
       });
 
       packages.${system} = {
@@ -80,6 +88,8 @@
         driver-probe-concurrent-delete-mid-copy-ff = probeDeleteMidCopy.ff.driver;
         driver-probe-boot-mounts = probeBootMounts.default.driver;
         driver-probe-boot-mounts-no-device-timeout = probeBootMounts.no-device-timeout.driver;
+        driver-probe-enospc-control = probeEnospcControl.driver;
+        driver-probe-nc-moveonenospc = probeNcMoveOnEnospc.driver;
       }
       # Cached test drivers of the spikes; US2 to US5 and X1 replace these placeholders.
       // lib.genAttrs
