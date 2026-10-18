@@ -10,7 +10,8 @@ are CLOCK_MONOTONIC seconds (the clock of the journal and of `udevadm monitor`).
   mounts <log>              a line `<t> mount|umount <id> <target> <fstype> <source>` for every
                             change of the mount table under /mnt (poll on /proc/self/mountinfo)
   write <file> <seconds> <json>  write 64 KiB chunks with fsync (10 ms apart) into one open file for
-                            <seconds>, then read it back; errors, latencies and the comparison
+                            <seconds>, then read it back; errors, the start and duration of
+                            every write+fsync over 100 ms and the comparison
                             go to <json>
 Scaffolding for the spikes, not product code."""
 
@@ -97,7 +98,7 @@ def mount_loop(log_path: str) -> None:
 
 
 def write_file(path: str, seconds: float, out: str) -> None:
-    result: dict = {"path": path, "errors": [], "chunks": 0, "max_write_fsync_s": 0.0}
+    result: dict = {"path": path, "errors": [], "chunks": 0, "max_write_fsync_s": 0.0, "slow": []}
     start = time.monotonic()
     result["start_s"] = start
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
@@ -110,7 +111,10 @@ def write_file(path: str, seconds: float, out: str) -> None:
             result["chunks"] += 1
         except OSError as exc:
             result["errors"].append([round(t0, 6), errno.errorcode.get(exc.errno, str(exc.errno))])
-        result["max_write_fsync_s"] = max(result["max_write_fsync_s"], time.monotonic() - t0)
+        took = time.monotonic() - t0
+        result["max_write_fsync_s"] = max(result["max_write_fsync_s"], took)
+        if took > 0.1:  # start time and duration of every write+fsync over 100 ms
+            result["slow"].append([round(t0, 6), round(took, 6)])
         time.sleep(0.01)  # about 6 MiB/s at most: the pool and the host disk stay small
     try:
         os.close(fd)

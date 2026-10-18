@@ -5,8 +5,9 @@
 # One more boot with every pool member writes the reader file /mnt/cache/probe-t051g/reader.bin
 # (1 MiB, the content retrigger_observe.py expects), then by PROBE_MODE:
 #   normal    PROBE_BOOTS (default 30) reboots, nothing done by hand; with the unit then
-#             PROBE_IDEMPOTENCE (default 5) repetitions of its commands while a file is written
-#             through /mnt/cache: the first three by hand, the others `systemctl restart` of it
+#             the repetitions of PROBE_IDEMPOTENCE (default hand,hand,hand,restart,restart) while
+#             a file is written through /mnt/cache: `hand` runs its commands by hand, `restart`
+#             runs `systemctl restart` of it, `control` runs nothing (the writer alone)
 #   degraded  PROBE_BOOTS (default 5) reboots without the member ABSENT; after each one the
 #             member is hot-plugged through the QEMU monitor and the pool watched for 30 s
 #   sweep     per delay step of PROBE_SWEEP (default 1:2,2:3,3:4,4:5,6:7,31:32: not-ready and
@@ -41,11 +42,13 @@ from probes.retrigger_effects import (
 
 try:
     BOOTS = int(os.environ.get("PROBE_BOOTS", "30" if PROBE_MODE == "normal" else "5"))
-    IDEMPOTENCE = int(os.environ.get("PROBE_IDEMPOTENCE", "5"))
     SWEEP_BOOTS = int(os.environ.get("PROBE_SWEEP_BOOTS", "2"))
     DEADLINE_S = float(os.environ.get("PROBE_DEADLINE_S", "1260"))
 except ValueError as exc:
-    raise ValueError("PROBE_BOOTS, PROBE_IDEMPOTENCE, PROBE_SWEEP_BOOTS, PROBE_DEADLINE_S") from exc
+    raise ValueError("PROBE_BOOTS, PROBE_SWEEP_BOOTS, PROBE_DEADLINE_S must be numeric") from exc
+IDEMPOTENCE = os.environ.get("PROBE_IDEMPOTENCE", "hand,hand,hand,restart,restart").split(",")
+if not set(IDEMPOTENCE) <= {"hand", "restart", "control"}:
+    raise ValueError("PROBE_IDEMPOTENCE: a comma-separated list of hand, restart, control")
 SWEEP = parse_sweep(os.environ.get("PROBE_SWEEP", "1:2,2:3,3:4,4:5,6:7,31:32"))
 
 OUTPUT = Path("probe-retrigger-effects.json")
@@ -286,7 +289,9 @@ def snapshot() -> dict:
 
 def idempotence(rep: int, how: str) -> dict:
     """The unit's commands again while a file is written through /mnt/cache (20 s)."""
-    command = UNIT_COMMANDS if how == "by hand" else f"systemctl restart {UNIT}"
+    command = {"hand": UNIT_COMMANDS, "restart": f"systemctl restart {UNIT}", "control": "true"}[
+        how
+    ]
     writer = f"{DATA}/writer-{rep}.bin"
     out = f"/run/probe-writer-{rep}.json"
     before = snapshot()
@@ -364,14 +369,16 @@ for index, step in enumerate(plan):
 
 # --- idempotence (normal mode with the unit) ---------------------------------------------------
 if PROBE_MODE == "normal" and RESULT["boots"] and RESULT["boots"][-1]["unit"]["Result"] != "absent":
-    for rep in range(IDEMPOTENCE):
-        entry = idempotence(rep, "by hand" if rep < 3 else "systemctl restart")
+    for rep, how in enumerate(IDEMPOTENCE):
+        entry = idempotence(rep, how)
         RESULT["idempotence"].append(entry)
         save_effects()
         print(
-            f"PROBE idempotence {rep}: status={entry['status']} changed={entry['changed_units']} "
+            f"PROBE idempotence {rep} {how}: status={entry['status']} "
+            f"changed={entry['changed_units']} "
             f"mountinfo_changed={entry['mountinfo_changed']} uevents={entry['uevents']} "
-            f"writer_errors={entry['writer']['errors']} equal={entry['writer']['read_back_equal']}"
+            f"writer_errors={entry['writer']['errors']} slow={entry['writer']['slow']} "
+            f"equal={entry['writer']['read_back_equal']}"
         )
 
 RESULT["probe_seconds"] = round(time.monotonic() - STARTED, 1)
