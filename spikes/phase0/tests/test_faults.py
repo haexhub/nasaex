@@ -159,21 +159,72 @@ def test_corrupt_overwrites_defined_bytes_in_place():
     assert event.kind == "corrupt"
 
 
+DF = "df --output=avail -B1 /mnt/pool | tail -n1"
+
+
+class FillingMachine(FakeMachine):
+    """Answers each `df` with the next of the given free byte counts (the last one repeats)."""
+
+    def __init__(self, free):
+        super().__init__()
+        self.free = list(free)
+
+    def succeed(self, *commands, **_):
+        out = super().succeed(*commands)
+        if commands == (DF,):
+            return f"{self.free.pop(0) if len(self.free) > 1 else self.free[0]}\n"
+        return out
+
+
 def test_enospc_fills_the_filesystem_leaving_a_defined_number_of_bytes():
-    df = "df --output=avail -B1 /mnt/pool | tail -n1"
-    machine = FakeMachine(outputs={df: "1000000\n"})
+    machine = FillingMachine([1000000, 4096])
 
     event = enospc(machine, "/mnt/pool", leave_bytes=4096, point="pool:free:4096")
 
-    assert machine.commands("succeed")[-1] == "fallocate -l 995904 /mnt/pool/.spike-filler"
+    assert "fallocate -o 0 -l 995904 /mnt/pool/.spike-filler" in machine.commands("succeed")
     assert event.kind == "enospc"
+    assert "4096 bytes free" in event.detail
+
+
+def test_enospc_settles_pending_frees_before_every_measurement():
+    # btrfs releases the extents of a deleted file at the next transaction commit; a free
+    # count read before it is stale (S1 shakedown, run 1: the pool showed 4 GiB free after a
+    # filler sized from that count).
+    machine = FillingMachine([1000000, 4096])
+
+    enospc(machine, "/mnt/pool", leave_bytes=4096)
+
+    commands = machine.commands("succeed")
+    measurements = [i for i, c in enumerate(commands) if c == DF]
+    assert len(measurements) == 2
+    assert all(commands[i - 1] == "sync -f /mnt/pool" for i in measurements)
+
+
+def test_enospc_extends_the_filler_when_space_appears_after_filling():
+    machine = FillingMachine([1000000, 504096, 4096])
+
+    event = enospc(machine, "/mnt/pool", leave_bytes=4096)
+
+    fills = [c for c in machine.commands("succeed") if c.startswith("fallocate")]
+    assert fills == [
+        "fallocate -o 0 -l 995904 /mnt/pool/.spike-filler",
+        "fallocate -o 995904 -l 500000 /mnt/pool/.spike-filler",
+    ]
+    assert "4096 bytes free" in event.detail
 
 
 def test_enospc_refuses_when_less_than_the_wanted_space_is_free():
-    machine = FakeMachine(outputs={"df --output=avail -B1 /mnt/pool | tail -n1": "100\n"})
+    machine = FillingMachine([100])
 
     with pytest.raises(ValueError, match="free"):
         enospc(machine, "/mnt/pool", leave_bytes=4096, point="pool:free:4096")
+
+
+def test_enospc_refuses_when_the_free_space_does_not_come_down():
+    machine = FillingMachine([1000000])
+
+    with pytest.raises(ValueError, match="still 1000000 bytes free"):
+        enospc(machine, "/mnt/pool", leave_bytes=4096)
 
 
 def test_sync_limited_runs_a_block_range_of_the_sync():
