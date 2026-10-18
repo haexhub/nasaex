@@ -33,7 +33,8 @@ in
   # spikes/phase0/state of a checkout whose path is too deep.
   runDriver = name: driver: pkgs.writeShellApplication {
     name = "run-${name}";
-    runtimeInputs = [ pkgs.git pkgs.coreutils ];
+    # util-linux: ionice for the host IO load of the boot-under-load probe (T051d).
+    runtimeInputs = [ pkgs.git pkgs.coreutils pkgs.util-linux ];
     text = ''
       root=$(git rev-parse --show-toplevel)
       state=''${SPIKE_STATE_DIR:-$root/spikes/phase0/state}/${name}
