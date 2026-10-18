@@ -238,8 +238,8 @@ scenarios:
       Per write: the mount.cifs create and append fail with errno ENOSPC and smbclient reports
       NT_STATUS_DISK_FULL, no write reports success; the tree hash of every archive branch and
       every trash directory is unchanged and no write event occurs on the archive filesystems; the
-      written path exists on the pool branch only; any leftover at the path, read on the pool
-      branch, is a byte-exact prefix of the source (for the append, the bytes after the original
+      any written path that remains exists on the pool branch only; any leftover at the path, read
+      on the pool branch, is a byte-exact prefix of the source (for the append, the bytes after the original
       head; never zero-filled, never other content); the manifest of the pool branch without the
       written path and the filler is identical before and after; the appended file still begins
       with its original bytes. Each repeated write reports no error, lies on the pool branch only
@@ -382,8 +382,8 @@ changelog:
     the written data on plain btrfs, through Samba without mergerfs and through mergerfs alike,
     so "no file visible with fewer bytes than written" fails on every filesystem measured. S1.9
     now judges that every client reports the error, archive branches and trash are unchanged
-    (tree hashes, no write event), the path is on the pool branch only, a leftover is a prefix of
-    the written bytes, no other pool file changed, the append head is intact and the repeated
+    (tree hashes, no write event), any remaining written path is on the pool branch only, a leftover
+    is a prefix of the written bytes, no other pool file changed, the append head is intact and the repeated
     write succeeds; the writes use seeded content so that a zero-filled leftover fails. Proposed:
     the order of the retry and recording the reported sizes without judging them; the retry is
     UNVERIFIED (not measured). The check is amended by T047a.
