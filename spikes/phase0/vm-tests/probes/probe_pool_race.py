@@ -11,7 +11,12 @@
 # not-ready member never became ready: the read-only capture of s1.boot_diag, then whether the
 # pool device unit appears within PROBE_LATE_S seconds (default 60). PROBE_STOP_AT_FAILURE=1
 # (the default) stops after the first such boot. No new boot starts when the longest boot so
-# far would end past PROBE_DEADLINE_S (default 3300 s; budget probe-long is 3600 s). Result:
+# far would end past PROBE_DEADLINE_S (default 3300 s; budget probe-long is 3600 s).
+# PROBE_RECOVER (after the late wait of an incomplete boot, unset by default) re-evaluates the
+# stuck member by hand and measures what comes back: `change` runs `udevadm trigger
+# --action=change --settle` on it, `scan` runs `btrfs device scan` on it (an ioctl, no uevent);
+# then the time until the pool device unit and mnt-pool are active by themselves (up to 30 s
+# and 10 s), and whether `systemctl start` of the three pool mounts then succeeds. Result:
 # probe-pool-race.json (rewritten after every boot), boot-<n>-diagnostics.json, a PROBE-RESULT
 # line; pool_race.results.md holds the measured outcome.
 from probes.boot_timing import boot_up
@@ -29,6 +34,12 @@ BOOTS = int(os.environ.get("PROBE_BOOTS", "100"))
 STOP_AT_FAILURE = os.environ.get("PROBE_STOP_AT_FAILURE", "1") == "1"
 LATE_S = int(os.environ.get("PROBE_LATE_S", "60"))
 DEADLINE_S = float(os.environ.get("PROBE_DEADLINE_S", "3300"))
+RECOVER = os.environ.get("PROBE_RECOVER", "")
+RECOVER_COMMANDS = {
+    "change": "udevadm trigger --action=change --settle /dev/{dev}",
+    "scan": "btrfs device scan /dev/{dev}; udevadm settle",
+}
+POOL_MOUNTS = "mnt-pool.mount mnt-base.mount mnt-cache.mount"
 OUTPUT = Path("probe-pool-race.json")
 POOL_SERIALS = [d["serial"] for d in DISKS if d["role"] == "pool"]
 MONITOR_LOG = "/run/probe-udev-monitor.log"
@@ -125,6 +136,46 @@ def wait_late(seconds: int) -> float | None:
     return float(out.strip()) if status == 0 else None
 
 
+def uptime() -> float:
+    return float(run("cut -d' ' -f1 /proc/uptime").strip())
+
+
+def poll_active(unit: str, seconds: int) -> float | None:
+    """Guest uptime at which `unit` was first seen active, polling `seconds` (None: not seen)."""
+    status, out = server.execute(
+        f"timeout {seconds} sh -c 'until systemctl is-active -q {shlex.quote(unit)}; "
+        "do sleep 0.2; done' && cut -d' ' -f1 /proc/uptime",
+        timeout=seconds + 30,
+    )
+    return float(out.strip()) if status == 0 else None
+
+
+def recover(stuck: str) -> dict:
+    """Re-evaluate the stuck member by hand (PROBE_RECOVER) and measure what comes back."""
+    command = RECOVER_COMMANDS[RECOVER].format(dev=stuck)
+    t0 = uptime()
+    status, out = server.execute(f"{command} 2>&1", timeout=120)
+    unit_at = poll_active(POOL_UNIT, 30)
+    mount_at = poll_active("mnt-pool.mount", 10)
+    data: dict = {
+        "command": command,
+        "status": status,
+        "output": out,
+        "started_s": t0,
+        "pool_unit_active_after_s": round(unit_at - t0, 3) if unit_at else None,
+        "mnt_pool_active_by_itself_after_s": round(mount_at - t0, 3) if mount_at else None,
+        "member_udev": server.execute(
+            f"udevadm info --query=property --name=/dev/{stuck} | grep -E '_READY='"
+        )[1],
+        "link": server.execute(f"readlink -f {POOL_SOURCE}")[1].strip(),
+    }
+    if mount_at is None:
+        status, out = server.execute(f"systemctl start {POOL_MOUNTS} 2>&1", timeout=120)
+        data["systemctl_start"] = {"status": status, "output": out}
+    data["mounts_after"] = server.execute(f"systemctl is-active {POOL_MOUNTS}")[1].split()
+    return data
+
+
 RESULT["race_summary"] = summarize_race([])
 
 # --- the reboots ------------------------------------------------------------------------------
@@ -162,6 +213,9 @@ for index in range(BOOTS):
         boot["diagnostics_file"] = name
         boot["pool_unit_active_late_s"] = wait_late(LATE_S)
         boot["late_wait_s"] = LATE_S
+        if RECOVER and boot["race"]["stuck"]:
+            boot["recover"] = recover(boot["race"]["not_ready_member"])
+            print(f"PROBE recover {index}: " + json.dumps(boot["recover"], sort_keys=True))
     RESULT["boots"].append(boot)
     RESULT["race_summary"] = summarize_race(RESULT["boots"])
     save()
