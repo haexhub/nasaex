@@ -68,16 +68,19 @@ print(json.dumps({"checked_from_s": round(end - float(sys.argv[2]), 3), "seen_s"
 
 
 def guest_python(code: str, *args: str, timeout: int = 60) -> dict:
+    """Run Python in the guest with quoted arguments and decode its JSON output."""
     quoted = " ".join(shlex.quote(a) for a in args)
     return json.loads(run(f"python3 -c {shlex.quote(code)} {quoted}", timeout=timeout))
 
 
 def host_memory() -> dict:
+    """Return host MemAvailable, Dirty and Writeback in KiB, or None when absent."""
     info = read_meminfo()
     return {key: info.get(key) for key in MEM_KEYS}
 
 
 def heavy_io(index: int) -> list[dict]:
+    """Run the guest IO steps with this cycle's flip offset and record each outcome and time."""
     steps = heavy_io_steps(
         "/mnt/cache", BRANCHES[ARCHIVED.branch], ARCHIVED.path, NEW_LARGE.size, 2**32 + 1 + index
     )
@@ -93,6 +96,7 @@ def heavy_io(index: int) -> list[dict]:
 
 
 def failure_detail() -> dict:
+    """Wait for missing label links and collect guest udev, systemd and IO diagnostics."""
     labels = ",".join(LABELS)
     detail: dict = {"links_seen": guest_python(_WAIT_LINKS, labels, "120", timeout=180)}
     detail["link_times_after_wait"] = guest_python(_LINK_TIMES, labels)
@@ -110,12 +114,14 @@ def failure_detail() -> dict:
 
 
 def recover() -> dict:
+    """Attempt to start the guest mounts and SMB service, returning status and output tail."""
     units = " ".join(MOUNT_UNITS.values())
     status, out = server.execute(f"systemctl start {units} samba-smbd.service 2>&1", timeout=300)
     return {"status": status, "out": out[-2000:]}
 
 
 def save_load() -> None:
+    """Update the load-aware boot summary and rewrite the probe's JSON output file."""
     RESULT["summary"] = summarize_load(RESULT["boots"])
     OUTPUT.write_text(json.dumps(RESULT, indent=2, sort_keys=True))
 
@@ -153,19 +159,32 @@ for index in range(BOOTS):
     server.shutdown()
     load, pressure, memory = os.getloadavg(), host_pressure(), host_memory()
     loader = HostLoad(DD, LOAD_FILE, floor_mib=FLOOR_MIB) if HOST_IO else None
-    if loader:
-        loader.start()
-        time.sleep(2)
     sampler = HostSampler()
     t1 = time.monotonic()
-    sampler.start()
-    server.start()
-    server.wait_for_unit("multi-user.target")
-    t2 = time.monotonic()
-    settle()
-    t3 = time.monotonic()
-    host_io = loader.stop() if loader else None
-    host_window = sampler.stop(until_multi_user_s=t2 - t1)
+    loader_started = False
+    sampler_started = False
+    t2 = None
+    try:
+        if loader:
+            loader.start()
+            loader_started = True
+            time.sleep(2)
+        sampler.start()
+        sampler_started = True
+        server.start()
+        server.wait_for_unit("multi-user.target")
+        t2 = time.monotonic()
+        settle()
+        t3 = time.monotonic()
+    finally:
+        try:
+            host_io = loader.stop() if loader_started else None
+        finally:
+            host_window = (
+                sampler.stop(until_multi_user_s=t2 - t1 if t2 is not None else None)
+                if sampler_started
+                else None
+            )
     timings = {
         "shutdown_s": round(t1 - t0, 2),
         "start_to_multi_user_s": round(t2 - t1, 2),

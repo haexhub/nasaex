@@ -15,6 +15,7 @@ BLOCK = 1 << 20
 
 
 def python(code: str, *args) -> str:
+    """Run guest Python code locally with stringified arguments and return stdout."""
     done = subprocess.run(
         [sys.executable, "-c", code, *map(str, args)], capture_output=True, text=True, check=True
     )
@@ -23,12 +24,14 @@ def python(code: str, *args) -> str:
 
 @pytest.fixture
 def source(tmp_path):
+    """Create a seeded source file spanning three blocks and a partial block."""
     path = tmp_path / "source.bin"
     python(SOURCE_SCRIPT, path, 3 * BLOCK + 5)
     return path
 
 
 def test_the_source_is_seeded_and_the_same_on_every_machine(tmp_path, source):
+    """Check source generation is deterministic, correctly sized and varied."""
     again = tmp_path / "again.bin"
     python(SOURCE_SCRIPT, again, 3 * BLOCK + 5)
     assert source.read_bytes() == again.read_bytes()
@@ -37,6 +40,7 @@ def test_the_source_is_seeded_and_the_same_on_every_machine(tmp_path, source):
 
 
 def test_a_complete_write_copies_the_source_and_reports_no_error(tmp_path, source):
+    """Check a successful write copies every byte and reports no failed step."""
     target = tmp_path / "target.bin"
     report = json.loads(python(WRITER, target, "wb", source, 3 * BLOCK + 5))
     assert report == {"errno": None, "step": None, "written": 3 * BLOCK + 5}
@@ -44,6 +48,7 @@ def test_a_complete_write_copies_the_source_and_reports_no_error(tmp_path, sourc
 
 
 def test_an_append_keeps_the_head_and_adds_the_source(tmp_path, source):
+    """Check an append preserves existing bytes and copies the requested prefix."""
     target = tmp_path / "target.bin"
     target.write_bytes(b"head")
     json.loads(python(WRITER, target, "ab", source, BLOCK))
@@ -51,11 +56,13 @@ def test_an_append_keeps_the_head_and_adds_the_source(tmp_path, source):
 
 
 def test_a_full_device_reports_enospc_at_the_write_step(source):
+    """Check a full device reports ENOSPC before accepting any bytes."""
     report = json.loads(python(WRITER, "/dev/full", "wb", source, BLOCK))
     assert report == {"errno": "ENOSPC", "step": "write", "written": 0}
 
 
 def sha(data: bytes) -> str:
+    """Return the hexadecimal SHA-256 digest of the supplied bytes."""
     return hashlib.sha256(data).hexdigest()
 
 
@@ -74,6 +81,7 @@ SOURCE = bytes(range(256)) * 16
     ],
 )
 def test_leftover_classifies_size_and_prefix(size, content, expected):
+    """Check leftover classification for absent, empty, intact and differing files."""
     found = None if size is None else {"size": size, "sha256": sha(content)}
     prefix = None if size is None else sha(SOURCE[:size])
     assert leftover(found, prefix, len(SOURCE)) == expected

@@ -25,6 +25,7 @@ ctl_smb = SmbClient(client, CONTROL)
 
 
 def control_views() -> dict:
+    """Return file-size readers for both control-share sessions and the pool branch."""
     return {
         "writer session": lambda rel: size_of(client, ctl.path(rel)),
         "second session (actimeo=0)": lambda rel: size_of(client, ctl2.path(rel)),
@@ -33,10 +34,12 @@ def control_views() -> dict:
 
 
 def local_views(root: str) -> dict:
+    """Return a file-size reader beneath the given server root."""
     return {f"{root} on the server": lambda rel: size_of(server, f"{root}/{rel}")}
 
 
 def shell(command: str):
+    """Return a writer that substitutes a quoted relative path and records the outcome."""
     return lambda rel: outcome(server, command.format(path=shlex.quote(rel)))
 
 

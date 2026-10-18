@@ -31,15 +31,31 @@ from probes.pool_race import (
 )
 from s1 import boot_diag
 
-BOOTS = int(os.environ.get("PROBE_BOOTS", "100"))
-STOP_AT_FAILURE = os.environ.get("PROBE_STOP_AT_FAILURE", "1") == "1"
-LATE_S = int(os.environ.get("PROBE_LATE_S", "60"))
-DEADLINE_S = float(os.environ.get("PROBE_DEADLINE_S", "3300"))
-RECOVER = os.environ.get("PROBE_RECOVER", "")
 RECOVER_COMMANDS = {
     "change": "udevadm trigger --action=change --settle /dev/{dev}",
-    "scan": "btrfs device scan /dev/{dev}; udevadm settle",
+    "scan": "btrfs device scan /dev/{dev} && udevadm settle",
 }
+try:
+    BOOTS = int(os.environ.get("PROBE_BOOTS", "100"))
+    LATE_S = int(os.environ.get("PROBE_LATE_S", "60"))
+    DEADLINE_S = float(os.environ.get("PROBE_DEADLINE_S", "3300"))
+except ValueError as exc:
+    raise ValueError("PROBE_BOOTS, PROBE_LATE_S and PROBE_DEADLINE_S must be numeric") from exc
+if BOOTS < 1:
+    raise ValueError("PROBE_BOOTS must be at least 1")
+if LATE_S < 0:
+    raise ValueError("PROBE_LATE_S must not be negative")
+if DEADLINE_S <= 0:
+    raise ValueError("PROBE_DEADLINE_S must be positive")
+
+STOP_VALUE = os.environ.get("PROBE_STOP_AT_FAILURE", "1")
+if STOP_VALUE not in {"0", "1"}:
+    raise ValueError("PROBE_STOP_AT_FAILURE must be 0 or 1")
+STOP_AT_FAILURE = STOP_VALUE == "1"
+
+RECOVER = os.environ.get("PROBE_RECOVER", "")
+if RECOVER and RECOVER not in RECOVER_COMMANDS:
+    raise ValueError(f"PROBE_RECOVER must be one of: {', '.join(RECOVER_COMMANDS)}")
 POOL_MOUNTS = "mnt-pool.mount mnt-base.mount mnt-cache.mount"
 OUTPUT = Path("probe-pool-race.json")
 POOL_SERIALS = [d["serial"] for d in DISKS if d["role"] == "pool"]

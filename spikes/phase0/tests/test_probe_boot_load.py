@@ -31,6 +31,7 @@ HugePages_Total:       0
 
 
 def test_pressure_lines_are_parsed_per_kind():
+    """PSI parsing keeps separate some/full averages and cumulative microsecond totals."""
     found = parse_pressure(PRESSURE)
     assert found["some"] == {
         "avg10": 1.5,
@@ -42,6 +43,7 @@ def test_pressure_lines_are_parsed_per_kind():
 
 
 def test_meminfo_values_are_kib_and_lines_without_a_unit_are_kept():
+    """Memory parsing preserves KiB counters and unitless page counts."""
     found = parse_meminfo(MEMINFO)
     assert found["MemAvailable"] == 16196408
     assert found["Writeback"] == 12
@@ -49,6 +51,7 @@ def test_meminfo_values_are_kib_and_lines_without_a_unit_are_kept():
 
 
 def test_stall_share_is_the_stalled_fraction_of_the_window():
+    """Stall totals yield window fractions; missing data or zero duration yields None."""
     before = {"some": {"total": 1_000_000.0}, "full": {"total": 0.0}}
     after = {"some": {"total": 3_000_000.0}, "full": {"total": 500_000.0}}
     assert stall_share(before, after, 4.0) == 0.5
@@ -58,6 +61,7 @@ def test_stall_share_is_the_stalled_fraction_of_the_window():
 
 
 def test_share_between_uses_the_samples_inside_the_window():
+    """Window shares use only enclosed samples and need at least two distinct times."""
     # (seconds since the start, io some total in microseconds)
     series = [(0.0, 0.0), (1.0, 100_000.0), (3.0, 1_100_000.0), (5.0, 1_200_000.0)]
     assert share_between(series, 1.0, 3.0) == 0.5
@@ -66,12 +70,14 @@ def test_share_between_uses_the_samples_inside_the_window():
 
 
 def test_memory_guard_trips_below_the_floor_only():
+    """Low or missing available memory trips the guard; the exact floor is allowed."""
     assert memory_low({"MemAvailable": 6 * 1024 * 1024 - 1}, floor_mib=6144)
     assert not memory_low({"MemAvailable": 6 * 1024 * 1024}, floor_mib=6144)
     assert memory_low({}, floor_mib=6144)  # unreadable counts as low: stop the load
 
 
 def test_zero_failure_bound_is_the_exact_binomial_bound():
+    """Clean-run bounds match binomial values and reject a run with no boots."""
     assert zero_failure_bound(20) == pytest.approx(0.1391, abs=1e-4)
     assert zero_failure_bound(10) == pytest.approx(0.2589, abs=1e-4)
     with pytest.raises(ValueError):
@@ -79,6 +85,7 @@ def test_zero_failure_bound_is_the_exact_binomial_bound():
 
 
 def test_workload_writes_above_4_gib_and_never_syncs():
+    """The guest workload preserves the S1 IO order, large-file size and absence of syncs."""
     steps = heavy_io_steps(
         "/mnt/cache", "/mnt/archive/arch1/branch", "large/a.bin", 2**32 + 9, 2**32 + 1
     )
@@ -94,13 +101,22 @@ def test_workload_writes_above_4_gib_and_never_syncs():
 
 
 def test_summary_splits_pressure_by_outcome_and_bounds_a_clean_run():
+    """Summaries group pressure by boot outcome and bound the failure rate only for clean runs."""
+
     def boot(index, up, share):
+        """Build a minimal boot observation with a chosen outcome and host stall share."""
         state = "active" if up else "failed"
         return {
             "index": index,
             "host_load": [1.0, 0.0, 0.0],
             "devices": {"spikepool": {"active_s": 5.0 if up else None}},
-            "mounts": {"mnt-pool.mount": {"ActiveState": state}},
+            "mounts": {
+                "mnt-pool.mount": {
+                    "ActiveState": state,
+                    "Result": "success" if up else "dependency",
+                }
+            },
+            "smbd": "active" if up else "inactive",
             "host_window": {"io_some_share": share, "io_some_avg10_max": share * 100},
             "workload_s": 100.0,
         }
@@ -117,12 +133,14 @@ def test_summary_splits_pressure_by_outcome_and_bounds_a_clean_run():
 
 
 def _wait_for(condition, seconds=5.0):
+    """Poll until the condition holds or the timeout expires, without asserting success."""
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline and not condition():
         time.sleep(0.05)
 
 
 def test_host_load_stops_and_reports_when_memory_runs_low(tmp_path):
+    """The host workload aborts on low memory, reports the cause and leaves no target file."""
     readings = iter([{"MemAvailable": 20 * 1024 * 1024}] * 3)
     load = HostLoad(
         [sys.executable, "-c", "import time; time.sleep(30)"],
@@ -140,6 +158,7 @@ def test_host_load_stops_and_reports_when_memory_runs_low(tmp_path):
 
 
 def test_host_load_restarts_its_command_and_removes_the_file(tmp_path):
+    """The host workload repeats successful commands and removes its target when stopped."""
     target = tmp_path / "load.bin"
     load = HostLoad(
         [sys.executable, "-c", f"open({str(target)!r}, 'wb').write(b'x')"],

@@ -58,12 +58,20 @@ def first_time(lines: list[tuple[float, str]], needle: str, after: float = 0.0) 
 
 
 def boot_up(boot: Mapping) -> bool:
-    """A boot is up when it has mounts and every one of them is active."""
+    """A boot is up when smbd and every measured mount are active and successful."""
     mounts = boot.get("mounts") or {}
-    return bool(mounts) and all(m.get("ActiveState") == "active" for m in mounts.values())
+    return (
+        boot.get("smbd") == "active"
+        and bool(mounts)
+        and all(
+            mount.get("ActiveState") == "active" and mount.get("Result") == "success"
+            for mount in mounts.values()
+        )
+    )
 
 
 def _spread(values: list[float]) -> dict:
+    """Return count, minimum, median and maximum, or just a zero count if empty."""
     if not values:
         return {"n": 0}
     return {

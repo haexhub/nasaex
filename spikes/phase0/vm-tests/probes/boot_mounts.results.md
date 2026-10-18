@@ -145,5 +145,6 @@ B had the two scans less than 3 ms apart, and all of them came up. In every boot
 > instrumentation, not systemd's 90 s), came up 40 of 40 times with every mount and smbd active. The device
 > jobs started at about 4.8 s and every by-label device was active 0.6 to 0.9 s later, pool members scanned
 > as little as 0.04 ms apart included. The S1.11 failure (only spikepool timed out) was not
-> reproduced; its cause stays UNVERIFIED, and so does any mount setting that would prevent it. One reboot
-> per run cannot show a race whose rate is below about 14 % (0/20, 95 %).
+> reproduced; its cause stays UNVERIFIED, and so does any mount setting that would prevent it. Twenty reboots
+> per variant came up without a failure; 0/20 per variant cannot show a race whose rate is below about 14 %
+> (95 %).
