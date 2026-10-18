@@ -44,6 +44,7 @@ def heavy_io_steps(
     file, read every file of the share. Nothing syncs, as in S1.8."""
 
     def q(path: str) -> str:
+        """Quote a path or Python snippet as one shell argument."""
         return shlex.quote(path)
 
     src, copy, new = f"{cache}/{archived}", f"{cache}/{COPY}", f"{cache}/{NEW}"
@@ -93,10 +94,12 @@ def parse_meminfo(text: str) -> dict[str, int]:
 
 
 def read_pressure(resource: str = "io") -> dict:
+    """Read the host's PSI averages and cumulative stall totals for a resource."""
     return parse_pressure(Path(f"/proc/pressure/{resource}").read_text())
 
 
 def read_meminfo() -> dict[str, int]:
+    """Read host memory counters from /proc/meminfo, preserving values in KiB."""
     return parse_meminfo(Path("/proc/meminfo").read_text())
 
 
@@ -137,12 +140,14 @@ class HostSampler:
     total (us), Dirty, Writeback and MemAvailable in MiB."""
 
     def __init__(self, interval_s: float = 0.5):
+        """Prepare an empty sample series and a worker with the given interval in seconds."""
         self.interval_s = interval_s
         self.series: list[tuple] = []
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def _sample(self) -> None:
+        """Append elapsed seconds, IO pressure and host memory in MiB to the series."""
         io, mem = read_pressure("io"), read_meminfo()
         self.series.append(
             (
@@ -158,15 +163,22 @@ class HostSampler:
         )
 
     def _loop(self) -> None:
+        """Sample at each interval until the stop event is set."""
         while not self._stop.wait(self.interval_s):
             self._sample()
 
     def start(self) -> None:
+        """Record the initial sample and start the sampling thread."""
         self._t0 = time.monotonic()
         self._sample()
         self._thread.start()
 
     def stop(self, until_multi_user_s: float | None = None) -> dict:
+        """Join the worker, take a final sample and summarize the measured window.
+
+        Use seconds since start for the optional multi-user cutoff; when omitted, its
+        stall shares cover the full window. Return the series, stall shares and extrema.
+        """
         self._stop.set()
         self._thread.join()
         self._sample()
@@ -203,6 +215,7 @@ class HostLoad:
         floor_mib: int = MIN_AVAILABLE_MIB,
         interval_s: float = 0.25,
     ):
+        """Prepare a repeated command and its target, memory guard and polling interval."""
         self.command, self.target = command, Path(target)
         self.meminfo, self.floor_mib, self.interval_s = meminfo, floor_mib, interval_s
         self.started = self.completed = 0
@@ -214,6 +227,7 @@ class HostLoad:
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def _memory_ok(self) -> bool:
+        """Track minimum available memory; abort and kill the child if it is low or missing."""
         info = self.meminfo()
         available = info.get("MemAvailable")
         if available is not None:
@@ -226,6 +240,7 @@ class HostLoad:
         return True
 
     def _kill(self) -> None:
+        """Terminate the active child, forcing a kill if it has not exited after ten seconds."""
         proc = self._proc
         if proc is not None and proc.poll() is None:
             proc.terminate()
@@ -236,6 +251,7 @@ class HostLoad:
                 proc.wait()
 
     def _loop(self) -> None:
+        """Repeat the command while memory allows, recording completions and the last output."""
         while not self._stop.is_set() and self._memory_ok():
             self._proc = subprocess.Popen(
                 self.command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
@@ -250,9 +266,11 @@ class HostLoad:
             self.completed += self._proc.returncode == 0
 
     def start(self) -> None:
+        """Start the thread that runs the guarded host workload."""
         self._thread.start()
 
     def stop(self) -> dict:
+        """Stop and join the worker, delete the target file and return run statistics."""
         self._stop.set()
         self._kill()
         self._thread.join()
@@ -277,6 +295,7 @@ def summarize_load(boots: Iterable[Mapping]) -> dict:
     summary = summarize(boots)
 
     def split(key: str) -> dict:
+        """Group a host-window metric by boot outcome, retaining missing values as None."""
         found = {"up": [], "failed": []}
         for b in boots:
             found["up" if boot_up(b) else "failed"].append((b.get("host_window") or {}).get(key))

@@ -53,16 +53,19 @@ RESULT: dict = {"environment": {}, "commands": [], "boots": []}
 
 
 def run(command: str, timeout: int = 60) -> str:
+    """Record a unique guest command, require success and return its output."""
     if command not in RESULT["commands"]:
         RESULT["commands"].append(command)
     return server.succeed(command, timeout=timeout)
 
 
 def unit_of(path: str, suffix: str) -> str:
+    """Return the systemd unit name for a guest path and unit suffix."""
     return run(f"systemd-escape -p --suffix={suffix} {path}").strip()
 
 
 def show(unit: str, props: str = UNIT_PROPS) -> dict:
+    """Read the requested systemd properties of a guest unit as a mapping."""
     return parse_properties(run(f"systemctl show -p {props} {shlex.quote(unit)}"))
 
 
@@ -77,6 +80,7 @@ def with_seconds(props: dict) -> dict:
 
 
 def host_pressure() -> dict:
+    """Read the first PSI line for each available host CPU, IO and memory resource."""
     found = {}
     for resource in ("cpu", "io", "memory"):
         path = Path("/proc/pressure") / resource
@@ -86,10 +90,16 @@ def host_pressure() -> dict:
 
 
 def settle() -> None:
+    """Wait up to 300 seconds for the guest's systemd job queue to empty."""
     server.wait_until_succeeds('test -z "$(systemctl list-jobs --no-legend)"', timeout=300)
 
 
 def collect(index: int, host_load, pressure, timings: dict) -> dict:
+    """Collect guest device, mount, udev and journal state with supplied host measurements.
+
+    Return a boot observation with monotonic guest timestamps in seconds. The caller sets
+    its pending 'up' verdict after inspecting the collected mounts and devices.
+    """
     manager = with_seconds(parse_properties(run(f"systemctl show -p {MANAGER_PROPS}")))
     lines = journal_lines(run("journalctl -b -o short-monotonic --no-pager", timeout=120))
     stage2 = manager.get("Userspace_s") or 0.0
@@ -145,6 +155,7 @@ def collect(index: int, host_load, pressure, timings: dict) -> dict:
 
 
 def save() -> None:
+    """Update the boot summary and rewrite the probe's JSON output file."""
     RESULT["summary"] = summarize(RESULT["boots"])
     OUTPUT.write_text(json.dumps(RESULT, indent=2, sort_keys=True))
 
