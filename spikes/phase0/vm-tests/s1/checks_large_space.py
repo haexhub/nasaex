@@ -173,8 +173,10 @@ def check_pool_out_of_space(lab: Lab) -> None:
     filler, free, new_sizes = {}, {}, {}
 
     def filled(step: str, write, new_path: str | None = None):
-        filler[step] = faults.enospc(lab.server, POOL_BRANCH, table["leave_bytes"], point="S1.9")
         try:
+            filler[step] = faults.enospc(
+                lab.server, POOL_BRANCH, table["leave_bytes"], point="S1.9"
+            )
             free[step] = int(lab.server.succeed(f"df --output=avail -B1 {POOL_BRANCH} | tail -n1"))
             result = write()
             if new_path is not None:

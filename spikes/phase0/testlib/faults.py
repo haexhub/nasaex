@@ -154,6 +154,11 @@ def enospc(
             return FaultEvent("enospc", point, detail)
         machine.succeed(f"fallocate -o {filled} -l {avail - leave_bytes} {mountpoint}/{filler}")
         filled += avail - leave_bytes
+    machine.succeed(f"sync -f {mountpoint}")
+    avail = int(machine.succeed(f"df --output=avail -B1 {mountpoint} | tail -n1").strip())
+    if avail <= leave_bytes:
+        detail = f"{mountpoint}: {avail} bytes free after filling, of {first}"
+        return FaultEvent("enospc", point, detail)
     raise ValueError(f"still {avail} bytes free on {mountpoint} after {FILL_ROUNDS} fills")
 
 

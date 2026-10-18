@@ -213,6 +213,15 @@ def test_enospc_extends_the_filler_when_space_appears_after_filling():
     assert "4096 bytes free" in event.detail
 
 
+def test_enospc_accepts_space_released_after_the_final_fill():
+    machine = FillingMachine([1000000, 1000000, 1000000, 1000000, 4096])
+
+    event = enospc(machine, "/mnt/pool", leave_bytes=4096)
+
+    assert event.kind == "enospc"
+    assert len([c for c in machine.commands("succeed") if c.startswith("fallocate")]) == 4
+
+
 def test_enospc_refuses_when_less_than_the_wanted_space_is_free():
     machine = FillingMachine([100])
 

@@ -81,7 +81,7 @@ def _step(machine, command):
     return None
 
 
-def _run_s1_9(tmp_path, monkeypatch):
+def _run_s1_9(tmp_path, monkeypatch, filler=None):
     """Run check S1.9 against recording machines; the shared command log."""
     monkeypatch.chdir(tmp_path)
     log = []
@@ -104,13 +104,15 @@ def _run_s1_9(tmp_path, monkeypatch):
     roots = {"pool": "/mnt/pool"} | {a: f"/mnt/archive/{a}/branch" for a in ARCHIVE}
     lab = Lab(server, client, roots, Recorder(), user=None, tables=tables)
 
-    def filler(machine, mountpoint, leave_bytes, point=""):
-        log.append(("filler", mountpoint))
-        return FaultEvent("enospc", point, "filled")
+    if filler is None:
+
+        def filler(machine, mountpoint, leave_bytes, point=""):
+            log.append(("filler", mountpoint))
+            return FaultEvent("enospc", point, "filled")
 
     monkeypatch.setattr(checks_large_space.faults, "enospc", filler)
     lab.recorder.run("S1.9", lambda: check_pool_out_of_space(lab))
-    return log
+    return log, lab.recorder.scenarios()
 
 
 def test_each_write_of_s1_9_starts_from_the_precondition(tmp_path, monkeypatch):
@@ -119,7 +121,7 @@ def test_each_write_of_s1_9_starts_from_the_precondition(tmp_path, monkeypatch):
     # precondition of the criteria. Each write gets its own filler, and the file a write
     # left on the pool is removed (on the pool branch, so an archive copy would stay for the
     # tree hashes) before the next one.
-    log = _run_s1_9(tmp_path, monkeypatch)
+    log, _ = _run_s1_9(tmp_path, monkeypatch)
 
     steps = [s for s in (_step(m, c) for m, c in log) if s]
     assert steps[:11] == [
@@ -141,9 +143,19 @@ def test_s1_9_reads_the_size_of_a_new_file_through_both_client_sessions(tmp_path
     # S1 shakedown (T051): the default mount, which caches attributes, showed the partial file
     # of the cifs create once with the written size and once with the size on the server; the
     # second session (actimeo=0) asks the server every time.
-    log = _run_s1_9(tmp_path, monkeypatch)
+    log, _ = _run_s1_9(tmp_path, monkeypatch)
 
     stats = [c for m, c in log if m == "client" and c.startswith("stat -c %s")]
     for rel in ("s1.9/new.bin", "s1.9/new-smbclient.bin"):
         assert f"stat -c %s /mnt/share/{rel}" in stats
         assert f"stat -c %s /mnt/share2/{rel}" in stats
+
+
+def test_s1_9_removes_a_filler_when_creation_fails(tmp_path, monkeypatch):
+    def failing_filler(machine, mountpoint, leave_bytes, point=""):
+        raise RuntimeError("filler failed")
+
+    log, scenarios = _run_s1_9(tmp_path, monkeypatch, failing_filler)
+
+    assert scenarios[0]["outcome"] == "error"
+    assert ("server", "rm -f /mnt/pool/.spike-filler") in log
