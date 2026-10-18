@@ -81,12 +81,8 @@ def _step(machine, command):
     return None
 
 
-def test_each_write_of_s1_9_starts_from_the_precondition(tmp_path, monkeypatch):
-    # S1 shakedown (T051): the cifs create left a partial file that used up the free bytes,
-    # so the smbclient upload after it met a pool below minfreespace instead of the
-    # precondition of the criteria. Each write gets its own filler, and the file a write
-    # left on the pool is removed (on the pool branch, so an archive copy would stay for the
-    # tree hashes) before the next one.
+def _run_s1_9(tmp_path, monkeypatch):
+    """Run check S1.9 against recording machines; the shared command log."""
     monkeypatch.chdir(tmp_path)
     log = []
     outputs = {
@@ -114,6 +110,16 @@ def test_each_write_of_s1_9_starts_from_the_precondition(tmp_path, monkeypatch):
 
     monkeypatch.setattr(checks_large_space.faults, "enospc", filler)
     lab.recorder.run("S1.9", lambda: check_pool_out_of_space(lab))
+    return log
+
+
+def test_each_write_of_s1_9_starts_from_the_precondition(tmp_path, monkeypatch):
+    # S1 shakedown (T051): the cifs create left a partial file that used up the free bytes,
+    # so the smbclient upload after it met a pool below minfreespace instead of the
+    # precondition of the criteria. Each write gets its own filler, and the file a write
+    # left on the pool is removed (on the pool branch, so an archive copy would stay for the
+    # tree hashes) before the next one.
+    log = _run_s1_9(tmp_path, monkeypatch)
 
     steps = [s for s in (_step(m, c) for m, c in log) if s]
     assert steps[:11] == [
@@ -129,3 +135,15 @@ def test_each_write_of_s1_9_starts_from_the_precondition(tmp_path, monkeypatch):
         "append",
         "unfill",
     ]
+
+
+def test_s1_9_reads_the_size_of_a_new_file_through_both_client_sessions(tmp_path, monkeypatch):
+    # S1 shakedown (T051): the default mount, which caches attributes, showed the partial file
+    # of the cifs create once with the written size and once with the size on the server; the
+    # second session (actimeo=0) asks the server every time.
+    log = _run_s1_9(tmp_path, monkeypatch)
+
+    stats = [c for m, c in log if m == "client" and c.startswith("stat -c %s")]
+    for rel in ("s1.9/new.bin", "s1.9/new-smbclient.bin"):
+        assert f"stat -c %s /mnt/share/{rel}" in stats
+        assert f"stat -c %s /mnt/share2/{rel}" in stats
