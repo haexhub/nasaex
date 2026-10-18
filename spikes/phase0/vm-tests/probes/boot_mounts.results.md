@@ -5,12 +5,14 @@ KVM, machine state on an ext4 disk. A probe never writes a record; the full outp
 `probe-boot-mounts.json` in the output directory of the driver (evidence, not committed). Nothing below
 changes `nix/nodes.nix` or adopts a mount setting.
 
-Question (S1 shakedown T051, S1.11): one of three S1 reboots came up without its mounts: device jobs hit
-`x-systemd.device-timeout=10s` (`nix/nodes.nix:48`, with `nofail`). Two descriptions of that boot exist and
-differ: the S1 criteria changelog names `dev-disk-by\x2dlabel-spikepool.device` alone (pool members scanned
-2.3 ms apart; mnt-pool, mnt-base and mnt-cache failed with result 'dependency'); the brief of this task names
-every labelled device (arch0, arch1, arch2, parity0, spikepool) timing out at about 14.9 s in shakedown run 3.
-The probe records every label, so it covers both. How often does it happen, and why?
+Question (S1 shakedown T051, S1.11): one of three S1 reboots came up without its mounts: the pool and its mounts did not come up
+(`dev-disk-by\x2dlabel-spikepool.device` timed out after `x-systemd.device-timeout=10s`, `nix/nodes.nix:48`, with
+`nofail`; the two pool members were scanned 2.3 ms apart; mnt-pool, mnt-base and mnt-cache failed with result
+'dependency'; S1 criteria changelog). Correction (2026-10-18): an earlier version of this document, taken from the
+brief of this task, also described "every labelled device timing out at about 14.9 s" as that failure. That was a
+misreading: those five timeouts are logged by the FIRST boot of every S1 run (blank disks, before `spike-mkfs`, no label
+exists yet; T051e measured them in all 8 runs). The failed S1.11 boot is the spikepool-only description. How often does
+it happen, and why?
 
 ## Environment
 
@@ -112,11 +114,8 @@ B had the two scans less than 3 ms apart, and all of them came up. In every boot
   about conditions this probe did not create.
 - Under these conditions every by-label device appears 0.6 to 0.9 s after systemd starts waiting for it, so
   the 10 s device timeout has a margin of more than 9 s. The jobs start at about 4.8 s, so a timeout fires at
-  about 14.8 s, which matches the reported time of about 14.9 s. If all five labels timed out (the brief's
-  description), every udev event of the boot was delayed by more than ten times what was measured here, and
-  a btrfs multi-device race cannot explain it: `parity0` is ext4 and the archive disks are single-device
-  btrfs.
-- If only `spikepool` timed out (the changelog's description), a race of the two pool members is the
+  about 14.8 s; five labels timing out at that time is what a boot on blank disks logs, not the S1.11 failure.
+- The S1.11 failure timed out `spikepool` only (the changelog's description): a race of the two pool members is the
   candidate. It did not show here: scans less than 3 ms apart came up 22 times, so a gap of 2.3 ms is not a
   sufficient cause; whether it is a necessary one is not measured.
 - Failure versus host load: no failure occurred, so no correlation can be computed. The host load during
@@ -145,6 +144,6 @@ B had the two scans less than 3 ms apart, and all of them came up. In every boot
 > x-systemd.device-timeout=10s) and 20 without the device timeout (5 min in the test VM, set by the NixOS test
 > instrumentation, not systemd's 90 s), came up 40 of 40 times with every mount and smbd active. The device
 > jobs started at about 4.8 s and every by-label device was active 0.6 to 0.9 s later, pool members scanned
-> as little as 0.04 ms apart included. The S1.11 failure (all five labels timed out at about 14.9 s) was not
+> as little as 0.04 ms apart included. The S1.11 failure (only spikepool timed out) was not
 > reproduced; its cause stays UNVERIFIED, and so does any mount setting that would prevent it. One reboot
 > per run cannot show a race whose rate is below about 14 % (0/20, 95 %).
