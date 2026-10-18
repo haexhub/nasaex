@@ -33,8 +33,19 @@ not a journal line
 def boot(index, load, up, label_s=None):
     """Build a boot record with controlled mount state, host load and label timing."""
     devices = {"arch0": {"active_s": label_s}, "spikepool": {"active_s": label_s}}
-    mounts = {"mnt-pool.mount": {"ActiveState": "active" if up else "failed"}}
-    return {"index": index, "host_load": [load, 0.0, 0.0], "devices": devices, "mounts": mounts}
+    mounts = {
+        "mnt-pool.mount": {
+            "ActiveState": "active" if up else "failed",
+            "Result": "success" if up else "dependency",
+        }
+    }
+    return {
+        "index": index,
+        "host_load": [load, 0.0, 0.0],
+        "devices": devices,
+        "mounts": mounts,
+        "smbd": "active" if up else "inactive",
+    }
 
 
 def test_properties_are_parsed_by_key():
@@ -82,6 +93,17 @@ def test_a_boot_is_up_only_when_every_mount_is_active():
     assert boot_up(boot(0, 1.0, True))
     assert not boot_up(boot(0, 1.0, False))
     assert not boot_up({"mounts": {}})
+
+
+def test_a_boot_is_down_when_smbd_or_mount_result_is_not_successful():
+    """Check the service and mount result are part of the boot readiness verdict."""
+    missing_smbd = boot(0, 1.0, True)
+    missing_smbd["smbd"] = "inactive"
+    failed_result = boot(0, 1.0, True)
+    failed_result["mounts"]["mnt-pool.mount"]["Result"] = "dependency"
+
+    assert not boot_up(missing_smbd)
+    assert not boot_up(failed_result)
 
 
 def test_summary_counts_failures_and_splits_times_and_load_by_outcome():
