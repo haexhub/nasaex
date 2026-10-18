@@ -4,6 +4,8 @@
 # boot when each by-label device and each mount unit became active, and whether everything came
 # up. `name` and `script` select the probe: the idle reboots of T051a (the default) or the reboots
 # after the S1 heavy IO of T051d. The test script is boot_probe_setup.py followed by `script`.
+# `extraServerModules` adds probe-only modules to the server (the pool race probe of T051f,
+# pool_race.nix); empty by default, so T051a and T051d are unchanged.
 # Variants, run one at a time:
 #   default            the mount options of nix/nodes.nix as they are (nofail,
 #                      x-systemd.device-timeout=10s)
@@ -14,6 +16,7 @@
 { mkSpike
 , name ? "probe-boot-mounts"
 , script ? ./probe_boot_mounts.py
+, extraServerModules ? [ ]
 }:
 
 let
@@ -58,7 +61,7 @@ let
     extraModules.server = [
       share
       { spike.tieredCache.enable = true; }
-    ] ++ overrides;
+    ] ++ extraServerModules ++ overrides;
   };
 in
 {
