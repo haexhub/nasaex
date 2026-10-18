@@ -289,15 +289,6 @@ changelog:
     measured), so a mount.cifs mode is not the branch mode; S1.1 compares the mode as spec User
     Story 1 scenario 1 states, and the shakedown (T051) shows what the client reports.
   - >-
-    2026-10-18, spec amendment (spec Clarifications 2026-10-18, S1.1 permissions), closing the
-    open point above: S1.1 compares mode, owner and group on the cache pool mount of the server,
-    where mergerfs passes the branch attributes through, and through the share only names, types,
-    sizes, mtimes, content and the DOS attributes of smbclient allinfo; the mount.cifs mode and
-    user xattrs are no longer compared by S1.1 (S1.7 judges branch xattrs through the share). What
-    mount.cifs reports is recorded, not judged; smb3 unix extensions, the posix mount option and
-    NT ACLs are not used. The DOS attribute expectation and dropping the user xattrs are
-    proposed; the DOS expectation is UNVERIFIED until the shakedown runs the amended check (T043a).
-  - >-
     Open for the shakedown (T051): the time to a consistent view after a move (S1.10) or the
     refresh procedure, and whether NC excludes a branch from moveonenospc (research F10).
   - >-
@@ -357,3 +348,18 @@ changelog:
     here. The criteria need a mount setting for the two-device pool that is recorded as
     required (not found yet, UNVERIFIED) and a number of reboots, since one reboot cannot show
     a race.
+  - >-
+    2026-10-18, spec amendment (spec Clarifications 2026-10-18, S1.1 permissions), closing the
+    open S1.1 points above (before the freeze, and of the shakedown): S1.1 compares mode, owner
+    and group on the cache pool mount of the server, where mergerfs must pass the branch
+    attributes through, and through the share only names, types, sizes, mtimes, content and the
+    DOS attributes of smbclient allinfo; the mount.cifs mode and user xattrs are no longer
+    compared by S1.1 (S1.7 judges branch xattrs through the share). That the mount.cifs mode is
+    not the branch mode is measured: the shakedown saw 0755 on all 13 archive files whatever
+    their branch mode (11 of 0644, one 0640, one 0600), as mount.cifs(8) documents without unix
+    extensions. What mount.cifs reports is recorded, not judged; smb3 unix extensions, the posix
+    mount option and NT ACLs are not used. The DOS attribute expectation and dropping the user
+    xattrs are proposed. UNVERIFIED until the shakedown runs the amended check (T043a): the DOS
+    expectation and whether mergerfs passes mode, owner and group through on /mnt/cache; not
+    known either: whether the 0755 of the archive directories through mount.cifs is their
+    branch mode or the mount's default.
