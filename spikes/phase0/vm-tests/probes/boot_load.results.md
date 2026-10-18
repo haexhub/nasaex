@@ -153,7 +153,7 @@ devices were active 0.29 to 0.64 s later; every mount came up.
   IO stall during the boot was below 1 %. The S1 order itself explains it: after the last write of S1.8 come
   minutes of reads, ending with the S1.11 manifest read (17 s here), so the data is written back before the
   shutdown. This holds for the order and the host measured here, not necessarily for the S1 run.
-- Deliberate host IO pressure (D2, 30 to 47 % of the boot window with all tasks stalled, up to 61 % in the trial)
+- Deliberate host IO pressure (D2, 30 to 47 % of the boot window with some tasks stalled on IO, up to 61 % in the trial)
   slowed the whole guest boot (userspace starting up to 8.6 s instead of 3.6 s, device jobs starting up to
   20 s), but not the device jobs themselves: systemd starts the 10 s timer when it queues the job, and every
   device was active at most 1.06 s after that (shortest wait per boot 0.24 to 0.69 s, longest 0.59 to 1.06 s). Across the D2 boots the stall share correlates with the start of
