@@ -44,6 +44,7 @@ RESULT["attempts"] = []
 
 
 def run(machine, command: str, timeout: int = 300) -> str:
+    """Record a distinct guest command and return its output, requiring success."""
     entry = f"{machine.name}$ {command}"
     if entry not in RESULT["commands"]:
         RESULT["commands"].append(entry)
@@ -60,11 +61,13 @@ def outcome(machine, command: str, timeout: int = 300) -> list:
 
 
 def size_of(machine, path: str) -> int | None:
+    """Return the guest file size in bytes, or None if stat fails."""
     status, out = machine.execute(f"stat -c %s {shlex.quote(path)}")
     return int(out) if status == 0 else None
 
 
 def free_bytes() -> int:
+    """Return the available bytes on the server pool branch."""
     return int(run(server, f"df --output=avail -B1 {POOL_BRANCH} | tail -n1").strip())
 
 
@@ -72,6 +75,7 @@ _prefix: dict[int, str] = {}
 
 
 def prefix_sha(n: int) -> str:
+    """Return the cached SHA-256 digest of the first n source bytes."""
     if n not in _prefix:
         _prefix[n] = run(server, f"head -c {n} {SOURCE} | sha256sum").split()[0]
     return _prefix[n]
@@ -90,6 +94,7 @@ def copy_on(key: str, rel: str, skip: int) -> dict:
 
 
 def archive_hashes() -> dict:
+    """Return tree hashes for every archive branch and trash tree."""
     return {key: tree_hash(lab.manifest(key)) for key in ARCHIVE_KEYS}
 
 
@@ -107,11 +112,13 @@ def pool_rest(rel: str):
 
 
 def fill(name: str):
+    """Fill the pool to LEAVE free bytes and return details plus a cleanup callback."""
     event = faults.enospc(server, POOL_BRANCH, LEAVE, point=name)
     return event.detail, lambda: run(server, f"rm -f {POOL_BRANCH}/{faults.DEFAULT_FILLER}")
 
 
 def watch_start() -> None:
+    """Start recursive archive change monitoring and wait for watch readiness."""
     run(server, "rm -f /run/inotify.log /run/inotify.err")
     run(
         server,
@@ -122,6 +129,7 @@ def watch_start() -> None:
 
 
 def watch_stop() -> list[str]:
+    """Stop archive change monitoring and return the recorded event lines."""
     run(server, "pkill -x inotifywait; sleep 0.5; true")
     return run(server, "cat /run/inotify.log").splitlines()
 
@@ -158,22 +166,26 @@ def attempt(name: str, rel: str, write, views: dict, append: bool = False, preco
 
 # --- writes through the client and on the server ---------------------------------------------
 def cifs_write(mount, mode: str):
+    """Return a writer for a client CIFS mount that reports the guest write outcome."""
     return lambda rel: json.loads(
         lab.python(client, WRITER, mount.path(rel), mode, SOURCE, str(SIZE))
     )
 
 
 def local_write(root: str, mode: str):
+    """Return a writer beneath a server root that reports the guest write outcome."""
     return lambda rel: json.loads(
         lab.python(server, WRITER, f"{root}/{rel}", mode, SOURCE, str(SIZE))
     )
 
 
 def smbclient_put(smb):
+    """Return a writer that uploads SOURCE and reports the smbclient outcome."""
     return lambda rel: list(smb.put(SOURCE, rel))
 
 
 def share_views(first, second) -> dict:
+    """Return file-size readers for both CIFS sessions and the server cache pool."""
     return {
         "writer session": lambda rel: size_of(client, first.path(rel)),
         "second session (actimeo=0)": lambda rel: size_of(client, second.path(rel)),

@@ -64,6 +64,7 @@ def boot_up(boot: Mapping) -> bool:
 
 
 def _spread(values: list[float]) -> dict:
+    """Return count, minimum, median and maximum, or just a zero count if empty."""
     if not values:
         return {"n": 0}
     return {

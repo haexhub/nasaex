@@ -40,6 +40,7 @@ def quota(name: str):
     )
 
     def undo() -> None:
+        """Remove the pool qgroup limit and disable quotas after the measured attempt."""
         run(server, f"btrfs qgroup limit none {POOL_BRANCH}")
         run(server, f"btrfs quota disable {POOL_BRANCH}")
 
@@ -47,6 +48,7 @@ def quota(name: str):
 
 
 def cache_views() -> dict:
+    """Return a file-size reader for the cache pool on the server."""
     return {"cache pool on the server": lambda rel: size_of(server, f"{CACHE}/{rel}")}
 
 
