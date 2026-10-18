@@ -285,12 +285,13 @@ changelog:
   - >-
     Shakedown T051 (2026-10-18, mergerfs 2.41.1, Samba 4.23.10, kernel and cifs client
     6.18.56, mount.cifs 7.5, btrfs-progs 6.19.1, QEMU 10.2.4; VMs 1536 + 768 MiB; full runs of
-    947 s and 670 s against the budget of 1200 s, S1.8 alone 679 s and 470 s). Harness defects
-    fixed before the second run, no expected value changed: the enospc filler was sized from
-    a free count that btrfs had not yet updated for the files S1.8 deleted (the pool still had
-    4 GiB free, every S1.9 write succeeded); the S1.9 writes shared one filler, so the partial
-    file of the first used up the free bytes of the next; S1.9 read new-file sizes through the
-    attribute-caching mount only; effective option values carried a line end.
+    947 s, 670 s and 652 s against the budget of 1200 s, S1.8 alone 679 s, 470 s and 439 s).
+    Harness defects fixed before the second run, no expected value changed: the enospc filler
+    was sized from a free count that btrfs had not yet updated for the files S1.8 deleted (the
+    pool still had 4 GiB free, every S1.9 write succeeded); the S1.9 writes shared one filler,
+    so the partial file of the first used up the free bytes of the next; S1.9 read new-file
+    sizes through the attribute-caching mount only; effective option values carried a line
+    end.
   - >-
     Shakedown T051, S1.1 permissions (open point above, measured): every other field matched
     (23 archive paths, 12 smbclient checksums, no trash entry in the share, the cache pool or
@@ -320,8 +321,8 @@ changelog:
   - >-
     Shakedown T051, S1.10 and the others: at all nine points the moved file was visible with
     its full size and SHA-256, the open reader read the complete content, the mover exited 0,
-    and the directory manifest equalled the one before the move at the first poll (0.100 s
-    and 0.085 s after the mover ended), so no refresh procedure is needed and
+    and the directory manifest equalled the one before the move at the first poll (0.100 s,
+    0.085 s and 0.099 s after the mover ended), so no refresh procedure is needed and
     tables.mover_view.refresh_procedure stays empty. S1.2: with NC removed, ff and lus both
     still placed the new file on the pool (the pool is first and had room), so the evidence
     shows no case in which NC decides the placement while the pool has free space. S1.4: the
@@ -330,7 +331,8 @@ changelog:
     so listing and reading through the share wrote no user.DOSATTRIB on archive files.
   - >-
     Shakedown T051, S1.11 (boot of the two-device pool): the first reboot brought the pools and
-    smbd back; in the second, both pool members were scanned 2.3 ms apart by two udev workers,
+    smbd back, and so did the third (members scanned 3.8 ms apart); in the second (one boot in
+    three), both pool members were scanned 2.3 ms apart by two udev workers,
     dev-disk-by\x2dlabel-spikepool.device timed out and mnt-pool, mnt-base and mnt-cache failed
     with result 'dependency'. The 64-btrfs.rules of systemd 260.5 mark a member not ready until
     the volume is complete and retrigger the pending members when it is; that did not happen
