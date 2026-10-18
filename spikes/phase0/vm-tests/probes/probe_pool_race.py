@@ -46,7 +46,7 @@ except FileNotFoundError:
 POOL_SOURCE = next(
     line.split()[0] for line in RESULT["fstab_mnt"] if line.split()[1] == "/mnt/pool"
 )
-if POOL_SOURCE.startswith("/dev/disk/by-uuid/"):  # variant delay-uuid: give the pool that fsid
+if POOL_SOURCE.startswith("/dev/disk/by-uuid/"):  # variant delay-both-uuid: set that fsid
     members = " ".join(f"/dev/disk/by-id/virtio-{s}" for s in POOL_SERIALS)
     RESULT["btrfstune"] = run(
         f"btrfstune -f -U {POOL_SOURCE.rsplit('/', 1)[1]} /dev/disk/by-id/virtio-{POOL_SERIALS[0]}"
@@ -155,8 +155,10 @@ for index in range(BOOTS):
     if incomplete:
         units = {unit: m["ActiveState"] == "active" for unit, m in boot["mounts"].items()}
         diagnostics = boot_diag.capture_if_incomplete(server, units, host_at_start=host_at_start)
-        name = f"boot-{index}-diagnostics.json"
-        Path(name).write_text(json.dumps(diagnostics, indent=2, sort_keys=True))
+        # None: every mount of /etc/fstab is mounted (a stuck member does not imply that).
+        name = f"boot-{index}-diagnostics.json" if diagnostics else None
+        if name:
+            Path(name).write_text(json.dumps(diagnostics, indent=2, sort_keys=True))
         boot["diagnostics_file"] = name
         boot["pool_unit_active_late_s"] = wait_late(LATE_S)
         boot["late_wait_s"] = LATE_S
