@@ -24,6 +24,7 @@ from pathlib import Path
 
 HOOK_DIR = "/run/spike-hooks"
 DEFAULT_FILLER = ".spike-filler"
+FILL_ROUNDS = 4  # enospc: measurements of the free space, each followed by a fill if needed
 
 
 @dataclass(frozen=True)
@@ -134,13 +135,31 @@ def corrupt(machine, path: str, offset: int, length: int, point: str = "") -> Fa
 def enospc(
     machine, mountpoint: str, leave_bytes: int, point: str = "", filler: str = DEFAULT_FILLER
 ) -> FaultEvent:
-    """Fill the filesystem with a filler file so that `leave_bytes` stay free."""
+    """Fill the filesystem with a filler file so that at most `leave_bytes` stay free.
+
+    btrfs releases the extents of a deleted file only at the next transaction commit, so the
+    free count is read after `sync -f` (which commits it), and read again after filling: space
+    that appears later extends the filler (a few rounds at most, then the fault is refused)."""
+    filled, first = 0, None
+    for _ in range(FILL_ROUNDS):
+        machine.succeed(f"sync -f {mountpoint}")
+        avail = int(machine.succeed(f"df --output=avail -B1 {mountpoint} | tail -n1").strip())
+        first = avail if first is None else first
+        if avail <= leave_bytes:
+            if not filled:
+                raise ValueError(
+                    f"only {avail} bytes are free on {mountpoint}, wanted {leave_bytes} left"
+                )
+            detail = f"{mountpoint}: {avail} bytes free after filling, of {first}"
+            return FaultEvent("enospc", point, detail)
+        machine.succeed(f"fallocate -o {filled} -l {avail - leave_bytes} {mountpoint}/{filler}")
+        filled += avail - leave_bytes
+    machine.succeed(f"sync -f {mountpoint}")
     avail = int(machine.succeed(f"df --output=avail -B1 {mountpoint} | tail -n1").strip())
-    size = avail - leave_bytes
-    if size <= 0:
-        raise ValueError(f"only {avail} bytes are free on {mountpoint}, wanted {leave_bytes} left")
-    machine.succeed(f"fallocate -l {size} {mountpoint}/{filler}")
-    return FaultEvent("enospc", point, f"{mountpoint}: {leave_bytes} bytes left of {avail}")
+    if avail <= leave_bytes:
+        detail = f"{mountpoint}: {avail} bytes free after filling, of {first}"
+        return FaultEvent("enospc", point, detail)
+    raise ValueError(f"still {avail} bytes free on {mountpoint} after {FILL_ROUNDS} fills")
 
 
 def sync_limited(machine, start: int, count: int, point: str = "") -> FaultEvent:

@@ -282,3 +282,60 @@ changelog:
   - >-
     Open for the shakedown (T051): the time to a consistent view after a move (S1.10) or the
     refresh procedure, and whether NC excludes a branch from moveonenospc (research F10).
+  - >-
+    Shakedown T051 (2026-10-18, mergerfs 2.41.1, Samba 4.23.10, kernel and cifs client
+    6.18.56, mount.cifs 7.5, btrfs-progs 6.19.1, QEMU 10.2.4; VMs 1536 + 768 MiB; full runs of
+    947 s, 670 s and 652 s against the budget of 1200 s, S1.8 alone 679 s, 470 s and 439 s).
+    Harness defects fixed before the second run, no expected value changed: the enospc filler
+    was sized from a free count that btrfs had not yet updated for the files S1.8 deleted (the
+    pool still had 4 GiB free, every S1.9 write succeeded); the S1.9 writes shared one filler,
+    so the partial file of the first used up the free bytes of the next; S1.9 read new-file
+    sizes through the attribute-caching mount only; effective option values carried a line
+    end.
+  - >-
+    Shakedown T051, S1.1 permissions (open point above, measured): every other field matched
+    (23 archive paths, 12 smbclient checksums, no trash entry in the share, the cache pool or
+    the base pool, the file created at the trashed path on the pool only, trash unchanged).
+    Through mount.cifs all 13 archive files show mode 0755 whatever their branch mode (11 of
+    0644, one 0640, one 0600); the 10 directories show 0755, equal to their branch mode, so
+    nothing tells whether that value is the branch's. mount.cifs(8), FILE AND DIRECTORY
+    OWNERSHIP AND PERMISSIONS: without unix extensions files and directories "will have
+    permissions set to the default file_mode and dir_mode for the mount". S1.1 therefore fails
+    on the mode alone; the comparison stays as written until the maintainer decides where the
+    mode is compared (for example on the server-side cache-pool mount).
+  - >-
+    Shakedown T051, S1.9 (after the harness fixes, every write from 100663296 free bytes):
+    the mount.cifs create and append fail with ENOSPC and smbclient put reports
+    "cli_push returned NT_STATUS_DISK_FULL" (then NT_STATUS_INVALID_NETWORK_RESPONSE on
+    close); the archive tree hashes are unchanged and the append target keeps its head. The
+    partial files stay: the create left 100660272 bytes (second session; the writer's own
+    mount showed the written 268435456 bytes), the upload 201322496 bytes in both sessions,
+    so the observable "no file at either new path is visible with fewer bytes than written"
+    is not met; it is not edited (rule 2) and is open for the maintainer. Seen once while the
+    writes still shared a filler: with the pool below minfreespace and the archive branches
+    NC, smbclient put failed at open with NT_STATUS_MEDIA_WRITE_PROTECTED, not a disk-full
+    status; the criteria name no status for that state. Whether NC excludes a branch from
+    moveonenospc is not measured: the baseline runs with moveonenospc false (read back as
+    false) and no case turns it on, so research F10 stays UNVERIFIED; the criteria either keep
+    moveonenospc=false as a required setting or need a case that measures it.
+  - >-
+    Shakedown T051, S1.10 and the others: at all nine points the moved file was visible with
+    its full size and SHA-256, the open reader read the complete content, the mover exited 0,
+    and the directory manifest equalled the one before the move at the first poll (0.100 s,
+    0.085 s and 0.099 s after the mover ended), so no refresh procedure is needed and
+    tables.mover_view.refresh_procedure stays empty. S1.2: with NC removed, ff and lus both
+    still placed the new file on the pool (the pool is first and had room), so the evidence
+    shows no case in which NC decides the placement while the pool has free space. S1.4: the
+    effective unlink policy is epall and the client delete removed the pool and the archive
+    copy. The archive tree hashes, which include user xattrs, did not change in S1.2 and S1.9,
+    so listing and reading through the share wrote no user.DOSATTRIB on archive files.
+  - >-
+    Shakedown T051, S1.11 (boot of the two-device pool): the first reboot brought the pools and
+    smbd back, and so did the third (members scanned 3.8 ms apart); in the second (one boot in
+    three), both pool members were scanned 2.3 ms apart by two udev workers,
+    dev-disk-by\x2dlabel-spikepool.device timed out and mnt-pool, mnt-base and mnt-cache failed
+    with result 'dependency'. The 64-btrfs.rules of systemd 260.5 mark a member not ready until
+    the volume is complete and retrigger the pending members when it is; that did not happen
+    here. The criteria need a mount setting for the two-device pool that is recorded as
+    required (not found yet, UNVERIFIED) and a number of reboots, since one reboot cannot show
+    a race.

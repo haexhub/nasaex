@@ -29,6 +29,7 @@ from s1.fixture import FIXTURE, NEW_LARGE, POOL, POOL_BRANCH
 
 from testlib import faults
 from testlib.fixtures import Entry, Fixture, content_sha256, flipped_sha256
+from testlib.smb import CifsMount
 
 ARCHIVED = next(e for e in FIXTURE.entries if e.path == "large/archived.bin")
 SEED = "S1.9"
@@ -156,30 +157,48 @@ def _write(lab: Lab, rel: str, mode: str, size: int) -> dict:
     return json.loads(lab.python(lab.client, _WRITE_REPORT, lab.share.path(rel), mode, str(size)))
 
 
-def _size(lab: Lab, rel: str) -> int | None:
-    status, out = lab.client.execute(f"stat -c %s {shlex.quote(lab.share.path(rel))}")
+def _size(lab: Lab, mount: CifsMount, rel: str) -> int | None:
+    status, out = lab.client.execute(f"stat -c %s {shlex.quote(mount.path(rel))}")
     return int(out) if status == 0 else None
 
 
 def check_pool_out_of_space(lab: Lab) -> None:
+    """Each write starts from the precondition: its own filler, and the file an earlier write
+    left on the pool removed from the pool branch (an archive copy would stay for the tree
+    hashes); otherwise the first write's partial file uses up the free bytes of the next."""
     table = lab.tables["out_of_space"]
     size = table["write_bytes"]
     lab.place(Fixture(SEED, (APPEND,)))
     before = lab.tree_hashes()
-    filler = faults.enospc(lab.server, POOL_BRANCH, table["leave_bytes"], point="S1.9")
+    filler, free, new_sizes = {}, {}, {}
+
+    def filled(step: str, write, new_path: str | None = None):
+        try:
+            filler[step] = faults.enospc(
+                lab.server, POOL_BRANCH, table["leave_bytes"], point="S1.9"
+            )
+            free[step] = int(lab.server.succeed(f"df --output=avail -B1 {POOL_BRANCH} | tail -n1"))
+            result = write()
+            if new_path is not None:
+                # The default mount caches attributes and may show the writer's own size; the
+                # second session (actimeo=0) asks the server.
+                new_sizes[new_path] = _size(lab, lab.share, new_path)
+                new_sizes[f"{new_path} (second session)"] = _size(lab, lab.second, new_path)
+                lab.remove(POOL, new_path)
+            return result
+        finally:
+            lab.server.succeed(f"rm -f {POOL_BRANCH}/{faults.DEFAULT_FILLER}")
+
     try:
-        free = int(lab.server.succeed(f"df --output=avail -B1 {POOL_BRANCH} | tail -n1"))
-        create = _write(lab, NEW_PATHS[0], "wb", size)
-        append = _write(lab, APPEND.path, "ab", size)
+        create = filled("create", lambda: _write(lab, NEW_PATHS[0], "wb", size), NEW_PATHS[0])
         lab.client.succeed(f"truncate -s {size} {UPLOAD}")
-        upload = lab.smb.put(UPLOAD, NEW_PATHS[1])
+        upload = filled("put", lambda: lab.smb.put(UPLOAD, NEW_PATHS[1]), NEW_PATHS[1])
+        append = filled("append", lambda: _write(lab, APPEND.path, "ab", size))
         after = lab.tree_hashes()
-        new_sizes = {rel: _size(lab, rel) for rel in NEW_PATHS}
         head = lab.client.succeed(
             f"head -c {APPEND.size} {shlex.quote(lab.share.path(APPEND.path))} | sha256sum"
         ).split()[0]
     finally:
-        lab.server.succeed(f"rm -f {POOL_BRANCH}/{faults.DEFAULT_FILLER}")
         for rel in NEW_PATHS:
             _remove_through_share(lab, rel)
         lab.client.succeed(f"rm -f {UPLOAD}")
@@ -200,7 +219,7 @@ def check_pool_out_of_space(lab: Lab) -> None:
     lab.evidence(
         "S1.9-out-of-space",
         {
-            "filler": filler.detail,
+            "filler": {step: event.detail for step, event in filler.items()},
             "free_bytes_before_writes": free,
             "create": create,
             "append": append,

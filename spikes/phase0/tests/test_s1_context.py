@@ -199,3 +199,11 @@ def test_a_variant_that_fails_to_mount_restores_the_baseline_mount_and_smbd():
         "systemctl start mnt-cache.mount",
         "systemctl start samba-smbd.service",
     ]
+
+
+def test_effective_returns_the_option_value_without_the_line_end_of_the_guest_output():
+    # The value goes into the required settings of the record (S1 shakedown, run 1: "epall\n").
+    server = RecordingMachine({"user.mergerfs.func.unlink": "epall\n"})
+    lab = Lab(server, RecordingMachine(), {"pool": "/mnt/pool"}, Recorder())
+
+    assert lab.effective("func.unlink") == "epall"
