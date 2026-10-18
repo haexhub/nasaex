@@ -2,11 +2,12 @@
 
 SOURCE_SCRIPT writes the seeded source file (testlib.fixtures content, so the client and the
 server generate the same bytes and every prefix is checkable). WRITER copies the source to a
-target in 1 MiB writes, then fsync and close, like the S1.9 writer of
-vm-tests/s1/checks_large_space.py, but unbuffered, so that the bytes it reports are the bytes
-the write calls accepted, and it names the step that failed. `leftover` classifies what a
+target in 1 MiB writes, then fsync and close, unbuffered, so that the bytes it reports are the
+bytes the write calls accepted, and it names the step that failed. `leftover` classifies what a
 failed write left at the target path. Standard library and testlib only; the probes import it
-as the script package `probes`. Scaffolding for the spikes, not product code."""
+as the script package `probes`, and so does check S1.9 (vm-tests/s1/checks_large_space.py,
+task T047a), so a change here changes that check. Scaffolding for the spikes, not product
+code."""
 
 SOURCE_SCRIPT = """import sys
 from testlib.fixtures import Entry, content_chunks
