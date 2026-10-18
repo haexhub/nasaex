@@ -229,12 +229,24 @@ scenarios:
       A filler file on the pool leaves leave_bytes free, above minfreespace; a pool file to append to.
     action: >-
       The client creates a file of write_bytes through mount.cifs, uploads one of the same size with
-      smbclient put, and appends write_bytes to the pool file through mount.cifs.
+      smbclient put, and appends write_bytes to the pool file through mount.cifs, each write from the
+      precondition and from a seeded source of write_bytes (the same bytes on client and server,
+      never a constant byte or a sparse zero file) while the server watches the archive
+      filesystems for write events; then the server removes the filler, the client deletes the
+      leftover of the create and of the upload through the share and repeats each write.
     observable: >-
-      The mount.cifs create and append fail with errno ENOSPC and smbclient reports
-      NT_STATUS_DISK_FULL; the tree hash of every archive branch is unchanged; no file at either new
-      path is visible with fewer bytes than written; the appended file still begins with its original
-      bytes. Required settings recorded: archive branch mode, moveonenospc and minfreespace.
+      Per write: the mount.cifs create and append fail with errno ENOSPC and smbclient reports
+      NT_STATUS_DISK_FULL, no write reports success; the tree hash of every archive branch and
+      every trash directory is unchanged and no write event occurs on the archive filesystems; the
+      written path exists on the pool branch only; any leftover at the path, read on the pool
+      branch, is a byte-exact prefix of the source (for the append, the bytes after the original
+      head; never zero-filled, never other content); the manifest of the pool branch without the
+      written path and the filler is identical before and after; the appended file still begins
+      with its original bytes. Each repeated write reports no error, lies on the pool branch only
+      and reads back with the written data (the append: original head, leftover, source).
+      Recorded, not judged: the leftover's size and the sizes that the writer's session, the
+      second session and the server report. Required settings recorded: archive branch mode,
+      moveonenospc and minfreespace.
     check: pool_out_of_space
   - id: S1.10
     title: A file moved the mover's way keeps the same view through the share
@@ -363,3 +375,15 @@ changelog:
     expectation and whether mergerfs passes mode, owner and group through on /mnt/cache; not
     known either: whether the 0755 of the archive directories through mount.cifs is their
     branch mode or the mount's default.
+  - >-
+    2026-10-19, spec amendment (spec Clarifications 2026-10-19, S1.9 out of space), the
+    maintainer's decision on the open S1.9 point of the shakedown, not a re-prediction from it:
+    probes T051b and T051c measured that the leftover of a failed write is a byte-exact prefix of
+    the written data on plain btrfs, through Samba without mergerfs and through mergerfs alike,
+    so "no file visible with fewer bytes than written" fails on every filesystem measured. S1.9
+    now judges that every client reports the error, archive branches and trash are unchanged
+    (tree hashes, no write event), the path is on the pool branch only, a leftover is a prefix of
+    the written bytes, no other pool file changed, the append head is intact and the repeated
+    write succeeds; the writes use seeded content so that a zero-filled leftover fails. Proposed:
+    the order of the retry and recording the reported sizes without judging them; the retry is
+    UNVERIFIED (not measured). The check is amended by T047a.
