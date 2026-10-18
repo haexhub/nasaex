@@ -27,6 +27,7 @@
       probeFaults = import ./vm-tests/probes/faults.nix { inherit mkSpike; };
       probeDelete = import ./vm-tests/probes/concurrent_delete.nix { inherit mkSpike; };
       probeSmbAttrs = import ./vm-tests/probes/smb_attrs.nix { inherit mkSpike; };
+      probeBootMounts = import ./vm-tests/probes/boot_mounts.nix { inherit mkSpike; };
       # The spikes' VM tests.
       s1 = import ./vm-tests/s1/default.nix { inherit mkSpike; };
 
@@ -63,6 +64,9 @@
           apps.runDriver "probe-concurrent-delete-mid-copy" probeDeleteMidCopy.default.driver;
         probe-concurrent-delete-mid-copy-ff =
           apps.runDriver "probe-concurrent-delete-mid-copy-ff" probeDeleteMidCopy.ff.driver;
+        probe-boot-mounts = apps.runDriver "probe-boot-mounts" probeBootMounts.default.driver;
+        probe-boot-mounts-no-device-timeout = apps.runDriver "probe-boot-mounts-no-device-timeout"
+          probeBootMounts.no-device-timeout.driver;
       });
 
       packages.${system} = {
@@ -74,6 +78,8 @@
         driver-probe-smb-attrs = probeSmbAttrs.driver;
         driver-probe-concurrent-delete-mid-copy = probeDeleteMidCopy.default.driver;
         driver-probe-concurrent-delete-mid-copy-ff = probeDeleteMidCopy.ff.driver;
+        driver-probe-boot-mounts = probeBootMounts.default.driver;
+        driver-probe-boot-mounts-no-device-timeout = probeBootMounts.no-device-timeout.driver;
       }
       # Cached test drivers of the spikes; US2 to US5 and X1 replace these placeholders.
       // lib.genAttrs

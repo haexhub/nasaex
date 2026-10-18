@@ -23,6 +23,8 @@ let
     x1 = 30;
     controls = 15;
     probe = 15;
+    # Probes that repeat a measurement many times (the boot-mount and ENOSPC probes of T051a-c).
+    probe-long = 60;
   };
 
   # VM sizes are proposals, settled in shakedown. The aggregate must stay within the RAM
