@@ -136,6 +136,16 @@ def test_a_criteria_file_that_does_not_load_is_detected(root, text):
     assert checks(verify(root, only=("criteria",))) == {"criteria-schema"}
 
 
+def test_a_criteria_file_that_is_not_utf_8_is_detected(root):
+    path = write_criteria(root)
+    path.write_bytes(path.read_bytes() + b"# caf\xe9\n")
+
+    findings = verify(root, only=("criteria",))
+
+    assert [f.check for f in findings] == ["criteria-schema"]
+    assert findings[0].message.startswith("S1.yaml: ")
+
+
 def test_a_criteria_file_whose_content_names_another_spike_is_detected(root):
     write_criteria(root, criteria_doc("S3"), name="S1.yaml")
 
@@ -232,6 +242,19 @@ def truncated_evidence() -> bytes:
     noise = hashlib.shake_128(b"incompressible").digest(65536)
     data = evidence_tar({"driver.log": b"log\n", "core.bin": noise})
     return data[: len(data) * 3 // 4]
+
+
+@pytest.mark.parametrize(
+    "evidence", [b"not a tar archive", truncated_evidence()], ids=["not-a-tar", "truncated"]
+)
+def test_an_evidence_archive_that_is_not_a_readable_tar_is_detected(root, evidence):
+    entry = frozen_s1(root)
+    write_record(root, record_doc("S1", 1, entry.sha256), evidence=evidence)
+
+    findings = verify(root, only=("records",))
+
+    assert [f.check for f in findings] == ["record-evidence"]
+    assert "not a readable tar archive" in findings[0].message
 
 
 def test_x1_records_are_never_required(root):
