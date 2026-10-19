@@ -519,3 +519,24 @@ changelog:
     after the control: the arch0 tree hash at the start of the lus case differed from the one
     of the ff case, consistent with parent directories that mergerfs created on arch0 for the
     control and that stay (not listed, UNVERIFIED). Not a criteria change.
+  - >-
+    2026-10-19, shakedowns of the amended S1.11 (task T043b: 20 reboots, pool-retrigger.service of
+    task T028b on the server; no record). S1.11 alone (--only S1.11, run 744 s): passed in 554 s,
+    20 of 20 boots complete (base pool, cache pool and smbd active, every by-label mount of
+    /etc/fstab mounted), the manifest of the whole share (29 paths) identical after the last
+    reboot. Per reboot, host seconds: shutdown 0.96 to 90.97 (median 0.99; the 90.97 s was
+    systemd-shutdown waiting for a leftover process "mount.fuse.merg" (as logged) until
+    SIGKILL, as the mergerfs race of probe T051i), boot until the job queue was empty 13.9 to 26.4 (median
+    15.0); the retrigger unit ended with result success and exit status 0 in every boot after
+    0.89 to 4.84 s (median 0.98). Full run, the one timed against the 40-minute budget of
+    nix/mkspike.nix (planned at most about 34 minutes): every scenario passed, 1969 s (32.8
+    min) in all; S1.1 43 s, S1.2 100 s (with the pool-low step of T044a), S1.3 10 s, S1.4 to
+    S1.7 6 s together, S1.8 917 s, S1.9 112 s, S1.10 12 s, S1.11 711 s (98 paths identical
+    after the last of 20 complete boots; shutdown 0.99 to 4.75 s, median 1.96, no SIGKILL
+    wait; boot 14.1 to 38.3 s, median 20.5; the unit ended with success and exit status 0 after
+    1.0 to 6.81 s, median 1.72, and in reboot 8 its udevadm settle reached the 5 s bound and it
+    triggered anyway, logging "udev queue not empty after 5 s (exit 1)"). The host was loaded
+    during the full run (load average 3.8 at the start, 19.6 during S1.8 and 37.5 at the end;
+    IO pressure avg300 5.3 % at the start and 11.5 % during S1.8), while S1.8 took 438 to 678 s
+    in the earlier quiet runs; how much of the 917 s and of the longer later boots the load
+    caused is not measured. Not a criteria change.
