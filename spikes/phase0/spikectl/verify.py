@@ -3,8 +3,9 @@
 Scaffolding for the Phase 0 spikes, not product code. Check groups:
 
 - criteria: schema, lock hashes, frozen status matches the lock, S2 has the reviewed S2.7
-- records: schema, record-to-lock pairing, layout, evidence hash, disks of S1 to S4 runs; a
-  review record (S2.7) has no archive of its own and is checked against the record it reviews
+- records: schema, record-to-lock pairing, layout, evidence hash and readability, disks of S1
+  to S4 runs; a review record (S2.7) has no archive of its own and is checked against the
+  record it reviews
 - git: append-only lock history, criteria commit before record commit, reviewed record before
   its review (needs a git work tree)
 - hygiene: host paths, user and host names, authoring-tool self-references, spikes/ references
@@ -203,12 +204,26 @@ def _check_record(root: Path, path: Path, lock: list[LockEntry]) -> list[Finding
         findings.append(
             Finding("record-evidence", f"{rel}: evidence archive missing or hash differs")
         )
+    elif not _archive_readable(archive):
+        findings.append(
+            Finding("record-evidence", f"{rel}: evidence archive is not a readable tar archive")
+        )
     return findings
 
 
 def _reviewed_path(path: Path, record: dict) -> Path:
     """record.json of the record a review names (reviews sit in the same group directory)."""
     return path.parent.parent / record["reviewed_record"] / "record.json"
+
+
+def _archive_readable(archive: Path) -> bool:
+    """Whether the archive opens and every member header can be read up to its end."""
+    try:
+        with tarfile.open(archive, mode="r:*") as tar:
+            tar.getmembers()
+        return True
+    except (tarfile.TarError, EOFError, OSError):
+        return False
 
 
 def _archive_member_sha256(archive: Path, name: str) -> str | None:
@@ -425,7 +440,7 @@ def _evidence_texts(path: Path):
                 if text is not None:
                     yield member.name, text
     except (tarfile.TarError, EOFError, OSError):
-        # Not a readable archive: the records group reports a hash or layout problem if it matters.
+        # Not a readable archive: the records group reports it (record-evidence).
         return
 
 

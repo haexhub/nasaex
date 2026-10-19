@@ -110,7 +110,7 @@ def _jsonable(value):
 def load_criteria(path: Path) -> dict:
     try:
         doc = _jsonable(yaml.safe_load(path.read_text(encoding="utf-8")))
-    except yaml.YAMLError as error:
+    except (yaml.YAMLError, UnicodeDecodeError) as error:
         raise ModelError(f"{path.name}: not valid YAML: {error}") from error
     if not isinstance(doc, dict):
         raise ModelError(f"{path.name}: top level must be a mapping")

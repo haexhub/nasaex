@@ -264,6 +264,18 @@ def test_locked_criteria_that_cannot_be_read_are_an_error_and_give_no_verdict(ro
     assert len(verdict.errors) == 1 and verdict.errors[0].startswith("S1.yaml: ")
 
 
+def test_locked_criteria_that_are_not_utf_8_are_an_error_and_give_no_verdict(root):
+    entry = frozen(root, "S1")
+    put_record(root, entry, "S1", {"S1.1": "pass", "S1.2": "pass"})
+    path = root / CRITERIA / "S1.yaml"
+    path.write_bytes(path.read_bytes() + b"# caf\xe9\n")
+
+    verdict = current_verdicts(root)["S1"]
+
+    assert (verdict.verdict, verdict.record_id) == ("none", None)
+    assert len(verdict.errors) == 1 and verdict.errors[0].startswith("S1.yaml: ")
+
+
 # --- gate matrix and X1 ----------------------------------------------------
 
 

@@ -167,6 +167,18 @@ def test_freeze_refuses_a_criteria_file_that_does_not_load(root, text, reason):
     assert lock_lines(root) == []
 
 
+def test_freeze_refuses_a_criteria_file_that_is_not_utf_8(root):
+    path = write_criteria(root)
+    path.write_bytes(path.read_bytes() + b"# caf\xe9\n")
+    original = path.read_bytes()
+
+    with pytest.raises(FreezeError, match="S1.yaml: .*utf-8"):
+        freeze(root, "S1")
+
+    assert path.read_bytes() == original
+    assert lock_lines(root) == []
+
+
 def test_freeze_refuses_a_status_line_it_cannot_rewrite_to_frozen(root):
     path = write_criteria(root)
     quoted = path.read_text(encoding="utf-8").replace("status: draft", "status: 'draft'")
