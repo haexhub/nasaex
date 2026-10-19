@@ -76,21 +76,11 @@ SPACE_BOUND_S = 60
 WATCH = "/run/s1.9-watch"  # inotify log, its stderr and the end-marker directory
 WATCH_EVENTS = "modify,attrib,close_write,create,delete,moved_to,moved_from"
 
-# The pool branch's manifest without the filler, as pool_rest of
-# probes/enospc_probe_setup.py: every top-level name plus the manifest below each top-level
-# directory, so the filler's gigabytes are never read. ponytail: a top-level file is compared
-# by name only; S1.9 writes below s1.9/, a full manifest would hash the filler every time.
-_POOL_REST = """import os, sys
+# The pool branch's full manifest without the filler, whose gigabytes are never read.
+_POOL_REST = """import sys
 from pathlib import Path
-from testlib.manifest import Item, build_manifest, to_json
-root, filler, rest = Path(sys.argv[1]), sys.argv[2], {}
-for entry in os.scandir(root):
-    if entry.name == filler:
-        continue
-    rest[entry.name] = Item("top-level", None, 0, None, (), None)
-    if entry.is_dir(follow_symlinks=False):
-        rest |= {f"{entry.name}/{p}": i for p, i in build_manifest(Path(entry.path)).items()}
-print(to_json(rest))"""
+from testlib.manifest import build_manifest, to_json
+print(to_json(build_manifest(Path(sys.argv[1]), skip=(sys.argv[2],))))"""
 
 
 def _remove_through_share(lab: Lab, rel: str) -> None:

@@ -56,14 +56,19 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def build_manifest(root: Path) -> Manifest:
-    """Manifest of everything below `root` (not `root` itself), keyed by relative POSIX path."""
+def build_manifest(root: Path, skip: tuple[str, ...] = ()) -> Manifest:
+    """Manifest of everything below `root` (not `root` itself), keyed by relative POSIX path;
+    a path in `skip` and everything below it are left out (and never read)."""
     manifest: Manifest = {}
     for directory, dirnames, filenames in os.walk(root, followlinks=False):
+        base = Path(directory)
+        dirnames[:] = [d for d in dirnames if (base / d).relative_to(root).as_posix() not in skip]
         for name in dirnames + filenames:
-            path = Path(directory) / name
-            info = path.lstat()
+            path = base / name
             rel = path.relative_to(root).as_posix()
+            if rel in skip:
+                continue
+            info = path.lstat()
             mode = stat.S_IMODE(info.st_mode)
             if stat.S_ISDIR(info.st_mode):
                 manifest[rel] = Item("dir", None, mode, None, _xattrs(path), None)
