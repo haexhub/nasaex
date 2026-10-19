@@ -485,7 +485,8 @@ changelog:
     reboots of T051 and T051e; that the shakedown failure was this race is UNVERIFIED), and T051i
     measured the bounded unit U2 (change, pool_race_modules.nix:68-83, retrigger_v2.nix:56):
     forced race rescued 10 of 10, 30 normal boots up without any event sent or side effect, 10
-    degraded boots exit 0 and running, udev unsettled for 31 s held the boot 5.4 s. The unit is
+    degraded boots exit 0 and running, with udev unsettled for 31 s the unit ended with exit 0
+    after 5.4 s, local-fs.target waiting only for the 10 s device timeout. The unit is
     now a required setting of the pool storage (tables.reboot.retrigger_unit, tasks T028b and
     T043b), and S1.11 reboots tables.reboot.count = 20 times in a row (0 of 20 bounds the
     per-boot failure rate below 13.9 % at 95 %); each boot must bring the base pool, the cache
