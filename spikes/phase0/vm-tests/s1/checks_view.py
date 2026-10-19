@@ -289,7 +289,7 @@ def check_reboot_view(lab: Lab) -> None:
             _reboot(lab, boots[-1])
             if boot_failures(boots[-1]):
                 break
-        if all(boots[-1]["units_active"].values()):
+        if boots and not boot_failures(boots[-1]):
             lab.mount_clients()
             differences = compare(before, lab.share.manifest())
     finally:

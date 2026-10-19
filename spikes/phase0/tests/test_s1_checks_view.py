@@ -247,9 +247,7 @@ def test_a_unit_down_at_reboot_k_fails_captures_and_runs_no_further_reboot(tmp_p
     assert not any(m == "client" and "mount -t cifs" in c for m, c in log)
 
 
-def test_a_missing_by_label_mount_fails_and_is_captured_before_the_clients_mount_again(
-    tmp_path, monkeypatch
-):
+def test_a_missing_by_label_mount_fails_before_clients_mount_again(tmp_path, monkeypatch):
     lab, log = reboot_lab(tmp_path, monkeypatch, count=20, mounted={2: "/mnt/pool\n"})
 
     with pytest.raises(AssertionError) as failed:
@@ -258,9 +256,8 @@ def test_a_missing_by_label_mount_fails_and_is_captured_before_the_clients_mount
     assert str(failed.value) == "reboot 2: /mnt/parity is not mounted after the boot"
     assert reboots_done(log) == 2
     assert status(tmp_path, "S1.11-boot-diagnostics")["missing_mounts"] == ["/mnt/parity"]
-    journal = next(i for i, (_, c) in enumerate(log) if c.startswith("journalctl -b"))
-    remount = next(i for i, (m, c) in enumerate(log) if m == "client" and "mount -t cifs" in c)
-    assert journal < remount
+    assert not any(m == "client" and "mount -t cifs" in c for m, c in log)
+    assert any(c.startswith("journalctl -b") for _, c in log)
 
 
 def test_a_view_difference_after_the_last_reboot_fails(tmp_path, monkeypatch):
