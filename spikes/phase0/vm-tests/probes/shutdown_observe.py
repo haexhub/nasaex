@@ -9,8 +9,11 @@ CLOCK_MONOTONIC seconds.
                     FUSE connections still open (/sys/fs/fuse/connections/<n>/waiting), the mount
                     namespaces that still hold a fuse.mergerfs mount, then a poll of up to POLL_S
                     for the servers to exit (the time each one went away) and, for any still
-                    running, a second snapshot; one JSON line with the boot id is appended to
-                    <jsonl> (fsynced) and a one-line summary goes to stdout
+                    running, a second snapshot; only when SIGTERM_FLAG exists (a diagnostic run,
+                    never a counted one, as it changes what systemd-shutdown later meets): SIGTERM
+                    to each server still running, a poll of up to POLL_S and a third snapshot;
+                    one JSON line with the boot id is appended to <jsonl> (fsynced) and a
+                    one-line summary goes to stdout
   put <file> <bytes> <fsync 0|1>
                     write <bytes> random bytes to <file> (one write, then fsync or not, close) and
                     print their SHA-256
@@ -26,6 +29,7 @@ import time
 # mounts, forks and keeps serving in the child (libfuse/lib/helper.c fuse_daemonize).
 COMMS = {"mount.fuse.merg", "mount.mergerfs", "mergerfs"}
 POLL_S = 2.0
+SIGTERM_FLAG = "/var/lib/probe-t051i/sigterm"
 
 
 def _read(path: str) -> str:
@@ -53,7 +57,9 @@ def _thread(pid: int, tid: str) -> dict:
         "wchan": _read(f"{base}/wchan").strip() or "0",
         "stack": _read(f"{base}/stack").splitlines()[:8],
         # which signals the thread blocks, ignores and catches, and its current system call
-        "signals": {k: status.get(k, "").strip() for k in ("SigBlk", "SigIgn", "SigCgt")},
+        "signals": {
+            k: status.get(k, "").strip() for k in ("SigPnd", "ShdPnd", "SigBlk", "SigIgn", "SigCgt")
+        },
         "syscall": _read(f"{base}/syscall").split()[:3],
     }
 
@@ -127,6 +133,17 @@ def holders() -> list[dict]:
     return list(seen.values())
 
 
+def _poll(gone: dict[str, float | None]) -> dict[str, float | None]:
+    """Up to POLL_S: the time after which each pid no longer runs a mergerfs server."""
+    start = time.monotonic()
+    while any(t is None for t in gone.values()) and time.monotonic() - start < POLL_S:
+        for pid, t in gone.items():
+            if t is None and _read(f"/proc/{pid}/comm").strip() not in COMMS:
+                gone[pid] = round(time.monotonic() - start, 3)
+        time.sleep(0.02)
+    return gone
+
+
 def capture(log_path: str) -> None:
     start = time.monotonic()
     found = servers()
@@ -137,15 +154,16 @@ def capture(log_path: str) -> None:
         "connections": connections(),
         "holders": holders(),
     }
-    gone: dict[str, float | None] = {str(s["pid"]): None for s in found}
-    while any(t is None for t in gone.values()) and time.monotonic() - start < POLL_S:
-        for pid, t in gone.items():
-            if t is None and _read(f"/proc/{pid}/comm").strip() not in COMMS:
-                gone[pid] = round(time.monotonic() - start, 3)
-        time.sleep(0.02)
+    gone = _poll({str(s["pid"]): None for s in found})
     record["gone_after_s"] = gone
-    if any(t is None for t in gone.values()):
+    alive = [pid for pid, t in gone.items() if t is None]
+    if alive:
         record["after"] = {"servers": servers(), "connections": connections()}
+    if alive and os.path.exists(SIGTERM_FLAG):
+        for pid in alive:
+            os.kill(int(pid), 15)
+        record["sigterm_gone_after_s"] = _poll(dict.fromkeys(alive))
+        record["after_sigterm"] = {"servers": servers()}
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     with open(log_path, "a") as f:
         f.write(json.dumps(record, sort_keys=True) + "\n")
@@ -153,7 +171,8 @@ def capture(log_path: str) -> None:
         os.fsync(f.fileno())
     print(
         f"PROBE-T051I-CAPTURE servers={[(s['pid'], s['cgroup']) for s in found]} "
-        f"gone_after_s={gone} connections={record['connections']} "
+        f"gone_after_s={gone} sigterm={record.get('sigterm_gone_after_s')} "
+        f"connections={record['connections']} "
         f"holders={[(h['comm'], h['mounts']) for h in record['holders']]}",
         flush=True,
     )
