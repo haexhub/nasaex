@@ -17,8 +17,9 @@
 # free of the pool branch and of the cache pool, the data space counters and the commit count of
 # the pool's btrfs (sysfs), `btrfs filesystem df` and the space lines of `btrfs filesystem usage`,
 # and a 1 MiB write through mount.cifs to a new name with its errno. Afterwards every retry that
-# reported no error is read back on the pool branch. PROBE_ROUNDS (default 2; T051h ran 3) repeats
-# all variants, interleaved; PROBE_VARIANTS (default all) selects them. Result:
+# reported no error is read back on the pool branch, and an appended file longer than head,
+# leftover and source is measured between leftover and source (`gap`). PROBE_ROUNDS (default 2)
+# repeats all variants, interleaved; PROBE_VARIANTS (default all) selects them. Result:
 # probe-retry-timeline.json in the working directory of the driver and a PROBE-RESULT line;
 # retry_timeline.results.md holds it.
 from pathlib import Path
@@ -95,6 +96,7 @@ def sequence(name: str, mount, smb, d: str) -> tuple[dict, float]:
         filler = size_of(server, f"{POOL_BRANCH}/{faults.DEFAULT_FILLER}")
         row: dict = {"precondition": detail, "filler_bytes": filler}
         row["client"] = write(rel)
+        row["ended"] = time.monotonic()
         row["leftover_bytes"] = (size_of(server, f"{POOL_BRANCH}/{rel}") or 0) - (
             HEAD if step == "append" else 0
         )
@@ -108,6 +110,8 @@ def sequence(name: str, mount, smb, d: str) -> tuple[dict, float]:
     }
     t0 = time.monotonic()
     rep["last_filler_removed_before_t0_s"] = round(t0 - removed, 3)
+    for row in rep["writes"].values():
+        row["ended_before_t0_s"] = round(t0 - row.pop("ended"), 3)
     w = rep["writes"]
     rep["freed_bytes"] = sum(
         (w["append"]["filler_bytes"], w["create"]["leftover_bytes"], w["put"]["leftover_bytes"])
@@ -125,6 +129,7 @@ def retries(mount, smb, d: str, t0: float) -> dict:
         row: dict = {"before": brief(sample()), "start_s": since(t0)}
         row["client"] = write(rel)
         row["end_s"] = since(t0)
+        row["size_on_pool"] = size_of(server, f"{POOL_BRANCH}/{rel}")
         row["after"] = brief(sample())
         row["holders"] = lab.holders(rel)
         out[step] = row
@@ -159,6 +164,28 @@ def read_back(rep: dict, d: str) -> None:
             "source": range_sha(path, HEAD + kept) == RESULT["source_sha256"],
         }
         row["reads_back"] = all(row["parts_read_back"].values())
+        size = row["size"] = int(run(server, f"stat -c %s {path}"))
+        if size > HEAD + kept + SIZE:
+            row["gap"] = gap(path, HEAD + kept, size - SIZE, kept)
+
+
+def gap(path: str, start: int, end: int, kept: int) -> dict:
+    """Bytes between the leftover of the failed append and the source the retry appended:
+    zeros, the rest of the failed append's source (kept onwards), or other; and whether the
+    retry's source follows it."""
+    q, n = shlex.quote(path), end - start
+    window = f"iflag=skip_bytes,count_bytes skip={start} count={n} bs=1M status=none"
+    found = {
+        "start": start,
+        "bytes": n,
+        "tail_is_source": range_sha(path, end) == RESULT["source_sha256"],
+    }
+    found["nonzero_bytes"] = int(run(server, f"dd if={q} {window} | tr -d '\\000' | wc -c"))
+    rest = f"iflag=skip_bytes,count_bytes skip={kept} count={n} bs=1M status=none"
+    found["is_source_continuation"] = (
+        range_sha(path, start, n) == run(server, f"dd if={SOURCE} {rest} | sha256sum").split()[0]
+    )
+    return found
 
 
 for r in range(ROUNDS):
