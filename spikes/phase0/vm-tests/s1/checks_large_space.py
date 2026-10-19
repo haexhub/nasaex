@@ -38,7 +38,6 @@ Scaffolding for the spikes, not product code."""
 
 import json
 import posixpath
-import re
 import shlex
 from collections.abc import Callable, Mapping
 from functools import lru_cache
@@ -52,7 +51,7 @@ from s1.fixture import ARCHIVE, FIXTURE, NEW_LARGE, POOL, POOL_BRANCH, trash
 from testlib import faults
 from testlib.fixtures import Entry, Fixture, content_sha256, flipped_sha256
 from testlib.manifest import Manifest, compare, describe, from_json
-from testlib.smb import CifsMount
+from testlib.smb import CifsMount, nt_status
 
 ARCHIVED = next(e for e in FIXTURE.entries if e.path == "large/archived.bin")
 SEED = "S1.9"
@@ -64,7 +63,6 @@ SOURCE = "/root/s1.9-source.bin"  # the seeded source, generated alike on client
 EMPTY = "/root/s1.9-empty.bin"  # the client's empty file of the smbclient create in the window
 # The empty creates in the refusal window (task T047c), by client implementation.
 WINDOW_CREATES = {"mount.cifs": "s1.9/window-create.bin", "smbclient": "s1.9/window-put.bin"}
-_NT_STATUS = re.compile(r"NT_STATUS_[A-Z_]+")
 ARCHIVE_KEYS = (*ARCHIVE, *(trash(serial) for serial in ARCHIVE))
 # Classes of probes.enospc_writes.leftover that are a byte-exact prefix of the source.
 PREFIX_CLASSES = ("absent", "empty", "complete", "partial, prefix intact")
@@ -274,7 +272,8 @@ def _size(machine, path: str) -> int | None:
     return int(out) if status == 0 else None
 
 
-def _free_bytes(lab: Lab) -> int:
+def pool_free_bytes(lab: Lab) -> int:
+    """f_bavail of the pool branch in bytes (df, statvfs); S1.2 polls it too (task T044a)."""
     return int(lab.server.succeed(f"df --output=avail -B1 {POOL_BRANCH} | tail -n1"))
 
 
@@ -349,7 +348,7 @@ def _failed_write(lab: Lab, step: str, rel: str, table: Mapping, hashes: dict) -
         seen["filler_bytes"] = int(
             lab.server.succeed(f"stat -c %s {POOL_BRANCH}/{faults.DEFAULT_FILLER}")
         )
-        seen["free_before"] = _free_bytes(lab)
+        seen["free_before"] = pool_free_bytes(lab)
         pool_before = _pool_rest(lab, rel)
         _watch_start(lab)
         seen["report"] = _client_write(lab, step, rel, table["write_bytes"])
@@ -366,7 +365,7 @@ def _failed_write(lab: Lab, step: str, rel: str, table: Mapping, hashes: dict) -
             size = max(0, (_size(lab.server, path) or 0) - skip)
             seen["leftover"] = {"size": size, "sha256": _range_sha256(lab.server, path, skip)}
             seen["prefix_sha256"] = _range_sha256(lab.client, SOURCE, 0, size)
-        seen["free_after"] = _free_bytes(lab)
+        seen["free_after"] = pool_free_bytes(lab)
         after = lab.tree_hashes(ARCHIVE_KEYS)
         seen["archive_changed"] = changed_branches(hashes, after)
         seen["archive_tree_hashes"] = {"before": hashes, "after": after}
@@ -425,7 +424,7 @@ def _window_creates(lab: Lab) -> dict:
     put = list(lab.smb.put(EMPTY, WINDOW_CREATES["smbclient"]))
     seen = {
         "mount.cifs": {"report": cifs, "status": cifs["errno"]},
-        "smbclient": {"report": put, "status": next(iter(_NT_STATUS.findall(put[1])), None)},
+        "smbclient": {"report": put, "status": nt_status(put[1])},
     }
     for (client, rel), step in zip(WINDOW_CREATES.items(), ("create", "put"), strict=True):
         if not _retry_error(step, seen[client]["report"]):
@@ -453,7 +452,9 @@ def check_pool_out_of_space(lab: Lab) -> None:
         window = _window_creates(lab)
         target = freed_space_target(writes, SPACE_EPSILON)
         polled = monotonic()
-        freed = wait_for_freed_space(lambda: _free_bytes(lab), target, clock=monotonic, sleep=sleep)
+        freed = wait_for_freed_space(
+            lambda: pool_free_bytes(lab), target, clock=monotonic, sleep=sleep
+        )
         window_s = round(polled - deleted + freed["waited_s"], 3)
         if freed["appeared"]:
             for step, rel in WRITES.items():
