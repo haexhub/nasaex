@@ -5,7 +5,10 @@
 # up. `name` and `script` select the probe: the idle reboots of T051a (the default) or the reboots
 # after the S1 heavy IO of T051d. The test script is boot_probe_setup.py followed by `script`.
 # `extraServerModules` adds probe-only modules to the server (the pool race probe of T051f,
-# pool_race.nix); empty by default, so T051a and T051d are unchanged.
+# pool_race.nix); empty by default, so T051a and T051d are unchanged. `prelude` is Python put
+# before boot_probe_setup.py, run before the first start (the side-effect probe of T051g,
+# retrigger_effects.nix, names its mode and attaches a disk its VM definition leaves out there);
+# empty by default.
 # Variants, run one at a time:
 #   default            the mount options of nix/nodes.nix as they are (nofail,
 #                      x-systemd.device-timeout=10s)
@@ -17,6 +20,7 @@
 , name ? "probe-boot-mounts"
 , script ? ./probe_boot_mounts.py
 , extraServerModules ? [ ]
+, prelude ? ""
 }:
 
 let
@@ -53,7 +57,7 @@ let
     machines = [ "server" ];
     budget = "probe-long";
     testScript = builtins.toFile "${name}${suffix}.py"
-      (builtins.readFile ./boot_probe_setup.py + builtins.readFile script);
+      (prelude + builtins.readFile ./boot_probe_setup.py + builtins.readFile script);
     scriptPackages = {
       probes = ./.;
       s1 = ../s1;
