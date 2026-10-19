@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from helpers import LocalMachine, RecordingMachine, xattrs_supported
-from s1.context import Lab, branches_with_mode, variant_options
+from s1.context import Lab, branches_with_mode, running_baseline, variant_options
 
 from testlib.fixtures import Entry, Fixture, expected_manifest
 from testlib.manifest import build_manifest, tree_hash
@@ -19,6 +19,57 @@ CONFIGURED = (
     "passthrough.io=off,cache.files=off"
 )
 WHAT = "/mnt/pool:/mnt/archive/arch0/branch=NC:/mnt/archive/arch1/branch=NC"
+
+
+# tables.baseline of the criteria and what the running cache pool reports for it (the
+# formats measured in probe T051h: minfreespace in bytes, branches as path=MODE joined by ":").
+BASELINE = {
+    "category.create": "ff",
+    "archive_branch_mode": "NC",
+    "moveonenospc": "false",
+    "minfreespace": "64M",
+    "passthrough.io": "off",
+    "cache.files": "off",
+    "func.unlink": "epall",
+}
+RUNNING = {
+    "category.create": "ff",
+    "moveonenospc": "false",
+    "minfreespace": "67108864",
+    "passthrough.io": "off",
+    "cache.files": "off",
+    "func.unlink": "epall",
+    "branches": "/mnt/pool=RW:/mnt/archive/arch0/branch=NC:/mnt/archive/arch1/branch=NC",
+}
+
+
+def test_the_running_baseline_is_read_option_by_option_and_matches_its_table():
+    seen, differences = running_baseline(BASELINE, RUNNING.__getitem__)
+
+    assert seen == RUNNING
+    assert differences == []
+
+
+def test_a_differing_option_of_the_running_pool_is_named_with_both_values():
+    _, differences = running_baseline(BASELINE, (RUNNING | {"cache.files": "auto-full"}).get)
+
+    assert differences == ["cache.files is auto-full, the criteria say off"]
+
+
+def test_minfreespace_is_compared_in_bytes():
+    _, differences = running_baseline(BASELINE, (RUNNING | {"minfreespace": "64000000"}).get)
+
+    assert differences == ["minfreespace is 64000000, the criteria say 64M (67108864 bytes)"]
+
+
+def test_every_archive_branch_must_have_the_mode_of_the_table():
+    branches = "/mnt/pool=RW:/mnt/archive/arch0/branch=NC,4G:/mnt/archive/arch1/branch=RW"
+
+    _, differences = running_baseline(BASELINE, (RUNNING | {"branches": branches}).get)
+
+    assert differences == [
+        "archive branch /mnt/archive/arch1/branch has mode RW, the criteria say NC"
+    ]
 
 
 def test_variant_options_replace_a_value_in_place_and_keep_everything_else():

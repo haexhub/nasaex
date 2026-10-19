@@ -19,7 +19,7 @@ import base64
 import hashlib
 import json
 import shlex
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -102,6 +102,41 @@ def branches_with_mode(what: str, mode: str | None) -> str:
     pool, *archive = what.split(":")
     plain = [branch.partition("=")[0] for branch in archive]
     return ":".join([pool, *(b if mode is None else f"{b}={mode}" for b in plain)])
+
+
+def _bytes(size: str) -> int:
+    """A mergerfs size (a number with an optional K, M, G or T suffix, powers of 1024)."""
+    power = "KMGT".find(size[-1].upper()) + 1
+    return int(size[:-1]) * 1024**power if power else int(size)
+
+
+def running_baseline(
+    baseline: Mapping[str, str], effective: Callable[[str], str]
+) -> tuple[dict[str, str], list[str]]:
+    """What the running cache pool reports for every option of the criteria's baseline table
+    (`effective` reads one option), the archive branch mode from its branch list, and every
+    difference from the table."""
+    seen = {key: effective(key) for key in baseline if key != "archive_branch_mode"}
+    seen["branches"] = effective("branches")
+    differences = []
+    for key, expected in baseline.items():
+        if key == "archive_branch_mode":
+            for branch in seen["branches"].split(":")[1:]:  # the pool branch is first
+                path, _, mode = branch.partition("=")
+                mode = mode.partition(",")[0]  # a branch's own minfreespace follows a comma
+                if mode != expected:
+                    differences.append(
+                        f"archive branch {path} has mode {mode}, the criteria say {expected}"
+                    )
+        elif key == "minfreespace":
+            if int(seen[key]) != _bytes(expected):
+                differences.append(
+                    f"minfreespace is {seen[key]},"
+                    f" the criteria say {expected} ({_bytes(expected)} bytes)"
+                )
+        elif seen[key] != expected:
+            differences.append(f"{key} is {seen[key]}, the criteria say {expected}")
+    return seen, differences
 
 
 def under(prefix: str, entries: tuple[Entry, ...]) -> tuple[Entry, ...]:
