@@ -25,7 +25,7 @@ mount or of smbd, no write error was measured in any run. Measured costs and one
   without it (Fisher exact, two-sided p = 0.037); 2 against 1 of these waited 90 s for SIGKILL. The pool was
   unmounted before the wait in the inspected cases. Why this differs is UNVERIFIED (Step 2, side observations).
 - In the first idempotence run two of five 20 s writes had one write+fsync of 1.9 s and 1.3 s, not timed; a second run
-  with timing and controls had none over 100 ms in 11 repetitions. Cause UNVERIFIED.
+  with timing and controls had none over 100 ms in 10 repetitions. Cause UNVERIFIED.
 
 ## Step 1: environment and what is measured
 
@@ -316,7 +316,7 @@ Not established:
 
 - Cause of the leftover mergerfs mount helpers at shutdown and why they were more frequent with the unit (8/31 vs
   17/31, one run each); cause of the 90 s shutdowns (1 vs 2).
-- Cause of the 1.9 s and 1.3 s write+fsync in the first idempotence run (not reproduced in 11 timed repetitions).
+- Cause of the 1.9 s and 1.3 s write+fsync in the first idempotence run (not reproduced in 10 timed repetitions).
 - Cause of the guest-wide stall in boot 15 of the run with the unit.
 - Behaviour through SMB from the client VM, on real disks, under load, with 4 vCPUs, with other device timeouts.
 - That the time to the label unit scales as 2R + 0.7 s outside the forced reproduction.
