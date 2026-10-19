@@ -2,9 +2,11 @@
 
 Measured on 2026-10-19 with the probe `enospc.nix` / `enospc_probe_setup.py` + `probe_retry_timeline.py`
 (summary helpers in `retry_timeline.py`), one VM test at a time, KVM, machine state on an ext4 disk. Run 1:
-`PROBE_ROUNDS=3`, all five variants interleaved (15 repetitions, 1642 s). Run 2, after run 1 showed a wrong append read back: `PROBE_ROUNDS=3 PROBE_VARIANTS=V0`, with
-the file size and the bytes after the leftover recorded (3 repetitions, 332 s). A probe
-never writes a record; the full output is `probe-retry-timeline.json` in the output directory of the driver
+`PROBE_ROUNDS=3`, all five variants interleaved (15 repetitions, 1642 s). Run 2, after run 1 showed a wrong
+append read back: `PROBE_ROUNDS=3 PROBE_VARIANTS=V0`, with the file size and the bytes after the leftover
+recorded (3 repetitions, 332 s). Run 3, whether mergerfs causes the zero gap of the append retry:
+`probe_append_retry.py`, variants Vr and V5 to V8 (32 repetitions, 214 s). A probe never writes a record; the
+full output is `probe-retry-timeline.json` / `probe-append-retry.json` in the output directory of the driver
 (evidence, not committed). Nothing below edits the spec, the criteria or the S1.9 check.
 
 Question: the amended S1.9 check (T047a, branch `001-phase0-s1-checks-amend`, commit `0d546c6`) passed every
@@ -40,6 +42,8 @@ or cifs caches, leftovers still present).
 nix build ./spikes/phase0#driver-probe-retry-timeline
 SPIKE_STATE_DIR=<short directory on an ext4 disk> PROBE_ROUNDS=3 nix run ./spikes/phase0#probe-retry-timeline
 SPIKE_STATE_DIR=<short directory on an ext4 disk> PROBE_ROUNDS=3 PROBE_VARIANTS=V0 nix run ./spikes/phase0#probe-retry-timeline
+nix build ./spikes/phase0#driver-probe-append-retry
+SPIKE_STATE_DIR=<short directory on an ext4 disk> PROBE_REPEATS=5 nix run ./spikes/phase0#probe-append-retry
 ```
 
 ## What one repetition does (guest commands, from the probe output and the probe code)
@@ -162,6 +166,55 @@ failed append, the file is head + leftover + source. Run 1 shows the same split:
 read back wrong started 0.805 s and 0.727 s after t0 (V0 r1, r2), the 13 that read back right started 3.7 s
 or later after t0.
 
+## Results, run 3: the append retry with and without mergerfs (Vr, V5 to V8)
+
+One repetition of `probe_append_retry.py`: a 4096-byte append target on the pool branch, the S1.9 filler
+(100663296 bytes free), a failed append of 268435456 bytes through the writer's mount, the leftover measured
+on the pool branch, the filler removed, then (after the variant's delay) the client's `stat` of the file
+through the retrying mount and the append again; then the file read on the pool branch. Without the create and
+upload of the check, so "at once" is 0.04 to 0.12 s after the failed append ended (V0 above: about 0.8 s).
+
+```sh
+client$ python3 -c '<WRITER>' /mnt/share/t051h-append/Vr-0/append.bin ab /root/enospc-source.bin 268435456   # failed, then the retry
+server$ stat -c %s /mnt/pool/t051h-append/Vr-0/append.bin                                                      # the leftover
+server$ rm -f /mnt/pool/.spike-filler
+client$ stat -c '%s %d' /mnt/share/t051h-append/Vr-0/append.bin 2>&1                                           # the client's size, right before the retry
+server$ stat -c '%s %b %B' /mnt/pool/t051h-append/Vr-0/append.bin
+server$ dd if=/mnt/pool/t051h-append/Vr-0/append.bin iflag=skip_bytes,count_bytes skip=<4096 + leftover> count=<gap> bs=1M status=none | tr -d '\000' | wc -c
+server$ dd if=/mnt/pool/t051h-append/Vr-0/append.bin iflag=skip_bytes,count_bytes skip=<size - 268435456> bs=1M status=none | sha256sum
+# V6: mount -t cifs //server/cache /mnt/share0 -o username=spike,password=...,actimeo=0
+# V8: mount -t cifs //server/cache /mnt/fresh -o username=spike,password=...,nosharesock (after the failed append), umount after the retry
+```
+
+Mounts (from the client's `/proc/mounts`): all `vers=3.1.1,cache=strict`; `/mnt/share` (writer, default
+options), `/mnt/share2` (`nosharesock,actimeo=0`), `/mnt/ctl` (`//server/poolctl`), `/mnt/share0`
+(`actimeo=0`). Device numbers (`stat -c %d` of the mount points): writer 54, control 56, `actimeo=0` 57, the
+new V8 session 58 (a superblock of its own).
+
+Every failed append: `{'errno': 'ENOSPC', 'step': 'fsync', 'written': 268435456}`; every retry: `{'errno':
+None, 'step': None, 'written': 268435456}`, holders `['pool']`, head and leftover intact, the source ends the
+file. "gap" is size - 4096 - leftover - 268435456: the bytes between the leftover and the retry's source.
+
+| variant | n | after the failed append | client size before the retry | file size | gap (bytes), all zero | unallocated (size - blocks x 512) | read back as head, leftover, source |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Vr: mergerfs, writer's session, at once | 5 | 0.040 to 0.056 s | 268439552 (5 of 5) | 536875008 | 167775952 (4), 167775728 (1); 5 of 5 | 167772160 | 0 of 5 |
+| V5: control share, no mergerfs, at once | 5 | 0.047 to 0.063 s | 268439552 (5 of 5) | 536875008 | 167772160; 5 of 5 | 167772160 | 0 of 5 |
+| V6: mergerfs, writer at `actimeo=0`, at once | 5 | 0.045 to 0.067 s | 268439552 (5 of 5) | 536875008 | 167775952 (3), 167775728 (2); 5 of 5 | 167772160 | 0 of 5 |
+| V8: mergerfs, new session, at once | 5 | 0.093 to 0.117 s | 100663824 (2), 100663600 (3) | 369099280 / 369099056 | 0 | 0 | 5 of 5 |
+| V7: mergerfs, writer's session, delay 0.2 s | 2 | 0.223, 0.228 s | 268439552 | 536875008 | 167775952; 2 of 2 | 167772160 | 0 of 2 |
+| V7, delay 0.5 s | 2 | 0.539, 0.553 s | 268439552 | 536875008 | 167775952; 2 of 2 | 167772160 | 0 of 2 |
+| V7, delay 1.0 s | 2 | 1.027, 1.035 s | 268439552 | 369099056 | 0 | 0 | 2 of 2 |
+| V7, delay 1.5 s | 2 | 1.523, 1.532 s | 268439552 | 369099056 | 0 | 0 | 2 of 2 |
+| V7, delay 2.0 s | 2 | 2.033, 2.028 s | 268439552 | 369099056 | 0 | 0 | 2 of 2 |
+| V7, delay 3.0 s | 2 | 3.037, 3.036 s | 100663600 | 369099056 | 0 | 0 | 2 of 2 |
+
+In every file with a gap the retry's source starts at offset 268439552 = 4096 + 268435456, the size the
+writing session reported, and 167772160 bytes (160 MiB) of the gap are not allocated on the pool branch (a
+sparse hole: allocated 369102848 bytes for a size of 536875008); the rest of the gap (3792 or 3568 bytes
+through mergerfs, 0 through the control share, whose leftovers were 100663296 bytes, 4096-aligned) is
+allocated and zero. In V7 at 1.0, 1.5 and 2.0 s the client's `stat` still showed 268439552, yet the append
+went to the real end of file.
+
 ## What this means
 
 - **H1 holds in the form measured here, as a race with the btrfs commit.** Right after the last filler and the
@@ -199,18 +252,28 @@ or later after t0.
 - **The append retry succeeds in V0** (6 of 6 over both runs, and in every other variant) because it opens an
   existing file: no create policy runs (create policies filter by `minfreespace`, action policies do not,
   `mkdocs/docs/config/functions_categories_policies.md:66-71`), and btrfs commits during the write (counter
-  +1 during each V0 append retry that followed a failed create). **But in 4 of those 6 (the ones that
-  followed a failed create and put, 0.72 to 0.81 s after t0) the appended data landed at the wrong offset:**
-  the file became head + leftover + 167.8 MB of zeros + source, with no error reported to the writer. The
-  probe's append opens with `ab` (O_APPEND); the kernel places an O_APPEND write at the client inode's
-  `i_size` (`fs/read_write.c:1747-1748`), the cifs client does not lower `i_size` from server attributes
-  while the inode is open for writing (`fs/smb/client/file.c:3120-3141`), and its default attribute cache
-  time is 1 s (`CIFS_DEF_ACTIMEO`, `fs/smb/client/cifsglob.h:52`). That is consistent with the measured offset
-  (the size the writer session showed after the failed append) and with the timing (run 2: wrong 0.81 and
-  0.86 s after the failed append ended, right 3.77 s after it), but the mechanism is not measured. This is
-  not the retry failure the check saw (the check reported only the create and the upload). Whether mergerfs
-  plays a part is not measured: the control share's append retry always came 3.9 s or later after t0, so V4
-  says nothing about it. The S1.9 read back of the append (head, leftover, source) is what catches it.
+  +1 during each V0 append retry that followed a failed create). **But an append retried through the writer's
+  own mount.cifs session within about half a second of the failed append writes the data at the wrong
+  offset**: the file becomes head + leftover + a 160 MiB sparse hole of zeros + source, and the writer gets no
+  error (V0: 4 of 6 at 0.81 to 0.86 s after the failed append; run 3: 24 of 24 between 0.04 and 0.55 s).
+  - **mergerfs does not cause it**: through the control share served by Samba directly from the plain btrfs
+    pool the same retry left the same gap in 5 of 5 (V5).
+  - **`actimeo=0` does not avoid it** (V6, 5 of 5 with the gap).
+  - **A new mount.cifs session avoids it** (V8, `nosharesock`, its own superblock: 0 of 5), and so does
+    waiting: with a delay of 1.03 s or more no gap in 8 of 8, with 0.55 s or less a gap in 4 of 4 (V7); the
+    threshold lies between 0.55 and 1.03 s.
+  - The offset is the size the writing client believed in after the failed append (268439552, its `stat`), so
+    the append position comes from the client: the kernel places an O_APPEND write at the client inode's
+    `i_size` (`fs/read_write.c:1747-1748`) and an SMB2 write carries its offset. This is a Linux cifs client
+    artefact as far as measured, present on plain btrfs through Samba too. Since `actimeo=0` does not help and
+    the threshold is about 1 s, the client's attribute cache (`CIFS_DEF_ACTIMEO` 1 s,
+    `fs/smb/client/cifsglob.h:52`) does not explain it; consistent with the data, but not measured, is the
+    deferred close of the cifs client: within `closetimeo` (default `SMB3_DEF_DCLOSETIMEO` 1 s,
+    `fs/smb/client/fs_context.h:381`) a reopen with the same flags reuses the cached handle without a new SMB2
+    CREATE (`fs/smb/client/file.c:1068-1088`, closes deferred only with a lease, `file.c:1426-1434`), and the
+    client keeps its larger `i_size` while the inode is open for writing (`fs/smb/client/file.c:3120-3141`).
+  - It is not the retry failure the check saw (the check reported only the create and the upload); the S1.9
+    read back of the append (head, leftover, source) catches it.
 - **When the retry becomes possible**: as soon as `f_bavail` of the pool branch reaches `minfreespace` again,
   which here happened only at a transaction commit: on its own at the next periodic commit (30.5 to 31.5 s
   after t0, 3 of 3), or at once after `sync -f /mnt/pool` (V1, 18 to 36 ms, 3 of 3) or `btrfs filesystem sync
@@ -238,12 +301,14 @@ or later after t0.
   from the kernel source and the counters (`disk_used`, `bytes_pinned`, commit count), not traced.
 - That btrfs commits during the control-share and append writes to reclaim the freed space is inferred from
   the commit counter incrementing during those writes; the flush path is not traced.
-- The zero-filled gap of the immediate append retry: the mechanism (O_APPEND at the cifs client's stale
-  `i_size`, attribute cache 1 s) is inferred from the measured offset, the timing and the kernel source; not
-  measured: with `actimeo=0` or the second session, through the control share without mergerfs, with a
-  delay between 0.9 and 3.7 s, and whether the zeros are a hole or written zeros. Whether the S1.9 check's
-  own append retry can hit it depends on its timing after the failed append, which this probe did not
-  measure (the shakedown reported no append read-back failure).
+- The cause of the stale append offset: client-side by the measured offset, the fresh-session and the
+  no-mergerfs results, but the SMB2 WRITE offsets were not captured, and the deferred-close explanation is
+  inferred from the kernel source and the 0.55 to 1.03 s threshold; not measured: `closetimeo=0`, the lease
+  state, other cifs versions or `cache=` modes, other clients (smbclient, Windows), and a new session with
+  options identical to the writer's (which the cifs client may give the writer's superblock).
+- Whether the S1.9 check's own append retry can hit it depends on its timing after the failed append, which
+  this probe did not measure (the shakedown reported no append read-back failure).
+- Why the client's `stat` showed the stale size at 1.0 to 2.0 s while the append went to the right offset.
 - Other commit intervals (`commit=`), other loads and other sizes.
 
 ## Criteria changelog note (for T052 `S1.yaml`)
@@ -260,7 +325,11 @@ or later after t0.
 > failed in 4 of 6 repetitions (EROFS at open, NT_STATUS_MEDIA_WRITE_PROTECTED at open), the append retry
 > reported success in 6 of 6, but in the 4 cases it followed the failed retries within about 0.8 s of the
 > failed append it wrote the source at the writer session's stale end of file, leaving 167.8 MB of zeros
-> between the leftover and the source (head and leftover intact, no error reported). Not decided by this
+> between the leftover and the source (head and leftover intact, no error reported). A follow-up (32 retries)
+> shows it without mergerfs too (Samba directly on the pool branch, 5 of 5), with `actimeo=0` (5 of 5), and at
+> 0.2 and 0.5 s after the failed append (4 of 4), but not through a new mount.cifs session (0 of 5) or at 1.0 s
+> and later (0 of 8): a Linux cifs client behaviour (the append offset is the client's stale size; the gap is
+> a 160 MiB sparse hole), not a mergerfs one. Not decided by this
 > note: whether the check waits for the freed space by polling statvfs of the pool branch (>= filler +
 > deleted leftovers, observed equal within 200704 bytes) with an upper bound, or forces it with `sync -f`,
 > and whether the up to 30 s of EROFS / MEDIA_WRITE_PROTECTED for creates after space is freed, and the
