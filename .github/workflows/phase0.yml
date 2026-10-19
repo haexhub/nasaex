@@ -114,6 +114,13 @@ jobs:
           out="${runs[-1]}"
           jq -r '.scenarios[] | "\(.id) \(.outcome) \(.duration_s // "-")"' "$out/outcome.json" | tee -a "$GITHUB_STEP_SUMMARY"
           jq -e '(.scenarios | length) > 0 and all(.scenarios[]; .outcome == "pass")' "$out/outcome.json"
+          # Both guests booted under KVM, not under a silent fallback to TCG emulation.
+          kvm_boots=$(grep -c 'Hypervisor detected: KVM' "$out/driver.log" || true)
+          echo "guest boots under KVM: $kvm_boots"
+          if [ "$kvm_boots" -lt 2 ]; then
+            echo "::error::the guests did not report KVM; the run may have used TCG emulation"
+            exit 1
+          fi
       - &disk-after
         name: Disk after the run
         if: always()
