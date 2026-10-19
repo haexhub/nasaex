@@ -25,23 +25,13 @@
 { mkSpike }:
 
 let
-  # Shared with the side-effect probe of T051g (retrigger_effects.nix).
-  inherit (import ./pool_race_modules.nix) poolMembers monitor cpus retrigger;
+  # Shared with the side-effect probe of T051g (retrigger_effects.nix); the delay rules are
+  # explained in pool_race_modules.nix.
+  inherit (import ./pool_race_modules.nix) poolMembers monitor cpus retrigger delayNotReady delayBoth;
   poolUuid = "5f0a7c1e-0000-4000-8000-000000051f00"; # fixed, so fstab can name it
   nodesOptions = [ "nofail" "x-systemd.device-timeout=10s" ]; # nix/nodes.nix:48
 
-  sleepRule = ready: what: seconds: { pkgs, ... }: {
-    services.udev.extraRules = ''
-      SUBSYSTEM=="block", ACTION=="add", ENV{ID_FS_LABEL}=="spikepool", ENV{ID_BTRFS_READY}=="${ready}", ${what}="${pkgs.coreutils}/bin/sleep ${toString seconds}"
-    '';
-  };
-  # Not-ready member: PROGRAM runs while the rules are applied, before the links and the database.
-  delayNotReady = sleepRule "0" "PROGRAM";
-  # Ready member: RUN entries run in order after the database is written, so this sleep follows
-  # the retrigger RUN of 64-btrfs.rules and precedes the broadcast of the event to PID 1.
-  delayReady = sleepRule "1" "RUN+";
   delay = delayNotReady 2;
-  delayBoth = [ (delayNotReady 1) (delayReady 2) ];
 
   deviceOptions = { lib, ... }: {
     virtualisation.fileSystems."/mnt/pool".options = lib.mkForce
