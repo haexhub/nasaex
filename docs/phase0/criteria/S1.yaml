@@ -233,12 +233,18 @@ scenarios:
       precondition and from a seeded source of write_bytes (the same bytes on client and server,
       never a constant byte or a sparse zero file) while the server watches the archive
       filesystems for write events; then the server removes the filler, the client deletes the
-      leftover of the create and of the upload through the share and repeats each write.
+      leftover of the create and of the upload through the share, and the check polls statvfs
+      f_bavail of the pool branch every 0.5 s until it is at least the bytes of the last filler
+      plus the sizes of the deleted leftovers less 16 MiB (btrfs frees the space at its next
+      transaction commit, 30 s by default; the scenario fails if it has not appeared after 60 s,
+      and the seconds until it appeared are recorded); the client then repeats each write, the
+      append through a mount.cifs session of its own (nosharesock), the writer session's size
+      before that retry being recorded.
     observable: >-
       Per write: the mount.cifs create and append fail with errno ENOSPC and smbclient reports
       NT_STATUS_DISK_FULL, no write reports success; the tree hash of every archive branch and
-      every trash directory is unchanged and no write event occurs on the archive filesystems; the
-      any written path that remains exists on the pool branch only; any leftover at the path, read
+      every trash directory is unchanged and no write event occurs on the archive filesystems; any
+      written path that remains exists on the pool branch only; any leftover at the path, read
       on the pool branch, is a byte-exact prefix of the source (for the append, the bytes after the original
       head; never zero-filled, never other content); the manifest of the pool branch without the
       written path and the filler is identical before and after; the appended file still begins
@@ -387,3 +393,28 @@ changelog:
     write succeeds; the writes use seeded content so that a zero-filled leftover fails. Proposed:
     the order of the retry and recording the reported sizes without judging them; the retry is
     UNVERIFIED (not measured). The check is amended by T047a.
+  - >-
+    2026-10-19, probe T051h (PR https://github.com/haexhub/nasaex/pull/34: mergerfs 2.41.1, Samba
+    4.23.10, mount.cifs 7.5, kernel 6.18.56, btrfs-progs 6.19.1, pool mounted without commit=,
+    so the 30 s default), harness fix of the retry of S1.9, no expected value changed: after the
+    S1.9 writes, the removal of the filler and the deletion of the two leftovers, statvfs of the
+    pool branch showed 0 bytes available until the next btrfs transaction commit; the freed
+    space (the filler plus the leftovers, 8211320832 bytes, 0 to 200704 more than that sum)
+    appeared with the periodic commit 30.5 to 31.5 s later (3 of 3), or at once after sync -f
+    (3 of 3). Until then mergerfs, with the pool branch below minfreespace and the archive
+    branches NC, refuses every create with EROFS, which Samba reports as
+    NT_STATUS_MEDIA_WRITE_PROTECTED, so the immediate create and upload retries failed (4 of 6
+    repetitions); a share served directly from the pool branch accepted them at once (3 of 3).
+    The check now polls f_bavail of the pool branch (every 0.5 s, at most 60 s, a failure if the
+    space never appears) instead of forcing a commit with sync -f, which would be a commit the
+    client did not cause, and records the seconds until it appeared. Second finding: an append
+    retried through the writer's own mount.cifs session within about 0.5 s of the failed append
+    wrote at the writer session's stale end of file with no error (head, leftover, 160 MiB hole of
+    zeros, source; 4 of 6 and 24 of 24 repetitions); the same without mergerfs (5 of 5), with
+    actimeo=0 (5 of 5), not through a new mount.cifs session with nosharesock (0 of 5) or after
+    1.0 s and more (0 of 8). Measured on the client, not on mergerfs; the cause inside the cifs
+    client is UNVERIFIED. The check repeats the append through a new nosharesock session and
+    records the writer session's size before it. Not decided here: whether the up to 30 s of
+    EROFS or MEDIA_WRITE_PROTECTED for creates after space was freed, or the zero-filled append
+    of the writer's own session, are findings of S1 (spec Clarifications). UNVERIFIED until the
+    shakedown runs the amended check (T047b).
