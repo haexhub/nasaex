@@ -77,6 +77,7 @@
           repoRoot = ../..;
         } // {
         tiered-cache-layout = import ./tests/tiered_cache_layout.nix { inherit pkgs mkSpike; };
+        pool-retrigger = import ./tests/pool_retrigger.nix { inherit pkgs mkSpike; };
       };
 
       apps.${system} = lib.mapAttrs (_: app) (placeholders // {

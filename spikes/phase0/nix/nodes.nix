@@ -163,6 +163,33 @@ let
     systemd.tmpfiles.rules = map (mountPoint: "d ${mountPoint} 0755 root root -")
       (lib.attrNames fileSystems);
 
+    # The bounded pool retrigger unit, a required setting of the pool storage (FR-013; spec
+    # Clarifications 2026-10-19, S1.11 reboots; task T028b). Of the two pool members, the one
+    # whose `btrfs ready` runs first stays SYSTEMD_READY=0 until the retrigger of line 15 of
+    # systemd's 64-btrfs.rules reaches it; a member whose udev database is written after that
+    # trigger stays not ready, and if it owns /dev/disk/by-label/spikepool the label device unit
+    # never appears and the pool mounts fail (probe T051f, vm-tests/probes/pool_race.results.md).
+    # This is `retriggerBounded "change"` of vm-tests/probes/pool_race_modules.nix, unchanged:
+    # variant U2 with action change of probe T051i (vm-tests/probes/retrigger_v2.results.md:
+    # forced race rescued in 10 of 10 boots, 30 normal boots up with no event sent, exit 0 in
+    # degraded boots and with udev unsettled for 31 s). It sends a change event only to block
+    # devices whose udev database still says ID_BTRFS_READY=0, so a missing member is never
+    # named, and neither bounded wait fails the unit. Checked by tests/pool_retrigger.nix.
+    systemd.services.pool-retrigger = {
+      description = "Retrigger not-ready btrfs devices after udev settled (bounded)";
+      wantedBy = [ "local-fs.target" ];
+      before = [ "local-fs.target" ];
+      after = [ "systemd-udev-trigger.service" ];
+      unitConfig.DefaultDependencies = false;
+      serviceConfig = { Type = "oneshot"; RemainAfterExit = true; TimeoutStartSec = "10s"; };
+      path = [ pkgs.systemd pkgs.coreutils ];
+      script = ''
+        udevadm settle --timeout=5 || echo "udev queue not empty after 5 s (exit $?), triggering anyway"
+        timeout 4 udevadm trigger --settle --action=change --subsystem-match=block \
+          --property-match=ID_BTRFS_READY=0 || echo "trigger not settled within 4 s (exit $?)"
+      '';
+    };
+
     boot.kernelModules = [ "fuse" ];
     system.fsPackages = [ pkgs.mergerfs ];
 
