@@ -26,6 +26,7 @@ WHAT = "/mnt/pool:/mnt/archive/arch0/branch=NC:/mnt/archive/arch1/branch=NC"
 BASELINE = {
     "category.create": "ff",
     "archive_branch_mode": "NC",
+    "branches": "/mnt/pool=RW:/mnt/archive/arch0/branch=NC:/mnt/archive/arch1/branch=NC",
     "moveonenospc": "false",
     "minfreespace": "64M",
     "passthrough.io": "off",
@@ -62,14 +63,25 @@ def test_minfreespace_is_compared_in_bytes():
     assert differences == ["minfreespace is 64000000, the criteria say 64M (67108864 bytes)"]
 
 
-def test_every_archive_branch_must_have_the_mode_of_the_table():
-    branches = "/mnt/pool=RW:/mnt/archive/arch0/branch=NC,4G:/mnt/archive/arch1/branch=RW"
+def test_running_baseline_requires_all_archive_branches_and_modes():
+    wrong_mode = "/mnt/pool=RW:/mnt/archive/arch0/branch=NC,4G:/mnt/archive/arch1/branch=RW"
+    missing_archive = "/mnt/pool=RW:/mnt/archive/arch0/branch=NC"
+    pool_override = "/mnt/pool=RW,1G:/mnt/archive/arch0/branch=NC:/mnt/archive/arch1/branch=NC"
+    cases = {
+        wrong_mode: [
+            "archive branch /mnt/archive/arch1/branch has mode RW, the criteria say NC",
+            f"branches is {wrong_mode}, the criteria say {BASELINE['branches']}",
+        ],
+        missing_archive: [
+            f"branches is {missing_archive}, the criteria say {BASELINE['branches']}"
+        ],
+        pool_override: [f"branches is {pool_override}, the criteria say {BASELINE['branches']}"],
+    }
 
-    _, differences = running_baseline(BASELINE, (RUNNING | {"branches": branches}).get)
+    for branches, expected in cases.items():
+        _, differences = running_baseline(BASELINE, (RUNNING | {"branches": branches}).get)
 
-    assert differences == [
-        "archive branch /mnt/archive/arch1/branch has mode RW, the criteria say NC"
-    ]
+        assert differences == expected
 
 
 def test_variant_options_replace_a_value_in_place_and_keep_everything_else():

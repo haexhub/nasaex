@@ -30,11 +30,13 @@ tables:
   # policy, read at run time, is expected to be epall (spec Clarifications 2026-10-17).
   # Before the first scenario the run reads every option from the running cache pool (the
   # mergerfs runtime xattrs; minfreespace in bytes, 64M being 64 x 1024 x 1024; the mode of
-  # every archive branch from its branch list) and records them as required settings; a
+  # every archive branch from its branch list) and records them as required settings. `branches`
+  # is the complete ordered runtime list, including the pool branch and its RW mode; a
   # difference ends the run before any scenario is judged, as for tables.share.
   baseline:
     category.create: ff
     archive_branch_mode: NC
+    branches: /mnt/pool=RW:/mnt/archive/arch0/branch=NC:/mnt/archive/arch1/branch=NC:/mnt/archive/arch2/branch=NC
     moveonenospc: "false"
     minfreespace: 64M
     passthrough.io: "off"
