@@ -603,3 +603,12 @@ changelog:
     /mnt/pool=RW:/mnt/archive/arch0/branch=NC:/mnt/archive/arch1/branch=NC:/mnt/archive/arch2/branch=NC,
     minfreespace 67108864) and the share keys Yes. Load average during the run 9 to 22. Status
     stays draft until task T053.
+  - >-
+    2026-10-19, review of the T052 PR (https://github.com/haexhub/nasaex/pull/39, a CodeRabbit
+    finding, fixed by the maintainer): tables.baseline.branches holds the complete ordered
+    branch list of the cache pool as mergerfs reports it at run time, the pool branch with mode
+    RW first, so that a missing archive branch or a branch-specific minfreespace (which
+    archive_branch_mode alone accepted) ends the run before any scenario. The value equals the
+    list read from the running server in every shakedown of T052. Shakedown of the merged
+    criteria (S1.4 alone, no record): passed, every baseline option equal to the table. No
+    expected value changed. Frozen by task T053.
