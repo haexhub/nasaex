@@ -81,6 +81,16 @@ def prefix_sha(n: int) -> str:
     return _prefix[n]
 
 
+def range_sha(path: str, start: int, length: int | None = None) -> str:
+    """SHA-256 of `length` bytes (None: to the end) of a server file from byte `start`."""
+    count = "" if length is None else f" count={length}"
+    return run(
+        server,
+        f"dd if={shlex.quote(path)} iflag=skip_bytes,count_bytes skip={start}{count} bs=1M"
+        " status=none | sha256sum",
+    ).split()[0]
+
+
 def copy_on(key: str, rel: str, skip: int) -> dict:
     """Size and SHA-256 of a branch copy; for an append, of the bytes after the head, plus
     whether the head is still the head that was placed."""
