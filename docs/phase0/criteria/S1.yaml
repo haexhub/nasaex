@@ -418,3 +418,12 @@ changelog:
     EROFS or MEDIA_WRITE_PROTECTED for creates after space was freed, or the zero-filled append
     of the writer's own session, are findings of S1 (spec Clarifications). UNVERIFIED until the
     shakedown runs the amended check (T047b).
+  - >-
+    2026-10-19, harness (not a criteria change): the serial time budget of the S1 VM test, the
+    time after which the driver ends the VMs, is raised from 20 to 40 minutes (nix/mkspike.nix).
+    A full shakedown run on the maintainer's workstation with the desktop in use (load average
+    22, IO pressure avg300 34 percent) took 1203 s and was ended at the old budget: S1.8 alone took
+    872 s (438 to 678 s in earlier runs), after which S1.8 passthrough-rw-auto-full and S1.9 to
+    S1.11 ended with OSError EBADF because the VMs were gone. Earlier full runs took 593 to 657 s.
+    The budget is a protective bound, not a pass condition; a record run still belongs on a quiet
+    host (Clarifications on the reference runner).

@@ -15,7 +15,7 @@ let
 
   # Serial budget per spike in minutes (research D14, estimates until shakedown replaces them).
   budgetMinutes = {
-    s1 = 20;
+    s1 = 40;
     s2 = 25;
     s3 = 40;
     s4 = 15;
