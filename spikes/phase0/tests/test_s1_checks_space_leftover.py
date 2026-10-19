@@ -2,12 +2,20 @@
 write (the mount.cifs create, the smbclient upload, the mount.cifs append) the error the client
 reports, archive and trash unchanged (tree hashes, no inotify event), the written path on the
 pool branch only, a leftover that is a byte-exact prefix of the source, no other pool file
-changed, the append head intact, and a retry that succeeds. Over fabricated observations; the
-full pool and the writes need the VMs."""
+changed, the append head intact, and a retry that succeeds. Also the wait for the freed space that
+precedes the retries (task T047b): its target and its poll with an upper bound. Over fabricated
+observations; the full pool and the writes need the VMs."""
 
 import hashlib
 
-from s1.checks_large_space import space_failures
+from s1.checks_large_space import (
+    SPACE_BOUND_S,
+    SPACE_EPSILON,
+    SPACE_POLL_S,
+    freed_space_target,
+    space_failures,
+    wait_for_freed_space,
+)
 
 TABLE = {"errno": "ENOSPC", "smb_status": "NT_STATUS_DISK_FULL", "write_bytes": 1024}
 SOURCE = bytes(range(256)) * 4
@@ -28,6 +36,7 @@ def observed(step: str, leftover: bytes | None = SOURCE[:100]) -> dict:
         retry = {"errno": None, "step": None, "written": 1024}
     seen = {
         "report": report,
+        "filler_bytes": 5000,
         "archive_changed": [],
         "archive_events": [],
         "holders": [] if leftover is None else ["pool"],
@@ -146,3 +155,87 @@ def test_a_failing_retry_fails():
         "put: the retry reads back with other data",
         "append: the retry lies on ['arch2']",
     ]
+
+
+def test_a_missing_retry_fails_instead_of_passing():
+    skipped = writes()
+    del skipped["create"]["retry"]
+
+    assert space_failures(TABLE, skipped) == ["create: the retry did not run"]
+
+
+def test_the_freed_space_target_is_the_last_filler_plus_the_deleted_leftovers_less_epsilon():
+    # The leftovers are 100 bytes each; the create's and the upload's are deleted, the append's
+    # stays, and only the filler of the last write is still counted by the free bytes.
+    observations = writes(create={"filler_bytes": 1}, append={"filler_bytes": 7000})
+
+    assert freed_space_target(observations, epsilon=50) == 7000 + 100 + 100 - 50
+
+
+def test_an_absent_leftover_adds_nothing_to_the_freed_space_target():
+    observations = writes(create={"leftover": None})
+
+    assert freed_space_target(observations, epsilon=0) == 5000 + 100
+
+
+def test_the_epsilon_is_the_documented_16_mib_and_the_poll_is_half_a_second_up_to_a_minute():
+    assert SPACE_EPSILON == 16 * 1024 * 1024
+    assert (SPACE_POLL_S, SPACE_BOUND_S) == (0.5, 60)
+    assert freed_space_target(writes()) == 5000 + 200 - SPACE_EPSILON
+
+
+class Clock:
+    """A clock that only moves when the poll sleeps."""
+
+    def __init__(self):
+        self.now, self.sleeps = 0.0, []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def test_the_poll_reports_the_seconds_until_the_space_appeared():
+    clock, samples = Clock(), iter([0, 0, 0, 900, 1000])
+
+    freed = wait_for_freed_space(lambda: next(samples), 1000, clock=clock, sleep=clock.sleep)
+
+    assert freed == {"appeared": True, "waited_s": 2.0, "avail": 1000, "target": 1000, "samples": 5}
+    assert clock.sleeps == [0.5] * 4
+
+
+def test_the_poll_does_not_wait_when_the_space_is_already_there():
+    clock = Clock()
+
+    freed = wait_for_freed_space(lambda: 5000, 1000, clock=clock, sleep=clock.sleep)
+
+    assert freed["appeared"] is True
+    assert (freed["waited_s"], freed["samples"], clock.sleeps) == (0.0, 1, [])
+
+
+def test_the_poll_gives_up_after_the_bound_and_says_so():
+    clock = Clock()
+
+    freed = wait_for_freed_space(lambda: 3, 1000, clock=clock, sleep=clock.sleep)
+
+    assert freed == {
+        "appeared": False,
+        "waited_s": 60.0,
+        "avail": 3,
+        "target": 1000,
+        "samples": 121,
+    }
+    assert len(clock.sleeps) == 120
+
+
+def test_the_poll_takes_the_bound_and_the_interval_it_is_given():
+    clock = Clock()
+
+    freed = wait_for_freed_space(
+        lambda: 0, 1, bound_s=1, interval_s=0.5, clock=clock, sleep=clock.sleep
+    )
+
+    assert (freed["appeared"], freed["samples"], freed["waited_s"]) == (False, 3, 1.0)

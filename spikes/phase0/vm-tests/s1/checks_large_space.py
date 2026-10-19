@@ -10,26 +10,35 @@ content after the flips of every case so far is computed on the host (testlib.fi
 copy and the new file are removed through the share at the end of a case, so that the pool has
 room again.
 
-S1.9 (amended by task T047a, spec Clarifications 2026-10-19): a filler (fault kind `enospc`)
-leaves `leave_bytes` free on the pool, above `minfreespace`, so the create policy still selects
-the pool and the write fails there (research F10). The client creates a file and appends to a
-pool file through mount.cifs and uploads a file with smbclient, each from its own filler and
-each `write_bytes` of one seeded source that client and server generate alike
+S1.9 (amended by tasks T047a and T047b, spec Clarifications 2026-10-19): a filler (fault kind
+`enospc`) leaves `leave_bytes` free on the pool, above `minfreespace`, so the create policy
+still selects the pool and the write fails there (research F10). The client creates a file and
+appends to a pool file through mount.cifs and uploads a file with smbclient, each from its own
+filler and each `write_bytes` of one seeded source that client and server generate alike
 (probes.enospc_writes, the probe code of tasks T051b and T051c; a zero-filled leftover can
 fail). Judged per write: the criteria's errno or SMB status; the archive branches and trash
 directories unchanged (tree hashes, no inotify event on the archive data filesystems during
 the write); a remaining written path on the pool branch only; its leftover a byte-exact prefix
 of the source (for the append, after the head); the rest of the pool unchanged; the append
 head intact. Then the client deletes the leftovers of the create and the upload through the
-share and repeats every write without a filler: no error, on the pool branch only, reads back
-with the written data. The sizes the writer's session, the second session and the server show
-are recorded, never judged. Scaffolding for the spikes, not product code."""
+share, the check waits until the pool branch shows the space of the filler and of those
+leftovers again (btrfs frees it only at its next transaction commit, 30 s by default, and
+until then mergerfs refuses every create with EROFS; probe T051h), polling statvfs every
+0.5 s for at most 60 s, and the client repeats every write without a filler: no error, on the
+pool branch only, reads back with the written data. The append is repeated through a mount.cifs
+session of its own, since the writer's session appends at its stale size within about half a
+second of the failed append (a Linux cifs client artefact, probe T051h) and a hole of zeros
+would fall between the leftover and the source; the writer session's size is recorded. The
+sizes the writer's session, the second session and the server show and the seconds until the
+space appeared are recorded, never judged beyond the bound. Scaffolding for the spikes, not
+product code."""
 
 import json
 import posixpath
 import shlex
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import lru_cache
+from time import monotonic, sleep
 
 from probes.enospc_writes import SOURCE_SCRIPT, WRITER, leftover
 from s1.checks_placement import changed_branches
@@ -39,6 +48,7 @@ from s1.fixture import ARCHIVE, FIXTURE, NEW_LARGE, POOL, POOL_BRANCH, trash
 from testlib import faults
 from testlib.fixtures import Entry, Fixture, content_sha256, flipped_sha256
 from testlib.manifest import Manifest, compare, describe, from_json
+from testlib.smb import CifsMount
 
 ARCHIVED = next(e for e in FIXTURE.entries if e.path == "large/archived.bin")
 SEED = "S1.9"
@@ -50,6 +60,13 @@ SOURCE = "/root/s1.9-source.bin"  # the seeded source, generated alike on client
 ARCHIVE_KEYS = (*ARCHIVE, *(trash(serial) for serial in ARCHIVE))
 # Classes of probes.enospc_writes.leftover that are a byte-exact prefix of the source.
 PREFIX_CLASSES = ("absent", "empty", "complete", "partial, prefix intact")
+# The retries wait until f_bavail of the pool branch is back (probe T051h: the freed bytes were
+# the filler plus the deleted leftovers plus 0 to 200704 bytes, and 16 MiB was the epsilon used
+# there; 0 would have sufficed). The space appeared 0.1 to 31.5 s after the delete, at the next
+# btrfs commit (30 s default), so the bound is one commit interval plus slack.
+SPACE_EPSILON = 16 * 1024 * 1024
+SPACE_POLL_S = 0.5
+SPACE_BOUND_S = 60
 WATCH = "/run/s1.9-watch"  # inotify log, its stderr and the end-marker directory
 WATCH_EVENTS = "modify,attrib,close_write,create,delete,moved_to,moved_from"
 
@@ -188,7 +205,10 @@ def space_failures(table: Mapping, writes: Mapping[str, Mapping]) -> list[str]:
             failures.append(f"{step}: other pool files changed: {seen['pool_rest_differences']}")
         if seen.get("head_intact") is False:
             failures.append("the appended file no longer begins with its original bytes")
-        retry = seen["retry"]
+        retry = seen.get("retry")
+        if retry is None:
+            failures.append(f"{step}: the retry did not run")
+            continue
         if error := _retry_error(step, retry["report"]):
             failures.append(f"{step}: the retry reported an error ({error})")
         if retry["holders"] != [POOL]:
@@ -196,6 +216,46 @@ def space_failures(table: Mapping, writes: Mapping[str, Mapping]) -> list[str]:
         if not retry["reads_back"]:
             failures.append(f"{step}: the retry reads back with other data")
     return failures
+
+
+def freed_space_target(writes: Mapping[str, Mapping], epsilon: int = SPACE_EPSILON) -> int:
+    """The bytes f_bavail of the pool branch must reach again before the retries: what the
+    filler of the last write occupied (the other fillers are gone, their space is in the
+    count the last filler was sized from) plus the leftovers of the writes the client deletes,
+    less `epsilon`; the append's leftover stays."""
+    filler = list(writes.values())[-1]["filler_bytes"]
+    deleted = sum(
+        (writes[step]["leftover"] or {"size": 0})["size"] for step in DELETED_BEFORE_RETRY
+    )
+    return filler + deleted - epsilon
+
+
+def wait_for_freed_space(
+    read: Callable[[], int],
+    target: int,
+    *,
+    bound_s: float = SPACE_BOUND_S,
+    interval_s: float = SPACE_POLL_S,
+    clock: Callable[[], float] = monotonic,
+    sleep: Callable[[float], None] = sleep,
+) -> dict:
+    """Sample `read` (free bytes) every `interval_s` until it reaches `target` or `bound_s`
+    seconds have passed since the first sample; the seconds until the last sample, whether the
+    space appeared and the last value are the answer."""
+    start, samples = clock(), 0
+    while True:
+        avail = read()
+        samples += 1
+        waited = clock() - start
+        if avail >= target or waited >= bound_s:
+            return {
+                "appeared": avail >= target,
+                "waited_s": round(waited, 3),
+                "avail": avail,
+                "target": target,
+                "samples": samples,
+            }
+        sleep(interval_s)
 
 
 # --- S1.9 on the VMs ------------------------------------------------------------------------
@@ -221,13 +281,14 @@ def _range_sha256(machine, path: str, start: int = 0, length: int | None = None)
     return out.split()[0] if status == 0 else None
 
 
-def _client_write(lab: Lab, step: str, rel: str, size: int):
-    """The write of a step from the seeded source: WRITER through the default mount.cifs
-    session (its report), or smbclient put ([exit status, output])."""
+def _client_write(lab: Lab, step: str, rel: str, size: int, mount: CifsMount | None = None):
+    """The write of a step from the seeded source: WRITER through a mount.cifs session (the
+    default one unless `mount` is given; its report), or smbclient put ([exit status, output])."""
     if step == "put":
         return list(lab.smb.put(SOURCE, rel))
     mode = "ab" if step == "append" else "wb"
-    return json.loads(lab.python(lab.client, WRITER, lab.share.path(rel), mode, SOURCE, str(size)))
+    path = (mount or lab.share).path(rel)
+    return json.loads(lab.python(lab.client, WRITER, path, mode, SOURCE, str(size)))
 
 
 def _make_source(lab: Lab, size: int) -> dict[str, str]:
@@ -277,6 +338,9 @@ def _failed_write(lab: Lab, step: str, rel: str, table: Mapping, hashes: dict) -
     try:
         filler = faults.enospc(lab.server, POOL_BRANCH, table["leave_bytes"], point="S1.9")
         seen["filler"] = filler.detail
+        seen["filler_bytes"] = int(
+            lab.server.succeed(f"stat -c %s {POOL_BRANCH}/{faults.DEFAULT_FILLER}")
+        )
         seen["free_before"] = _free_bytes(lab)
         pool_before = _pool_rest(lab, rel)
         _watch_start(lab)
@@ -313,8 +377,19 @@ def _failed_write(lab: Lab, step: str, rel: str, table: Mapping, hashes: dict) -
 
 def _retry(lab: Lab, step: str, rel: str, seen: Mapping, table: Mapping, source: str) -> dict:
     """The same write again without a filler; read back through the second session: the
-    source, or for the append the original head, the leftover, then the source."""
-    retry = {"report": _client_write(lab, step, rel, table["write_bytes"])}
+    source, or for the append the original head, the leftover, then the source. The append
+    goes through a mount.cifs session of its own (probe T051h: the writer's session appends at
+    its stale size within about 0.5 s of the failed append), the writer session's size before
+    it is recorded."""
+    retry: dict = {}
+    if step == "append":
+        sizes = {"writer session before the retry": _size(lab.client, lab.share.path(rel))}
+        with lab.fresh_session() as session:
+            sizes["fresh session before the retry"] = _size(lab.client, session.path(rel))
+            retry["report"] = _client_write(lab, step, rel, table["write_bytes"], session)
+        retry["sizes_recorded"] = sizes
+    else:
+        retry["report"] = _client_write(lab, step, rel, table["write_bytes"])
     retry["holders"] = lab.holders(rel)
     path = lab.second.path(rel)
     if step != "append":
@@ -348,14 +423,25 @@ def check_pool_out_of_space(lab: Lab) -> None:
             writes[step], hashes = _failed_write(lab, step, rel, table, hashes)
         for step in DELETED_BEFORE_RETRY:
             _remove_through_share(lab, WRITES[step])
-        for step, rel in WRITES.items():
-            writes[step]["retry"] = _retry(lab, step, rel, writes[step], table, source["client"])
+        target = freed_space_target(writes, SPACE_EPSILON)
+        freed = wait_for_freed_space(lambda: _free_bytes(lab), target, clock=monotonic, sleep=sleep)
+        if freed["appeared"]:
+            for step, rel in WRITES.items():
+                retry = _retry(lab, step, rel, writes[step], table, source["client"])
+                writes[step]["retry"] = retry
     finally:
         for step in DELETED_BEFORE_RETRY:
             _remove_through_share(lab, WRITES[step])
         for machine in (lab.server, lab.client):
             machine.execute(f"rm -f {SOURCE}")
     failures = space_failures(table, writes)
+    if not freed["appeared"]:
+        failures.insert(
+            0,
+            f"the freed space never appeared: f_bavail of the pool branch stayed below "
+            f"{freed['target']} bytes for {freed['waited_s']} s (bound {SPACE_BOUND_S} s, last "
+            f"sample {freed['avail']}), so the retries did not run",
+        )
     lab.required_settings["out_of_space"] = {
         "archive_branch_mode": "NC",
         "moveonenospc": lab.effective("moveonenospc"),
@@ -364,6 +450,12 @@ def check_pool_out_of_space(lab: Lab) -> None:
     }
     lab.evidence(
         "S1.9-out-of-space",
-        {"source_sha256": source, "writes": writes, "failures": failures},
+        {
+            "source_sha256": source,
+            "writes": writes,
+            "freed_space": freed,
+            "space_epsilon": SPACE_EPSILON,
+            "failures": failures,
+        },
     )
     assert not failures, "; ".join(failures)

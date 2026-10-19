@@ -207,3 +207,28 @@ def test_effective_returns_the_option_value_without_the_line_end_of_the_guest_ou
     lab = Lab(server, RecordingMachine(), {"pool": "/mnt/pool"}, Recorder())
 
     assert lab.effective("func.unlink") == "epall"
+
+
+def test_a_fresh_session_is_a_mount_of_its_own_that_is_unmounted_afterwards():
+    client = RecordingMachine()
+    lab = Lab(RecordingMachine(), client, {}, Recorder())
+
+    with lab.fresh_session() as session:
+        assert session.mountpoint == "/mnt/share3"
+        assert session.path("a.bin") == "/mnt/share3/a.bin"
+        assert len(client.commands) == 1
+        assert "mount -t cifs //server/cache /mnt/share3" in client.commands[0]
+        assert "nosharesock" in client.commands[0].rpartition("-o")[2]
+
+    assert client.commands[-1] == "umount /mnt/share3"
+    assert len(client.commands) == 2
+
+
+def test_a_fresh_session_is_unmounted_when_the_block_raises():
+    client = RecordingMachine()
+    lab = Lab(RecordingMachine(), client, {}, Recorder())
+
+    with pytest.raises(RuntimeError), lab.fresh_session():
+        raise RuntimeError("the retry failed")
+
+    assert client.commands[-1] == "umount /mnt/share3"
