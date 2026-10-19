@@ -504,3 +504,18 @@ changelog:
     until the shakedowns of those tasks: the per-reboot time, the unit under S1 load with the
     client VM, and every expected value of the S1.2 pool-low step (derived from the mergerfs
     2.41.1 source). Status stays draft.
+  - >-
+    2026-10-19, shakedown of the S1.2 pool-low step (task T044a, proposed; --only S1.2, no
+    record; mergerfs 2.41.1, Samba 4.23.10, kernel 6.18.56), both cases passed: the filler left
+    16777216 bytes free on the pool branch, below minfreespace. With NC in effect, under ff and
+    under lus, the mount.cifs create failed at open with EROFS and smbclient put reported
+    NT_STATUS_MEDIA_WRITE_PROTECTED (exit status 1); neither path existed on any branch and the
+    archive tree hashes were unchanged, as derived from the mergerfs 2.41.1 source. With NC
+    removed the same mount.cifs create succeeded on arch0 under ff, as derived, and on arch2
+    under lus (available bytes before it: pool 16777216, arch0 5885349888, arch1 5886447616,
+    arch2 3740270592 under ff and 3740266496 under lus; arch2 held no file, that it had the
+    least used space is inferred, its used bytes were not recorded). The freed space was back
+    25.6 s after the filler and the file were removed, in both cases. Only the file is removed
+    after the control: the arch0 tree hash at the start of the lus case differed from the one
+    of the ff case, consistent with parent directories that mergerfs created on arch0 for the
+    control and that stay (not listed, UNVERIFIED). Not a criteria change.
