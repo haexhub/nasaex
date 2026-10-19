@@ -1,0 +1,374 @@
+{
+  "record_id": "S1-20261019T191938Z-v1",
+  "kind": "spike-run",
+  "spike": "S1",
+  "criteria_version": 1,
+  "criteria_sha256": "7801cc49311ba709a80a6e4f1167e3946312e916bd0a81154556c59e1fd0f389",
+  "environment": {
+    "repo_commit": "55573714f3e7268b2ade65760777d513bf9c747c",
+    "flake_lock_sha256": "745bc238de0d9f372b00e7080e0a582fe31b69e0fde028c3440902306e5e9eca",
+    "nixpkgs_rev": "a033e66ab94a6bedf2c3d58d93a36319d3cbbbaf",
+    "profile": "large",
+    "disks": [
+      {
+        "serial": "pool0",
+        "role": "pool",
+        "size_mib": 8192,
+        "filesystem": "btrfs"
+      },
+      {
+        "serial": "pool1",
+        "role": "pool",
+        "size_mib": 8192,
+        "filesystem": "btrfs"
+      },
+      {
+        "serial": "arch0",
+        "role": "archive",
+        "size_mib": 6144,
+        "filesystem": "btrfs"
+      },
+      {
+        "serial": "arch1",
+        "role": "archive",
+        "size_mib": 10240,
+        "filesystem": "btrfs"
+      },
+      {
+        "serial": "arch2",
+        "role": "archive",
+        "size_mib": 4096,
+        "filesystem": "btrfs"
+      },
+      {
+        "serial": "parity0",
+        "role": "parity",
+        "size_mib": 12288,
+        "filesystem": "ext4"
+      },
+      {
+        "serial": "spare0",
+        "role": "replacement",
+        "size_mib": 6144
+      },
+      {
+        "serial": "spare1",
+        "role": "replacement",
+        "size_mib": 10240
+      },
+      {
+        "serial": "spare2",
+        "role": "replacement",
+        "size_mib": 4096
+      },
+      {
+        "serial": "spare3",
+        "role": "replacement",
+        "size_mib": 8192
+      }
+    ],
+    "vm_resources": {
+      "client": {
+        "memory_mib": 768,
+        "vcpus": 1
+      },
+      "server": {
+        "memory_mib": 1536,
+        "vcpus": 2
+      }
+    },
+    "tool_versions": {
+      "btrfs_progs": "btrfs-progs v6.19.1",
+      "client_kernel": "6.18.56",
+      "kernel": "6.18.56",
+      "mergerfs": "mergerfs v2.41.1",
+      "mount_cifs": "mount.cifs version: 7.5",
+      "qemu": "qemu-img version 10.2.4",
+      "samba": "Version 4.23.10",
+      "smbclient": "Version 4.23.10"
+    },
+    "host": {
+      "cpu_class": "GenuineIntel family 6",
+      "vcpus": 24,
+      "memory_gib": 31
+    },
+    "kvm": true
+  },
+  "date": {
+    "start": "2026-10-19T19:19:38Z",
+    "end": "2026-10-19T19:43:54Z"
+  },
+  "scenarios": [
+    {
+      "duration_s": 38.541053645996726,
+      "evidence": [
+        {
+          "path": "status/S1.1-archive-view.json",
+          "sha256": "1ede5c8392fd5f019236083c3ecf956ed9bc78110da68c5bb0140fc1e6ba5d3c"
+        }
+      ],
+      "id": "S1.1",
+      "outcome": "pass"
+    },
+    {
+      "cases": [
+        {
+          "fault_kind": "none",
+          "fault_point": "none",
+          "gating": true,
+          "id": "S1.2:ff",
+          "outcome": "pass"
+        },
+        {
+          "fault_kind": "none",
+          "fault_point": "none",
+          "gating": false,
+          "id": "S1.2:lus",
+          "outcome": "pass"
+        }
+      ],
+      "duration_s": 96.97806440500426,
+      "evidence": [
+        {
+          "path": "status/S1.2-ff.json",
+          "sha256": "f6831547ba10ab865bc03ca3b9ffdece639477c1cfa26b35ce143c34b4f80e2f"
+        },
+        {
+          "path": "status/S1.2-lus.json",
+          "sha256": "69fc9fdf2b3fa9caa4a92bb833af39b9a0697fdd746cf53938422a6b8220e218"
+        }
+      ],
+      "id": "S1.2",
+      "outcome": "pass"
+    },
+    {
+      "duration_s": 9.142530116005219,
+      "evidence": [
+        {
+          "path": "status/S1.3-inplace-modify.json",
+          "sha256": "b8ee5e753c84117d38ecbb8adf4b364c9b5fa2aacffe6335f42ecfc0a7a9f3f0"
+        }
+      ],
+      "id": "S1.3",
+      "outcome": "pass"
+    },
+    {
+      "duration_s": 0.8382938489958178,
+      "evidence": [
+        {
+          "path": "status/S1.4-inplace-delete.json",
+          "sha256": "cd9b007d6b024d962354626551339de99474db853087684728a8ffb65da8891f"
+        }
+      ],
+      "id": "S1.4",
+      "outcome": "pass"
+    },
+    {
+      "duration_s": 0.9182035230041947,
+      "evidence": [
+        {
+          "path": "status/S1.5-delete-then-recreate.json",
+          "sha256": "f68c6ffcf3b02b2554f31f9ac0ddd1d5862e514553e2b7720562b3d828e0183e"
+        }
+      ],
+      "id": "S1.5",
+      "outcome": "pass"
+    },
+    {
+      "cases": [
+        {
+          "fault_kind": "none",
+          "fault_point": "none",
+          "gating": true,
+          "id": "S1.6:baseline",
+          "outcome": "pass"
+        },
+        {
+          "fault_kind": "none",
+          "fault_point": "none",
+          "gating": false,
+          "id": "S1.6:passthrough-rw-auto-full",
+          "outcome": "pass"
+        }
+      ],
+      "duration_s": 1.7137147040048148,
+      "evidence": [
+        {
+          "path": "status/S1.6-baseline.json",
+          "sha256": "bb982de7dcbd660f60638bd92b3785f1d8184775490e92ebcd115e22b42d36c1"
+        },
+        {
+          "path": "status/S1.6-passthrough-rw-auto-full.json",
+          "sha256": "610cb148dbd1a30f4ce571d18c791d986578689d0fbcff6ee077f329d4a70297"
+        }
+      ],
+      "id": "S1.6",
+      "outcome": "pass"
+    },
+    {
+      "duration_s": 2.5512773689988535,
+      "evidence": [
+        {
+          "path": "status/S1.7-attributes.json",
+          "sha256": "22c4f589897cef03e2b5b2e73f17f81dddd34879419aa144be79908059e5a817"
+        }
+      ],
+      "id": "S1.7",
+      "outcome": "pass"
+    },
+    {
+      "cases": [
+        {
+          "fault_kind": "none",
+          "fault_point": "none",
+          "gating": true,
+          "id": "S1.8:baseline",
+          "outcome": "pass"
+        },
+        {
+          "fault_kind": "none",
+          "fault_point": "none",
+          "gating": false,
+          "id": "S1.8:passthrough-rw-auto-full",
+          "outcome": "pass"
+        }
+      ],
+      "duration_s": 689.1053231179976,
+      "evidence": [
+        {
+          "path": "status/S1.8-baseline.json",
+          "sha256": "5a8258ef4ec0f58a7a748d54d408a94320397c26d79b23e3d75250fa812558d5"
+        },
+        {
+          "path": "status/S1.8-passthrough-rw-auto-full.json",
+          "sha256": "9df01af56b409b51be6cf2b1d88a06a576741686d2cb916af3d1bd4b83652f60"
+        }
+      ],
+      "id": "S1.8",
+      "outcome": "pass"
+    },
+    {
+      "duration_s": 87.52932636199694,
+      "evidence": [
+        {
+          "path": "status/S1.9-out-of-space.json",
+          "sha256": "db8891c16797f51d21632163f77a83e32116f5de182033602cedfafc8979991e"
+        }
+      ],
+      "id": "S1.9",
+      "outcome": "pass"
+    },
+    {
+      "duration_s": 11.106858906990965,
+      "evidence": [
+        {
+          "path": "status/S1.10-mover-view.json",
+          "sha256": "473f88b4bd063bbb5fe372fe4c153c3c0119958f2db360de3bf28262ac4048d7"
+        }
+      ],
+      "id": "S1.10",
+      "outcome": "pass"
+    },
+    {
+      "duration_s": 476.1866512400011,
+      "evidence": [
+        {
+          "path": "status/S1.11-reboot-view.json",
+          "sha256": "510e77ec04849594ef9f5599fc0c27fab16e89f08a17a19c19442a978d07f0c1"
+        }
+      ],
+      "id": "S1.11",
+      "outcome": "pass"
+    }
+  ],
+  "verdict": "PASS",
+  "residual_risk": [
+    "Device-level volatile write caches are not emulated: a poweroff fault is QEMU process termination, not host power loss.",
+    "Virtual disks stand in for real disks: timing, error behaviour and wear of physical drives are not represented."
+  ],
+  "evidence_archive": {
+    "path": "evidence.tar.xz",
+    "sha256": "68b926378d8319fe95c751c1db1383215d7ee8e0945fb907843e74bdbbf741e4"
+  },
+  "required_settings": {
+    "baseline": {
+      "branches": "/mnt/pool=RW:/mnt/archive/arch0/branch=NC:/mnt/archive/arch1/branch=NC:/mnt/archive/arch2/branch=NC",
+      "cache.files": "off",
+      "category.create": "ff",
+      "func.unlink": "epall",
+      "minfreespace": "67108864",
+      "moveonenospc": "false",
+      "passthrough.io": "off"
+    },
+    "create_policy": {
+      "archive_branch_mode": "NC",
+      "category.create": "ff",
+      "found_by": "S1.2",
+      "placement_without_nc": {
+        "create_policy": {},
+        "holders": [
+          "pool"
+        ],
+        "path": "s1.2/ff/archive-dir/without-nc.txt"
+      }
+    },
+    "mover_view": {
+      "bound_s": 30,
+      "consistent_after_s": 0.09777237199887168,
+      "found_by": "S1.10",
+      "refresh_procedure": null
+    },
+    "out_of_space": {
+      "archive_branch_mode": "NC",
+      "create_refused_window_s": 22.113,
+      "create_refused_window_space_appeared": true,
+      "creates_in_window": {
+        "mount.cifs": "EROFS",
+        "smbclient": "NT_STATUS_MEDIA_WRITE_PROTECTED"
+      },
+      "found_by": "S1.9",
+      "minfreespace": "67108864",
+      "moveonenospc": "false"
+    },
+    "reboot": {
+      "count": 20,
+      "found_by": "S1.11",
+      "reboots_completed": 20,
+      "retrigger_unit": "pool-retrigger.service",
+      "unit_text": "# /etc/systemd/system/pool-retrigger.service -> /nix/store/n5cj3fj446rvx14r8d93nkck6lk5lkr0-unit-pool-retrigger.service/pool-retrigger.service\n[Unit]\nAfter=systemd-udev-trigger.service\nBefore=local-fs.target\nDefaultDependencies=false\nDescription=Retrigger not-ready btrfs devices after udev settled (bounded)\n\n[Service]\nEnvironment=\"LOCALE_ARCHIVE=/nix/store/dc427sjs33dci797apv4lvsg1a69szn0-glibc-locales-2.42-100/lib/locale/locale-archive\"\nEnvironment=\"PATH=/nix/store/kmzlca218j6j1ar292fxj7707qzypij8-systemd-260.5/bin:/nix/store/bhv6xyvqw6gjs3j488gi1z6wdv18bdpa-coreutils-9.11/bin:/nix/store/bhv6xyvqw6gjs3j488gi1z6wdv18bdpa-coreutils-9.11/bin:/nix/store/nl0wq6d4bpjrxmlax141liq0qr9z87gn-findutils-4.10.0/bin:/nix/store/cqhgy07rpxdwk9kd2qlc3cw4s9ajzm9f-gnugrep-3.12/bin:/nix/store/0s17nja4n8b63by0nlg1m31mxn2bq1g1-gnused-4.10/bin:/nix/store/kmzlca218j6j1ar292fxj7707qzypij8-systemd-260.5/bin:/nix/store/kmzlca218j6j1ar292fxj7707qzypij8-systemd-260.5/sbin:/nix/store/bhv6xyvqw6gjs3j488gi1z6wdv18bdpa-coreutils-9.11/sbin:/nix/store/bhv6xyvqw6gjs3j488gi1z6wdv18bdpa-coreutils-9.11/sbin:/nix/store/nl0wq6d4bpjrxmlax141liq0qr9z87gn-findutils-4.10.0/sbin:/nix/store/cqhgy07rpxdwk9kd2qlc3cw4s9ajzm9f-gnugrep-3.12/sbin:/nix/store/0s17nja4n8b63by0nlg1m31mxn2bq1g1-gnused-4.10/sbin:/nix/store/kmzlca218j6j1ar292fxj7707qzypij8-systemd-260.5/sbin\"\nEnvironment=\"TZDIR=/nix/store/mkbbamycmw838fwxk21jz0nw3mhnmk16-tzdata-2026c/share/zoneinfo\"\nExecStart=/nix/store/nncgfhfb1r15xpcivqijzmqmi96fysma-unit-script-pool-retrigger-start/bin/pool-retrigger-start \nRemainAfterExit=true\nTimeoutStartSec=10s\nType=oneshot\n\n[Install]\nWantedBy=local-fs.target\n"
+    },
+    "rename": {
+      "found_by": "S1.6",
+      "func.rename": "epall",
+      "setting": "none beyond the baseline"
+    },
+    "share": {
+      "ea support": "Yes",
+      "store dos attributes": "Yes"
+    },
+    "unlink_policy": {
+      "configured": "no func.unlink option (the mergerfs default)",
+      "found_by": "S1.4 (measured, not a pass condition)",
+      "func.unlink": "epall",
+      "measurement": {
+        "configured_options": "allow_other,fsname=cachepool,category.create=ff,moveonenospc=false,minfreespace=64M,passthrough.io=off,cache.files=off",
+        "delete_status": [
+          0,
+          ""
+        ],
+        "effective_func_unlink": "epall",
+        "holders_after": [],
+        "holders_before": [
+          "pool",
+          "arch1"
+        ],
+        "path": "s1.4/both.txt",
+        "visible_after": {
+          "cache_pool_on_server": false,
+          "second_session": false,
+          "share": false
+        }
+      }
+    }
+  }
+}
