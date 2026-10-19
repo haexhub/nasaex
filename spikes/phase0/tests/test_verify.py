@@ -1,17 +1,22 @@
-"""spikectl verify: lock integrity, append-only lock, record-to-lock pairing,
-criteria-before-record by git ancestry, hygiene scans and the spikes/ reference rule."""
+"""spikectl verify: lock integrity, record-to-lock pairing, hygiene scans and the spikes/
+reference rule (the git group: test_verify_git.py)."""
 
+import hashlib
 import io
 import tarfile
 
 import pytest
 from helpers import (
+    CRITERIA,
     LOCK,
+    RESULTS,
     commit_all,
-    git,
+    criteria_doc,
+    evidence_tar,
     init_repo,
     make_root,
     record_doc,
+    sha256_bytes,
     write_criteria,
     write_record,
 )
@@ -41,6 +46,11 @@ def test_a_tree_without_criteria_or_records_is_clean(root):
     commit_all(root)
 
     assert verify(root) == []
+
+
+def test_an_unknown_check_group_is_refused(root):
+    with pytest.raises(ValueError, match="bogus"):
+        verify(root, only=("criteria", "bogus"))
 
 
 # --- lock integrity --------------------------------------------------------
@@ -85,49 +95,54 @@ def test_a_criteria_file_failing_the_schema_is_detected(root):
     assert "criteria-schema" in checks(verify(root, only=("criteria",)))
 
 
-# --- append-only lock ------------------------------------------------------
+@pytest.mark.parametrize("group", ["criteria", "records"])
+def test_a_malformed_lock_line_is_reported_by_the_criteria_and_records_groups(root, group):
+    (root / LOCK).write_text("S1.yaml one-version\n", encoding="utf-8")
+
+    findings = verify(root, only=(group,))
+
+    assert [f.check for f in findings] == ["lock-format"]
+    assert "frozen.lock:1" in findings[0].message
 
 
-def test_lock_history_that_only_appends_is_accepted(root):
-    init_repo(root)
-    (root / LOCK).write_text(f"S1.yaml 1 {FAKE_HASH}\n", encoding="utf-8")
-    commit_all(root)
-    (root / LOCK).write_text(f"S1.yaml 1 {FAKE_HASH}\nS2.yaml 1 {FAKE_HASH}\n", encoding="utf-8")
-    commit_all(root)
+def test_a_file_locked_twice_is_detected(root):
+    frozen_s1(root)
+    (root / LOCK).write_text((root / LOCK).read_text(encoding="utf-8") * 2, encoding="utf-8")
 
-    assert verify(root, only=("git",)) == []
+    findings = verify(root, only=("criteria",))
 
-
-def test_a_rewritten_lock_line_in_history_is_detected(root):
-    init_repo(root)
-    (root / LOCK).write_text(f"S1.yaml 1 {FAKE_HASH}\n", encoding="utf-8")
-    commit_all(root)
-    (root / LOCK).write_text(f"S1.yaml 1 {'b' * 64}\n", encoding="utf-8")
-    commit_all(root)
-
-    assert "lock-append-only" in checks(verify(root, only=("git",)))
+    assert [f.check for f in findings] == ["lock-format"]
+    assert "appears twice" in findings[0].message
 
 
-def test_a_removed_lock_line_in_the_working_tree_is_detected(root):
-    init_repo(root)
-    (root / LOCK).write_text(f"S1.yaml 1 {FAKE_HASH}\nS2.yaml 1 {FAKE_HASH}\n", encoding="utf-8")
-    commit_all(root)
-    (root / LOCK).write_text(f"S1.yaml 1 {FAKE_HASH}\n", encoding="utf-8")
+def test_a_locked_file_whose_status_is_not_frozen_is_detected(root):
+    path = write_criteria(root, status="draft")
+    (root / LOCK).write_text(f"S1.yaml 1 {sha256_bytes(path.read_bytes())}\n", encoding="utf-8")
 
-    assert "lock-append-only" in checks(verify(root, only=("git",)))
+    assert checks(verify(root, only=("criteria",))) == {"lock-status"}
 
 
-def test_lock_must_extend_the_lock_of_a_base_ref(root):
-    init_repo(root)
-    (root / LOCK).write_text(f"S1.yaml 1 {FAKE_HASH}\nS2.yaml 1 {FAKE_HASH}\n", encoding="utf-8")
-    base = commit_all(root)
-    git(root, "checkout", "-q", "-b", "topic")
-    (root / LOCK).write_text(f"S2.yaml 1 {FAKE_HASH}\n", encoding="utf-8")
-    commit_all(root)
+@pytest.mark.parametrize("name", ["S1.v1.yaml", "S1.v2.yml"])
+def test_a_criteria_file_named_outside_the_scheme_is_detected(root, name):
+    write_criteria(root, name=name)
 
-    findings = verify(root, only=("git",), base_ref=base)
+    assert checks(verify(root, only=("criteria",))) == {"criteria-name"}
 
-    assert "lock-append-only" in checks(findings)
+
+@pytest.mark.parametrize("text", ["spike: [S1\n", "- S1\n"], ids=["broken-yaml", "not-a-mapping"])
+def test_a_criteria_file_that_does_not_load_is_detected(root, text):
+    (root / CRITERIA / "S1.yaml").write_text(text, encoding="utf-8")
+
+    assert checks(verify(root, only=("criteria",))) == {"criteria-schema"}
+
+
+def test_a_criteria_file_whose_content_names_another_spike_is_detected(root):
+    write_criteria(root, criteria_doc("S3"), name="S1.yaml")
+
+    findings = verify(root, only=("criteria",))
+
+    assert [f.check for f in findings] == ["criteria-schema"]
+    assert "disagree with the name" in findings[0].message
 
 
 # --- records ---------------------------------------------------------------
@@ -172,6 +187,20 @@ def test_a_record_failing_the_schema_is_detected(root):
     assert "record-schema" in checks(verify(root, only=("records",)))
 
 
+def raw_record(root, data: bytes):
+    """A record.json with arbitrary bytes in the place of an S1 record."""
+    path = root / RESULTS / "S1" / "S1-20261022T101500Z-v1" / "record.json"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(data)
+
+
+@pytest.mark.parametrize("data", [b"{not json", b"\xff\xfe"], ids=["broken-json", "not-utf-8"])
+def test_a_record_that_does_not_load_is_detected(root, data):
+    raw_record(root, data)
+
+    assert checks(verify(root, only=("records",))) == {"record-schema"}
+
+
 def test_a_fail_record_without_a_fallback_decision_is_detected(root):
     entry = frozen_s1(root)
     doc = record_doc("S1", 1, entry.sha256, {"S1.1": "pass", "S1.2": "fail"})
@@ -197,6 +226,14 @@ def test_an_evidence_archive_that_differs_from_its_recorded_hash_is_detected(roo
     assert "record-evidence" in checks(verify(root, only=("records",)))
 
 
+def truncated_evidence() -> bytes:
+    """A real evidence archive cut short, as an interrupted copy leaves it: it opens, but not
+    every member can be read."""
+    noise = hashlib.shake_128(b"incompressible").digest(65536)
+    data = evidence_tar({"driver.log": b"log\n", "core.bin": noise})
+    return data[: len(data) * 3 // 4]
+
+
 def test_x1_records_are_never_required(root):
     write_criteria(root, spike="X1")
     freeze(root, "X1")
@@ -212,50 +249,6 @@ def test_an_x1_record_that_claims_to_gate_is_detected(root):
     write_record(root, doc)
 
     assert "record-schema" in checks(verify(root, only=("records",)))
-
-
-# --- criteria before record (git ancestry) ---------------------------------
-
-
-def test_criteria_commit_before_record_commit_passes(root):
-    init_repo(root)
-    entry = frozen_s1(root)
-    commit_all(root, "docs(phase0): freeze S1 criteria")
-    write_record(root, record_doc("S1", 1, entry.sha256))
-    commit_all(root, "docs(phase0): record S1 result")
-
-    assert verify(root, only=("git",)) == []
-
-
-def test_criteria_and_record_in_one_commit_are_detected(root):
-    init_repo(root)
-    entry = frozen_s1(root)
-    write_record(root, record_doc("S1", 1, entry.sha256))
-    commit_all(root)
-
-    assert "ancestry" in checks(verify(root, only=("git",)))
-
-
-def test_a_record_committed_before_the_lock_line_is_detected(root):
-    init_repo(root)
-    entry = frozen_s1(root)
-    lock = (root / LOCK).read_text(encoding="utf-8")
-    (root / LOCK).unlink()
-    write_record(root, record_doc("S1", 1, entry.sha256))
-    commit_all(root, "docs(phase0): record S1 result")
-    (root / LOCK).write_text(lock, encoding="utf-8")
-    commit_all(root, "docs(phase0): freeze S1 criteria")
-
-    assert "ancestry" in checks(verify(root, only=("git",)))
-
-
-def test_an_uncommitted_record_is_detected(root):
-    init_repo(root)
-    entry = frozen_s1(root)
-    commit_all(root)
-    write_record(root, record_doc("S1", 1, entry.sha256))
-
-    assert "ancestry" in checks(verify(root, only=("git",)))
 
 
 # --- hygiene scans ---------------------------------------------------------
@@ -393,3 +386,34 @@ def test_hygiene_works_without_git_by_walking_the_tree(root):
     write_doc(root, "docs/notes.md", "see /home/alice/x\n")
 
     assert "host-paths" in checks(verify(root, only=("hygiene",)))
+
+
+def test_binary_files_are_skipped_by_the_text_scans(root):
+    init_repo(root)
+    for rel in ("docs/phase0/plot.png", "assets/logo.png"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe")
+    commit_all(root)
+
+    assert verify(root, only=("hygiene",), forbidden_names=()) == []
+
+
+def test_binary_evidence_members_are_skipped_and_the_text_members_still_scanned(root):
+    init_repo(root)
+    entry = frozen_s1(root)
+    evidence = evidence_tar({"core.bin": b"\xff\xfe", "driver.log": b"from /home/alice/x\n"})
+    write_record(root, record_doc("S1", 1, entry.sha256), evidence=evidence)
+    commit_all(root)
+
+    findings = verify(root, only=("hygiene",), forbidden_names=())
+
+    assert [f.message.rsplit("!", 1)[1] for f in findings] == ["driver.log:1: absolute host path"]
+
+
+def test_an_unreadable_evidence_archive_is_skipped_by_the_scans(root):
+    init_repo(root)
+    entry = frozen_s1(root)
+    write_record(root, record_doc("S1", 1, entry.sha256), evidence=b"not a tar archive")
+    commit_all(root)
+
+    assert verify(root, only=("hygiene",), forbidden_names=()) == []

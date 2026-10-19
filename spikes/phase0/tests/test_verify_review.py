@@ -1,9 +1,7 @@
 """spikectl verify for review records (S2.7): layout, schema, lock pairing, the reviewed record,
 its pinned evidence entries and commit order."""
 
-import io
 import json
-import tarfile
 
 import pytest
 from helpers import (
@@ -11,6 +9,8 @@ from helpers import (
     S2_OUTCOMES,
     commit_all,
     criteria_doc,
+    evidence_tar,
+    git,
     init_repo,
     make_root,
     record_doc,
@@ -35,16 +35,6 @@ def checks(findings):
 
 
 PROCEDURE = b"1. restore the failed disk with snapraid fix\n"
-
-
-def evidence_tar(members: dict[str, bytes]) -> bytes:
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:xz") as tar:
-        for name, data in members.items():
-            info = tarfile.TarInfo(name)
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-    return buffer.getvalue()
 
 
 def frozen_s2(root, version=1):
@@ -220,3 +210,36 @@ def test_an_uncommitted_review_is_detected(root):
     write_review(root, review_doc(run, evidence=procedure_evidence()))
 
     assert "ancestry" in checks(verify(root, only=("git",)))
+
+
+def test_an_uncommitted_reviewed_record_is_reported_once_as_its_own_ancestry(root):
+    init_repo(root)
+    entry = frozen_s2(root)
+    commit_all(root, "docs(phase0): freeze S2 criteria")
+    run = s2_run_with_procedure(root, entry)
+    review = write_review(root, review_doc(run, evidence=procedure_evidence()))
+    git(root, "add", "--", str(review.parent.relative_to(root)))
+    git(root, "commit", "-q", "-m", "docs(phase0): review S2.7")
+
+    findings = verify(root, only=("git",))
+
+    assert [f.check for f in findings] == ["ancestry"]
+    assert f"{run['record_id']}/record.json is not committed" in findings[0].message
+
+
+def test_a_review_whose_branch_lacks_the_reviewed_record_commit_is_detected(root):
+    init_repo(root)
+    entry = frozen_s2(root)
+    commit_all(root, "docs(phase0): freeze S2 criteria")
+    git(root, "branch", "review")
+    run = s2_run_with_procedure(root, entry)
+    commit_all(root, "docs(phase0): record S2 result")
+    git(root, "checkout", "-q", "review")
+    write_review(root, review_doc(run, evidence=procedure_evidence()))
+    commit_all(root, "docs(phase0): review S2.7")
+    git(root, "merge", "-q", "--no-edit", "main")
+
+    findings = verify(root, only=("git",))
+
+    assert [f.check for f in findings] == ["ancestry"]
+    assert "is not an ancestor" in findings[0].message

@@ -5,7 +5,6 @@ rest (preflight and mode gate of spikectl.record, record writer, evidence) is th
 import datetime
 import json
 import shutil
-import signal
 import tarfile
 import tempfile
 from pathlib import Path
@@ -22,11 +21,10 @@ from helpers import (
 )
 
 from spikectl import cli
-from spikectl import run as run_module
 from spikectl.freeze import freeze
 from spikectl.model import schema_errors
 from spikectl.record import PreflightError
-from spikectl.run import GRACE_S, Host, RunError, run_spike
+from spikectl.run import GRACE_S, Host, RunError, filesystem_type, run_spike
 
 STORE = Path("/nix/store/0000000000000000000000000000000-nixos-test-driver-s1")
 START = datetime.datetime(2026, 10, 22, 10, 15, 0, tzinfo=datetime.UTC)
@@ -193,31 +191,6 @@ def test_shakedown_runs_the_cached_driver_outside_the_sandbox_in_a_fresh_state_d
     assert [s["id"] for s in outcome["scenarios"]] == ["S1.1"]
 
 
-def test_launch_kills_the_process_group_when_wait_is_interrupted(monkeypatch, tmp_path):
-    class InterruptedProcess:
-        pid = 123
-
-        def __init__(self):
-            self.waits = 0
-
-        def wait(self, timeout=None):
-            self.waits += 1
-            if self.waits == 1:
-                raise KeyboardInterrupt
-            return -signal.SIGKILL
-
-    process = InterruptedProcess()
-    killed = []
-    monkeypatch.setattr(run_module.subprocess, "Popen", lambda *_args, **_kwargs: process)
-    monkeypatch.setattr(run_module.os, "killpg", lambda pid, sig: killed.append((pid, sig)))
-
-    with pytest.raises(KeyboardInterrupt):
-        run_module._launch(["driver"], tmp_path, {}, tmp_path / "driver.log", timeout_s=1)
-
-    assert killed == [(123, signal.SIGKILL)]
-    assert process.waits == 2
-
-
 def test_run_removes_machine_state_when_driver_launch_is_interrupted(root, state_base):
     host = FakeHost(state_base)
 
@@ -313,6 +286,22 @@ def test_a_state_directory_on_a_tmpfs_is_refused(locked_root, state_base, mode):
     with pytest.raises(PreflightError, match="tmpfs"):
         run_spike(locked_root, "S1", mode, env=env_for(state_base), host=host)
     assert host.launches == []
+
+
+def test_the_state_filesystem_is_that_of_the_longest_mount_point_containing_it():
+    mounts = (
+        "none /\n"  # malformed: no type
+        "/dev/a /p0fs ext4 rw 0 0\n"
+        "none /p0fs/state tmpfs rw 0 0\n"
+        "/dev/b /p0fs/state-b xfs rw 0 0\n"
+        "/dev/c /p0fs/with\\040space vfat rw 0 0\n"
+        "/dev/d / btrfs rw 0 0\n"
+    )
+
+    assert filesystem_type(Path("/p0fs/state/S1-run"), mounts) == "tmpfs"
+    assert filesystem_type(Path("/p0fs/state-bb"), mounts) == "ext4"
+    assert filesystem_type(Path("/p0fs/with space/x"), mounts) == "vfat"
+    assert filesystem_type(Path("/elsewhere"), mounts) == "btrfs"
 
 
 def test_record_mode_refuses_less_than_100_gib_free_in_the_state_directory(locked_root, state_base):

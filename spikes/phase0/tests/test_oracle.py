@@ -111,6 +111,12 @@ def test_a_client_deleted_file_left_on_an_archive_branch_violates_c():
     assert [(v.invariant, v.path) for v in violations] == [("c", "gone.bin")]
 
 
+def test_a_client_deleted_file_that_is_gone_everywhere_is_no_violation():
+    obs = observed(pool={"live/one.bin": file_item()}, archive={"arch0": {"x.bin": file_item()}})
+
+    assert check_no_loss_or_resurrection(EXPECTED, obs, {"gone.bin"}) == []
+
+
 def test_partial_content_violates_d():
     share = {**EXPECTED, "live/one.bin": file_item(sha=BAD, size=4)}
 

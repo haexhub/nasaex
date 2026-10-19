@@ -11,7 +11,7 @@
       pkgs = nixpkgs.legacyPackages.${system};
       inherit (pkgs) lib;
 
-      pythonEnv = pkgs.python3.withPackages (ps: [ ps.pytest ps.pyyaml ps.jsonschema ]);
+      pythonEnv = pkgs.python3.withPackages (ps: [ ps.pytest ps.pytest-cov ps.pyyaml ps.jsonschema ]);
       spikectlSrc = lib.fileset.toSource {
         root = ./.;
         fileset = lib.fileset.unions [ ./spikectl ./testlib ];

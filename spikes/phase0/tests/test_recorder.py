@@ -364,3 +364,12 @@ def test_review_failure_requires_an_immutable_fallback_decision(tmp_path):
 
     without_fallback = {key: value for key, value in failing.items() if key != "fallback_decision"}
     assert schema_errors(root, "result-record.schema.json", without_fallback)
+
+
+def test_a_scenario_whose_cases_are_empty_is_an_error():
+    rec = Recorder()
+
+    rec.run_cases("S1.1", [], lambda case: None)
+
+    scenario = by_id(rec)["S1.1"]
+    assert (scenario["outcome"], scenario["notes"]) == ("error", "S1.1: no cases were generated")

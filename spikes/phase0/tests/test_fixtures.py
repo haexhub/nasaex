@@ -16,7 +16,9 @@ from testlib.fixtures import (
     edge_cases,
     expected_manifest,
     flipped_sha256,
+    from_json,
     populate,
+    to_json,
 )
 from testlib.manifest import build_manifest, compare
 
@@ -196,3 +198,18 @@ def test_flipped_sha256_is_the_hash_after_inverting_the_bits_of_each_named_byte(
 def test_flipped_sha256_refuses_an_offset_outside_the_file():
     with pytest.raises(ValueError, match="offset 10"):
         flipped_sha256("seed", Entry("f.bin", "pool", size=10), (10,))
+
+
+@pytest.mark.parametrize("kind", ["dir", "hardlink"])
+def test_only_file_entries_have_content_of_their_own(kind):
+    entry = Entry("x", "pool", kind=kind, link_to="y" if kind == "hardlink" else None)
+
+    with pytest.raises(ValueError, match="only file entries"):
+        list(content_chunks("seed", entry))
+
+
+def test_a_fixture_round_trips_through_json_for_the_guest():
+    extra = Entry("x.txt", "pool", size=3, mode=0o600, xattrs=(("user.k", "v"),))
+    fixture = Fixture(seed="seed-1", entries=(*edge_cases("arch0"), extra))
+
+    assert from_json(to_json(fixture)) == fixture

@@ -167,3 +167,45 @@ def test_trim_log_keeps_head_and_tail_with_a_marker():
     assert any("trimmed" in line for line in lines)
     assert len(lines) <= 101
     assert trim_log("short", max_lines=100) == "short"
+
+
+def test_binary_content_in_a_kept_location_is_excluded(tmp_path):
+    staging = stage(tmp_path, {"driver.log": "kept", "journal/core.bin": b"\xff\xfe\x00"})
+
+    result = build_evidence(staging, tmp_path / "out", SANITISER, passing=set())
+
+    assert set(members(result.path)) == {"driver.log"}
+    assert "journal/core.bin" in result.excluded
+
+
+class EscapingSanitiser(Sanitiser):
+    """Turns two member names into a parent and an absolute path. The replacements of the real
+    sanitiser never do; the archive must stay safe to extract if one ever does."""
+
+    def sanitise(self, text):
+        return {"journal/a.log": "../a.log", "journal/b.log": "/b.log"}.get(text, text)
+
+
+def test_a_member_name_that_would_extract_outside_the_archive_is_excluded(tmp_path):
+    staging = stage(tmp_path, {"driver.log": "kept", "journal/a.log": "a", "journal/b.log": "b"})
+
+    result = build_evidence(staging, tmp_path / "out", EscapingSanitiser(), passing=set())
+
+    assert set(members(result.path)) == {"driver.log"}
+    assert {"journal/a.log", "journal/b.log"} <= set(result.excluded)
+
+
+def test_every_further_colliding_member_name_takes_the_next_free_suffix(tmp_path):
+    sanitiser = Sanitiser(host_names=("buildbox", "buildhost", "buildvm"))
+    names = ("<host>", "buildbox", "buildhost", "buildvm")
+    staging = stage(tmp_path, {f"journal/{name}.log": name for name in names})
+
+    result = build_evidence(staging, tmp_path / "out", sanitiser, passing=set())
+
+    assert sorted(members(result.path).values()) == [b"<host>"] * 4
+    assert set(result.members) == {
+        "journal/<host>.log",
+        "journal/<host>.log~2",
+        "journal/<host>.log~3",
+        "journal/<host>.log~4",
+    }

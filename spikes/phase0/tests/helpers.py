@@ -3,10 +3,12 @@ lines, result records and real git history; a probe for user xattrs on the test 
 two stand-ins for a driver machine (a local shell, and a recorder of commands)."""
 
 import hashlib
+import io
 import json
 import os
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 
 import yaml
@@ -166,8 +168,23 @@ def write_review(root: Path, doc: dict) -> Path:
     return path
 
 
-def write_record(root: Path, doc: dict, evidence: bytes = b"evidence") -> Path:
-    """Write record.json and an evidence archive stand-in whose hash the record names."""
+def evidence_tar(members: dict[str, bytes]) -> bytes:
+    """An xz tar archive holding `members` (name -> bytes), as an evidence archive does."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:xz") as tar:
+        for name, data in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
+
+
+EVIDENCE = evidence_tar({"driver.log": b"evidence\n"})
+
+
+def write_record(root: Path, doc: dict, evidence: bytes = EVIDENCE) -> Path:
+    """Write record.json and an evidence archive (by default a small readable one) whose hash
+    the record names."""
     doc["evidence_archive"] = {"path": "evidence.tar.xz", "sha256": sha256_bytes(evidence)}
     rec_dir = root / RESULTS / doc["spike"] / doc["record_id"]
     rec_dir.mkdir(parents=True, exist_ok=True)
