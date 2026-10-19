@@ -43,6 +43,12 @@ RESULT["commands"] += [
 RESULT["unit_script"] = server.execute(
     f"systemctl cat {UNIT} | sed -n 's/^ExecStart=-\\?//p' | xargs -r cat 2>&1"
 )[1]
+# PROBE_CAPTURE_SIGTERM=1: diagnostic run, the capture sends SIGTERM to a leftover server itself
+# (shutdown_observe.py SIGTERM_FLAG); never set in a run whose kill waits are counted.
+RESULT["capture_sigterm"] = os.environ.get("PROBE_CAPTURE_SIGTERM") == "1"
+run("mkdir -p /var/lib/probe-t051i && rm -f /var/lib/probe-t051i/sigterm")
+if RESULT["capture_sigterm"]:
+    run("touch /var/lib/probe-t051i/sigterm")
 RESULT["environment"]["capture_unit"] = server.execute(
     "systemctl cat probe-shutdown-capture.service 2>&1"
 )[1]
