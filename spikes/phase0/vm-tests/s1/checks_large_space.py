@@ -30,11 +30,15 @@ session of its own, since the writer's session appends at its stale size within 
 second of the failed append (a Linux cifs client artefact, probe T051h) and a hole of zeros
 would fall between the leftover and the source; the writer session's size is recorded. The
 sizes the writer's session, the second session and the server show and the seconds until the
-space appeared are recorded, never judged beyond the bound. Scaffolding for the spikes, not
-product code."""
+space appeared are recorded, never judged beyond the bound. The refusal window (task T047c, spec
+Clarifications 2026-10-19), the seconds from the end of the deletion until the poll saw the
+space, goes beside minfreespace into the required settings, with what an empty mount.cifs create
+and an empty smbclient upload right after the deletion reported (recorded, never judged).
+Scaffolding for the spikes, not product code."""
 
 import json
 import posixpath
+import re
 import shlex
 from collections.abc import Callable, Mapping
 from functools import lru_cache
@@ -57,6 +61,10 @@ APPEND = Entry("s1.9/append.bin", POOL, size=4096)
 WRITES = {"create": "s1.9/new.bin", "put": "s1.9/new-smbclient.bin", "append": APPEND.path}
 DELETED_BEFORE_RETRY = ("create", "put")
 SOURCE = "/root/s1.9-source.bin"  # the seeded source, generated alike on client and server
+EMPTY = "/root/s1.9-empty.bin"  # the client's empty file of the smbclient create in the window
+# The empty creates in the refusal window (task T047c), by client implementation.
+WINDOW_CREATES = {"mount.cifs": "s1.9/window-create.bin", "smbclient": "s1.9/window-put.bin"}
+_NT_STATUS = re.compile(r"NT_STATUS_[A-Z_]+")
 ARCHIVE_KEYS = (*ARCHIVE, *(trash(serial) for serial in ARCHIVE))
 # Classes of probes.enospc_writes.leftover that are a byte-exact prefix of the source.
 PREFIX_CLASSES = ("absent", "empty", "complete", "partial, prefix intact")
@@ -409,22 +417,44 @@ def _retry(lab: Lab, step: str, rel: str, seen: Mapping, table: Mapping, source:
     return retry
 
 
+def _window_creates(lab: Lab) -> dict:
+    """One empty create through mount.cifs and one smbclient upload of an empty file, what each
+    reported and its errno or SMB status (never judged); a create that succeeded is deleted
+    through the share at once, before the poll."""
+    cifs = _client_write(lab, "create", WINDOW_CREATES["mount.cifs"], 0)
+    put = list(lab.smb.put(EMPTY, WINDOW_CREATES["smbclient"]))
+    seen = {
+        "mount.cifs": {"report": cifs, "status": cifs["errno"]},
+        "smbclient": {"report": put, "status": next(iter(_NT_STATUS.findall(put[1])), None)},
+    }
+    for (client, rel), step in zip(WINDOW_CREATES.items(), ("create", "put"), strict=True):
+        if not _retry_error(step, seen[client]["report"]):
+            _remove_through_share(lab, rel)
+    return seen
+
+
 def check_pool_out_of_space(lab: Lab) -> None:
     """Each write starts from the precondition: its own filler, measured after the leftovers
     of earlier writes; the retries follow once every filler is gone (Clarifications
-    2026-10-19, proposed (b))."""
+    2026-10-19, proposed (b)). The refusal window counts from the end of the deletion of the
+    leftovers, so the time of the empty creates before the poll is part of it (task T047c)."""
     table = lab.tables["out_of_space"]
     lab.place(Fixture(SEED, (APPEND,)))
     writes: dict[str, dict] = {}
     try:
         source = _make_source(lab, table["write_bytes"])
+        lab.client.succeed(f"truncate -s 0 {EMPTY}")
         hashes = lab.tree_hashes(ARCHIVE_KEYS)
         for step, rel in WRITES.items():
             writes[step], hashes = _failed_write(lab, step, rel, table, hashes)
         for step in DELETED_BEFORE_RETRY:
             _remove_through_share(lab, WRITES[step])
+        deleted = monotonic()
+        window = _window_creates(lab)
         target = freed_space_target(writes, SPACE_EPSILON)
+        polled = monotonic()
         freed = wait_for_freed_space(lambda: _free_bytes(lab), target, clock=monotonic, sleep=sleep)
+        window_s = round(polled - deleted + freed["waited_s"], 3)
         if freed["appeared"]:
             for step, rel in WRITES.items():
                 retry = _retry(lab, step, rel, writes[step], table, source["client"])
@@ -433,7 +463,7 @@ def check_pool_out_of_space(lab: Lab) -> None:
         for step in DELETED_BEFORE_RETRY:
             _remove_through_share(lab, WRITES[step])
         for machine in (lab.server, lab.client):
-            machine.execute(f"rm -f {SOURCE}")
+            machine.execute(f"rm -f {SOURCE} {EMPTY}")
     failures = space_failures(table, writes)
     if not freed["appeared"]:
         failures.insert(
@@ -446,6 +476,10 @@ def check_pool_out_of_space(lab: Lab) -> None:
         "archive_branch_mode": "NC",
         "moveonenospc": lab.effective("moveonenospc"),
         "minfreespace": lab.effective("minfreespace"),
+        # A finding, not judged beyond the bound of the poll (spec Clarifications 2026-10-19).
+        "create_refused_window_s": window_s,
+        "create_refused_window_space_appeared": freed["appeared"],
+        "creates_in_window": {client: seen["status"] for client, seen in window.items()},
         "found_by": "S1.9",
     }
     lab.evidence(
@@ -454,6 +488,8 @@ def check_pool_out_of_space(lab: Lab) -> None:
             "source_sha256": source,
             "writes": writes,
             "freed_space": freed,
+            "create_refused_window_s": window_s,
+            "creates_in_window": window,
             "space_epsilon": SPACE_EPSILON,
             "failures": failures,
         },

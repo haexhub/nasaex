@@ -31,16 +31,26 @@ class Logged(RecordingMachine):
         out = super().succeed(command, **kwargs)
         return out() if callable(out) else out
 
+    def execute(self, command, **kwargs):
+        """An output that is a tuple is (exit status, output); any other exits 0."""
+        out = self.succeed(command, **kwargs)
+        return out if isinstance(out, tuple) else (0, out)
+
     def wait_until_succeeds(self, command, **_):
         self.log.append((self.name, command))
 
 
 SOURCE_ARGS = "/root/s1.9-source.bin 1000"
+EMPTY_PUT = 'put "/root/s1.9-empty.bin"'
 
 
 def _step(machine, command):
     if machine == "filler":
         return "filler"
+    if machine == "client" and command.endswith(" wb /root/s1.9-source.bin 0"):
+        return "empty create"
+    if machine == "client" and EMPTY_PUT in command:
+        return "empty put"
     if machine == "client" and command.endswith((f" wb {SOURCE_ARGS}", f" ab {SOURCE_ARGS}")):
         if " wb " in command:
             return "create"
@@ -80,13 +90,32 @@ class FakeClock:
         self.now += seconds
 
 
-def _run_s1_9(
-    tmp_path, monkeypatch, filler=None, client_sha=None, space=None, writer_after_mount=None
+def _run_s1_9(tmp_path, monkeypatch, filler=None, client_sha=None, **kwargs):
+    """Run check S1.9 against recording machines; the shared command log and the scenarios."""
+    log, lab = _lab_s1_9(tmp_path, monkeypatch, filler, client_sha, **kwargs)
+    return log, lab.recorder.scenarios()
+
+
+ENOSPC_REPORT = '{"errno": "ENOSPC", "step": "fsync", "written": 1000}'
+
+
+def _lab_s1_9(
+    tmp_path,
+    monkeypatch,
+    filler=None,
+    client_sha=None,
+    space=None,
+    writer_after_mount=None,
+    window_create=None,
+    window_put=None,
 ):
-    """Run check S1.9 against recording machines; the shared command log and the scenarios.
+    """Run check S1.9 against recording machines; the shared command log and the lab.
     `space` gives the free bytes the server reports once the leftovers are deleted (a callable
     called per sample); before that the pool reports 100 bytes. `writer_after_mount` is called
-    instead of the writer that runs through the session of its own."""
+    instead of the writer that runs through the session of its own. `window_create` is called
+    with the fake clock for the empty mount.cifs create in the refusal window (task T047c) and
+    returns the writer's report; `window_put` is the exit status and output of the empty
+    smbclient put (default: exit 0, no output)."""
     monkeypatch.chdir(tmp_path)
     log = []
     clock = FakeClock(log)
@@ -101,7 +130,7 @@ def _run_s1_9(
 
     outputs = {
         "build_manifest": "{}",
-        "errorcode": '{"errno": "ENOSPC", "step": "fsync", "written": 1000}',
+        "errorcode": ENOSPC_REPORT,
         "lexists": '["pool"]',
         "stat -c %s": "10",
         "df --output=avail": avail,
@@ -112,10 +141,19 @@ def _run_s1_9(
     def writer():
         if writer_after_mount and "/mnt/share3/" in log[-1][1]:
             return writer_after_mount()
+        if window_create and "/window-create.bin " in log[-1][1]:
+            return window_create(clock)
         return outputs["errorcode"]
 
     client = Logged(
-        "client", log, {**outputs, "errorcode": writer, "sha256sum": client_sha or "0" * 64}
+        "client",
+        log,
+        {
+            **outputs,
+            "errorcode": writer,
+            "sha256sum": client_sha or "0" * 64,
+            EMPTY_PUT: window_put or (0, ""),
+        },
     )
     tables = {
         "out_of_space": {
@@ -141,7 +179,7 @@ def _run_s1_9(
 
     monkeypatch.setattr(checks_large_space.faults, "enospc", filler)
     lab.recorder.run("S1.9", lambda: check_pool_out_of_space(lab))
-    return log, lab.recorder.scenarios()
+    return log, lab
 
 
 def test_each_write_of_s1_9_starts_from_the_precondition_and_is_retried_after_it(
@@ -149,9 +187,10 @@ def test_each_write_of_s1_9_starts_from_the_precondition_and_is_retried_after_it
 ):
     # Each write gets its own filler (S1 shakedown T051: a shared filler let the first partial
     # file use up the free bytes of the next) and is watched on the archive filesystems; then
-    # the client deletes the leftovers of the create and the upload through the share, the
-    # check looks at the free bytes of the pool branch (task T047b) and repeats every write
-    # without a filler, the append through a mount.cifs session of its own.
+    # the client deletes the leftovers of the create and the upload through the share, creates
+    # two empty files in the refusal window (task T047c; the upload succeeds here and is deleted
+    # at once), the check looks at the free bytes of the pool branch (task T047b) and repeats
+    # every write without a filler, the append through a mount.cifs session of its own.
     log, _ = _run_s1_9(tmp_path, monkeypatch)
 
     steps = [s for s in (_step(m, c) for m, c in log) if s]
@@ -159,7 +198,8 @@ def test_each_write_of_s1_9_starts_from_the_precondition_and_is_retried_after_it
         *("filler", "free", "watch", "create", "end watch", "free", "unfill"),
         *("filler", "free", "watch", "put", "end watch", "free", "unfill"),
         *("filler", "free", "watch", "append", "end watch", "free", "unfill"),
-        *("delete new.bin", "delete new-smbclient.bin", "free"),
+        *("delete new.bin", "delete new-smbclient.bin"),
+        *("empty create", "empty put", "delete window-put.bin", "free"),
         *("create", "put", "mount fresh session", "append (fresh session)"),
         *("umount fresh session", "delete new.bin", "delete new-smbclient.bin"),
     ]
@@ -175,7 +215,7 @@ def test_the_retries_wait_for_the_freed_space_and_record_the_seconds_until_it_ap
     log, _ = _run_s1_9(tmp_path, monkeypatch, space=lambda: next(samples))
 
     steps = [s for s in (_step(m, c) for m, c in log) if s]
-    deleted = steps.index("delete new-smbclient.bin") + 1
+    deleted = steps.index("delete window-put.bin") + 1
     assert steps[deleted : deleted + 8] == [
         *("free", "sleep 0.5", "free", "sleep 0.5", "free", "sleep 0.5", "free", "create"),
     ]
@@ -205,6 +245,99 @@ def test_the_retries_do_not_run_and_the_check_fails_when_the_space_never_appears
     assert "bound 60 s" in scenarios[0]["notes"]
     evidence = json.loads(Path("status/S1.9-out-of-space.json").read_text())
     assert evidence["freed_space"]["appeared"] is False
+
+
+def _slow_refused_create(clock):
+    """The empty mount.cifs create of the window, refused at open after 0.7 s."""
+    clock.now += 0.7
+    return '{"errno": "EROFS", "step": "open", "written": 0}'
+
+
+REFUSED_PUT = (1, "NT_STATUS_MEDIA_WRITE_PROTECTED opening remote file \\s1.9\\window-put.bin")
+
+
+def test_the_refusal_window_counts_from_the_end_of_the_deletion_until_the_space_appeared(
+    tmp_path, monkeypatch
+):
+    # Task T047c: the space appears at the fourth sample, 1.5 s into the poll; the empty creates
+    # between the deletion and the poll took 0.7 s, so the window is 2.2 s.
+    samples = iter([0, 0, 0, 30])
+
+    _, lab = _lab_s1_9(
+        tmp_path,
+        monkeypatch,
+        space=lambda: next(samples),
+        window_create=_slow_refused_create,
+        window_put=REFUSED_PUT,
+    )
+
+    settings = lab.required_settings["out_of_space"]
+    assert settings["create_refused_window_s"] == 2.2
+    assert settings["create_refused_window_space_appeared"] is True
+    assert settings["creates_in_window"] == {
+        "mount.cifs": "EROFS",
+        "smbclient": "NT_STATUS_MEDIA_WRITE_PROTECTED",
+    }
+    assert "minfreespace" in settings
+    evidence = json.loads(Path("status/S1.9-out-of-space.json").read_text())
+    assert evidence["create_refused_window_s"] == 2.2
+    assert evidence["freed_space"]["waited_s"] == 1.5
+
+
+def test_the_refusal_window_is_recorded_when_the_bound_passes(tmp_path, monkeypatch):
+    _, lab = _lab_s1_9(tmp_path, monkeypatch, space=lambda: 0)
+
+    settings = lab.required_settings["out_of_space"]
+    assert settings["create_refused_window_s"] == 60.0
+    assert settings["create_refused_window_space_appeared"] is False
+    assert lab.recorder.scenarios()[0]["outcome"] == "fail"
+
+
+def test_the_creates_in_the_window_are_recorded_whatever_they_report_and_never_judged(
+    tmp_path, monkeypatch
+):
+    def accepted_create(clock):
+        return '{"errno": null, "step": null, "written": 0}'
+
+    (tmp_path / "refused").mkdir()
+    (tmp_path / "accepted").mkdir()
+    refused_log, refused = _lab_s1_9(
+        tmp_path / "refused",
+        monkeypatch,
+        window_create=_slow_refused_create,
+        window_put=REFUSED_PUT,
+    )
+    accepted_log, accepted = _lab_s1_9(
+        tmp_path / "accepted",
+        monkeypatch,
+        window_create=accepted_create,
+        window_put=(0, "putting file /root/s1.9-empty.bin as \\s1.9\\window-put.bin"),
+    )
+
+    # The same outcome and failures whatever the empty creates report.
+    judged = [
+        [(s["outcome"], s["notes"]) for s in lab.recorder.scenarios()]
+        for lab in (refused, accepted)
+    ]
+    assert judged[0] == judged[1]
+    assert accepted.required_settings["out_of_space"]["creates_in_window"] == {
+        "mount.cifs": None,
+        "smbclient": None,
+    }
+    evidence = json.loads(Path("status/S1.9-out-of-space.json").read_text())
+    assert evidence["creates_in_window"]["smbclient"]["report"][0] == 0
+    # A create that succeeded is deleted through the share before the poll, a refused one is not.
+    steps = {
+        name: [s for s in (_step(m, c) for m, c in log) if s]
+        for name, log in (("refused", refused_log), ("accepted", accepted_log))
+    }
+    window = steps["accepted"].index("empty create")
+    assert steps["accepted"][window : window + 5] == [
+        *("empty create", "empty put", "delete window-create.bin", "delete window-put.bin"),
+        "free",
+    ]
+    window = steps["refused"].index("empty create")
+    assert steps["refused"][window : window + 3] == ["empty create", "empty put", "free"]
 
 
 def test_the_append_retry_goes_through_a_session_of_its_own_and_the_writers_size_is_recorded(
