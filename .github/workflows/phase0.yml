@@ -1,0 +1,155 @@
+# Phase 0 CI (task T037i; spec Clarifications 2026-10-19, CI; docs/plans/2026-10-19-phase0-ci-design.md).
+# Every job runs on every event and decides by its own condition, never by a workflow `paths`
+# filter: a required check that never starts stays pending, and a check that a later event skips
+# must never stand in for one that ran. Record mode never runs here.
+name: phase0
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "git ref or SHA the changes are compared against"
+        required: true
+        default: origin/main
+      full:
+        description: "also run the full S1 shakedown (vm-full)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase0-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  # The smoke subset: S1 scenarios that need little disk and time (the excluded ones fill the
+  # pool, write files above 4 GiB or reboot 20 times; spec Clarifications 2026-10-19, CI).
+  SMOKE_SCENARIOS: S1.1,S1.3,S1.4,S1.5,S1.6,S1.7,S1.10
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      vm: ${{ steps.diff.outputs.vm }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: diff
+        name: Decide what changed against the event-specific base
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          INPUT_BASE: ${{ github.event.inputs.base }}
+        run: |
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            push) base="$PUSH_BEFORE" ;;
+            *) base="$INPUT_BASE" ;;
+          esac
+          # No usable base (a new branch, a force push, an unknown ref): treat everything as changed.
+          if ! git rev-parse --verify --quiet "${base}^{commit}" >/dev/null; then
+            echo "no usable base '${base}', every job runs"
+            echo "vm=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only "$base" HEAD | tee changed.txt
+          # The VM runs read the spikes and the S1 criteria (embedded into the test driver).
+          if grep -q -E '^(spikes/|docs/phase0/criteria/)' changed.txt; then vm=true; else vm=false; fi
+          echo "vm=$vm" | tee -a "$GITHUB_OUTPUT"
+
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        with:
+          enable_kvm: false
+      - name: nix flake check (unit tests with the coverage floor, lint, formatting, schema, lock, evaluation)
+        run: nix flake check ./spikes/phase0 -L
+      - name: spikectl verify with the full git history
+        run: nix run ./spikes/phase0#spikectl -- verify --base origin/main
+
+  vm-smoke:
+    needs: changes
+    if: needs.changes.outputs.vm == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - &prove-kvm
+        name: Prove a usable /dev/kvm and measure the runner
+        run: |
+          ls -l /dev/kvm || true
+          if ! { test -r /dev/kvm && test -w /dev/kvm; }; then
+            echo "::error::no usable /dev/kvm on this runner; the VM jobs never skip silently"
+            exit 1
+          fi
+          nproc; free -m; df -BG / /mnt
+      - &state-dir
+        name: Put the VM state on the disk with the most free space
+        run: |
+          dir=$(df -B1 --output=avail,target / /mnt | tail -n +2 | sort -n | tail -1 | awk '{print $2}')
+          state="${dir%/}/p0"
+          sudo mkdir -p "$state" && sudo chown "$(id -u):$(id -g)" "$state"
+          echo "SPIKE_STATE_DIR=$state" | tee -a "$GITHUB_ENV"
+      - name: S1 shakedown of the smoke subset
+        run: nix run ./spikes/phase0#s1 -- --mode shakedown --only "$SMOKE_SCENARIOS"
+      - &judge
+        name: Every scenario passed
+        run: |
+          runs=(spikes/phase0/scratch/S1/S1-*/)
+          out="${runs[-1]}"
+          jq -r '.scenarios[] | "\(.id) \(.outcome) \(.duration_s // "-")"' "$out/outcome.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          jq -e '(.scenarios | length) > 0 and all(.scenarios[]; .outcome == "pass")' "$out/outcome.json"
+      - &disk-after
+        name: Disk after the run
+        if: always()
+        run: df -BG / /mnt
+      - &upload
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: s1-shakedown-${{ github.job }}
+          path: spikes/phase0/scratch/S1/
+          if-no-files-found: ignore
+          overwrite: true
+
+  vm-full:
+    needs: changes
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.full == 'true') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full-s1'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      - *prove-kvm
+      - *state-dir
+      - name: The runner disk holds a full run
+        run: |
+          # The VM images of the S1 record run of 2026-10-19 used at least 20252 MiB at their peak.
+          free_gib=$(df -BG --output=avail "$SPIKE_STATE_DIR" | tail -1 | tr -dc 0-9)
+          echo "free: ${free_gib} GiB in $SPIKE_STATE_DIR"
+          if [ "$free_gib" -lt 26 ]; then
+            echo "::error::${free_gib} GiB free, a full S1 run needs about 20 GiB for the VM images plus headroom"
+            exit 1
+          fi
+      - name: Full S1 shakedown
+        run: nix run ./spikes/phase0#s1 -- --mode shakedown
+      - *judge
+      - *disk-after
+      - *upload
