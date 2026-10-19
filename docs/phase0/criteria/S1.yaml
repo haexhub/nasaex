@@ -427,3 +427,13 @@ changelog:
     S1.11 ended with OSError EBADF because the VMs were gone. Earlier full runs took 593 to 657 s.
     The budget is a protective bound, not a pass condition; a record run still belongs on a quiet
     host (Clarifications on the reference runner).
+  - >-
+    2026-10-19, shakedown of the amended checks (T043a, T047a, T047b, budget 40 min): one full
+    run with every scenario passing (S1.1 89 s, S1.8 627 s, S1.9 76 s, S1.11 196 s; total within
+    the budget). S1.1: on /mnt/cache every archive path kept its branch mode, uid and gid (for
+    example 0640 for archive/photos/img-0001.jpg, uid 1000, gid 100); mount.cifs showed 0755 and
+    uid 0, gid 0 for every path (recorded); allinfo showed 0x10 on directories and 0x80 on files.
+    S1.9: the freed space appeared after 21.1 s (--only run) and 26.4 s (full run); the create,
+    upload and append retries succeeded, lay on the pool branch only and read back with the
+    written data; the writer session and the fresh session showed the same size before the
+    append retry. Not a criteria change.
