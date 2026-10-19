@@ -65,6 +65,10 @@ let
     extraModules.server = [
       share
       { spike.tieredCache.enable = true; }
+      # The pool retrigger unit that nix/nodes.nix adds to every spike server (task T028b) is
+      # switched off: these probes measured the boot without it (or with their own variant of
+      # it, pool_race_modules.nix), and their committed results stay reproducible.
+      { systemd.services.pool-retrigger.enable = false; }
     ] ++ extraServerModules ++ overrides;
   };
 in
