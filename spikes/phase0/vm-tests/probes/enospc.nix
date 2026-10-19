@@ -4,8 +4,8 @@
 # served by the same Samba directly from the pool branch /mnt/pool (no mergerfs), and
 # inotify-tools on the server to watch the archive branches. The S1 criteria give the sizes
 # (tables.out_of_space). `name` and `script` select the probe: the control probe of T051b (the
-# default), the moveonenospc probe of T051c or the retry timeline probe of T051h. The test
-# script is enospc_probe_setup.py followed by `script`. Run one at a time.
+# default), the moveonenospc probe of T051c or the retry timeline and append retry probes of
+# T051h. The test script is enospc_probe_setup.py followed by `script`. Run one at a time.
 { mkSpike
 , name ? "probe-enospc-control"
 , script ? ./probe_enospc_control.py

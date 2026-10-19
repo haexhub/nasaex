@@ -6,7 +6,8 @@ output of `btrfs filesystem df` and `btrfs filesystem usage` for the first path.
 keeps the space lines of the usage output (`usage_lines`) and the commit count
 (`parse_commit_stats`); `summarize` reduces one timeline to the times, in seconds since its
 start, at which a write first succeeds, the pool branch first shows the freed space and btrfs
-first commits. Standard library only; the probe imports it as the script package `probes`.
+first commits. `append_gap` and `summarize_appends` serve the append retry probe
+(probe_append_retry.py). Standard library only; the probe imports it as the script package `probes`.
 Scaffolding for the spikes, not product code."""
 
 SAMPLER = """import json, os, subprocess, sys
@@ -76,3 +77,35 @@ def summarize(timeline: list[dict], need: int, minfree: int) -> dict:
         "pool_avail_first": timeline[0]["pool_avail"] if timeline else None,
         "pool_avail_last": timeline[-1]["pool_avail"] if timeline else None,
     }
+
+
+def append_gap(size: int, head: int, kept: int, written: int) -> int:
+    """Bytes of an appended file between the leftover of the failed append and the retry's
+    source: the file is head, leftover, then this many bytes, then the source."""
+    return size - head - kept - written
+
+
+def summarize_appends(rows: list[dict]) -> dict:
+    """Per variant of the append retry probe: how many retries, how many left a gap before the
+    source, the gap sizes, the sizes the client saw before the retry and how many read back as
+    head, leftover and source."""
+    out: dict = {}
+    for row in rows:
+        seen = out.setdefault(
+            row["variant"],
+            {"n": 0, "with_gap": 0, "gap_bytes": set(), "client_size_before": set()}
+            | {"read_back_ok": 0, "unallocated_bytes": set()},
+        )
+        client = row["client_before"]
+        seen["n"] += 1
+        seen["with_gap"] += row["gap_bytes"] > 0
+        seen["gap_bytes"].add(row["gap_bytes"])
+        seen["client_size_before"].add(client.get("size", client.get("error")))
+        seen["read_back_ok"] += bool(row["read_back"])
+        seen["unallocated_bytes"].add(row["unallocated_bytes"])
+    for seen in out.values():
+        for key in ("gap_bytes", "client_size_before", "unallocated_bytes"):
+            seen[key] = sorted(
+                seen[key], key=lambda v: (isinstance(v, str), str(v) if isinstance(v, str) else v)
+            )
+    return out

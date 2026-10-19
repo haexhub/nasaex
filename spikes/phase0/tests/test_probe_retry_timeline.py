@@ -1,9 +1,17 @@
 """The S1.9 retry timeline probe (vm-tests/probes/probe_retry_timeline.py): parsing the btrfs
 commit counter and the `btrfs filesystem usage` lines it keeps, and the summary of a timeline
 (when a write first succeeds, when the pool branch shows the freed space, when btrfs commits).
-The timeline itself needs the VMs."""
+The timeline itself needs the VMs; so do the append retries of probe_append_retry.py, whose rows
+are summarized here."""
 
-from probes.retry_timeline import SAMPLER, parse_commit_stats, summarize, usage_lines
+from probes.retry_timeline import (
+    SAMPLER,
+    append_gap,
+    parse_commit_stats,
+    summarize,
+    summarize_appends,
+    usage_lines,
+)
 
 COMMIT_STATS = """commits 17
 cur_commit_ms 0
@@ -105,3 +113,47 @@ def test_space_above_minfreespace_but_below_the_need_is_reported_apart():
     got = summarize(timeline, need=800 * MIB, minfree=64 * MIB)
     assert got["first_free_minfree_s"] == 0.1
     assert got["first_free_need_s"] == 0.6
+
+
+# The append retry rows of probe_append_retry.py (T051h follow-up, variants Vr and V5 to V8).
+
+
+def append_row(variant, gap, client_size, read_back=True):
+    """One append retry: the bytes between leftover and source, the client's size before it."""
+    return {
+        "variant": variant,
+        "gap_bytes": gap,
+        "client_before": {"size": client_size},
+        "read_back": read_back,
+        "unallocated_bytes": gap,
+    }
+
+
+def test_append_retries_are_summarized_per_variant():
+    rows = [
+        append_row("Vr", 167772160, 268439552, read_back=False),
+        append_row("Vr", 0, 100667392),
+        append_row("V5", 0, 100667392),
+        append_row("V5", 0, 100667392),
+    ]
+    got = summarize_appends(rows)
+    assert got["Vr"] == {
+        "n": 2,
+        "with_gap": 1,
+        "gap_bytes": [0, 167772160],
+        "client_size_before": [100667392, 268439552],
+        "read_back_ok": 1,
+        "unallocated_bytes": [0, 167772160],
+    }
+    assert got["V5"]["n"] == 2
+    assert got["V5"]["with_gap"] == 0
+
+
+def test_a_failed_client_stat_is_kept_as_its_error():
+    rows = [{**append_row("V8", 0, 0), "client_before": {"error": "ENOENT"}}]
+    assert summarize_appends(rows)["V8"]["client_size_before"] == ["ENOENT"]
+
+
+def test_append_gap_is_what_lies_between_leftover_and_source():
+    assert append_gap(size=536875008, head=4096, kept=100659424, written=268435456) == 167776032
+    assert append_gap(size=369102704, head=4096, kept=100663152, written=268435456) == 0

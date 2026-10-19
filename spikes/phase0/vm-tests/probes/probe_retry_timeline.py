@@ -136,15 +136,6 @@ def retries(mount, smb, d: str, t0: float) -> dict:
     return out
 
 
-def range_sha(path: str, start: int, length: int | None = None) -> str:
-    count = "" if length is None else f" count={length}"
-    return run(
-        server,
-        f"dd if={shlex.quote(path)} iflag=skip_bytes,count_bytes skip={start}{count} bs=1M"
-        " status=none | sha256sum",
-    ).split()[0]
-
-
 def read_back(rep: dict, d: str) -> None:
     """Each retry without a reported error, read on the pool branch: the source, or for the
     append the placed head, the leftover of the failed append and then the source."""
