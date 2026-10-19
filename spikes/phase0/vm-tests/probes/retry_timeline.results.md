@@ -171,8 +171,9 @@ or later after t0.
 One repetition of `probe_append_retry.py`: a 4096-byte append target on the pool branch, the S1.9 filler
 (100663296 bytes free), a failed append of 268435456 bytes through the writer's mount, the leftover measured
 on the pool branch, the filler removed, then (after the variant's delay) the client's `stat` of the file
-through the retrying mount and the append again; then the file read on the pool branch. Without the create and
-upload of the check, so "at once" is 0.04 to 0.12 s after the failed append ended (V0 above: about 0.8 s).
+through the retrying mount and the append again; then the file read on the pool branch. This probe omits the
+check's create and upload steps. Here, "at once" means retrying 0.04 to 0.12 s after the failed append ended
+(V0 above: about 0.8 s).
 
 ```sh
 client$ python3 -c '<WRITER>' /mnt/share/t051h-append/Vr-0/append.bin ab /root/enospc-source.bin 268435456   # failed, then the retry
@@ -255,7 +256,7 @@ went to the real end of file.
   +1 during each V0 append retry that followed a failed create). **But an append retried through the writer's
   own mount.cifs session within about half a second of the failed append writes the data at the wrong
   offset**: the file becomes head + leftover + a 160 MiB sparse hole of zeros + source, and the writer gets no
-  error (V0: 4 of 6 at 0.81 to 0.86 s after the failed append; run 3: 24 of 24 between 0.04 and 0.55 s).
+  error (V0: 4 of 6 at 0.81 to 0.86 s after the failed append; run 3: 19 of 32 between 0.040 and 0.553 s).
   - **mergerfs does not cause it**: through the control share served by Samba directly from the plain btrfs
     pool the same retry left the same gap in 5 of 5 (V5).
   - **`actimeo=0` does not avoid it** (V6, 5 of 5 with the gap).
