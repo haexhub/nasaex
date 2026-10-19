@@ -80,5 +80,7 @@ go into the PR description. `vm-smoke` logs `/dev/kvm` and the run time of every
 
 - KVM on the standard Linux runner: the GitHub documentation names hardware acceleration for
   Android SDK tools on Linux runners, which needs KVM (Likely); only a job proves it.
-- The peak disk use of the VM images in a full S1 run, and whether `vm-full` fits the runner.
+- Whether `vm-full` fits the runner. Measured on 2026-10-19: in the S1 record run the VM images
+  used at least 20252 MiB at their peak (sampled every 15 s; 4141 MiB after the setup), above the
+  14 GB SSD that GitHub documents for the runner; the free disk of a real runner is not known.
 - The job times on the runner, including the Nix build of the VM closure.
