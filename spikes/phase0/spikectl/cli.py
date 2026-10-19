@@ -37,7 +37,9 @@ def _parser() -> argparse.ArgumentParser:
     run_cmd = commands.add_parser("run", help="run one spike's VM test outside the nix sandbox")
     run_cmd.add_argument("spike", choices=SPIKES)
     run_cmd.add_argument("--mode", choices=MODES, required=True)
-    run_cmd.add_argument("--only", help="run only this scenario id")
+    run_cmd.add_argument(
+        "--only", help="run only these scenario ids, comma-separated (shakedown only)"
+    )
     return parser
 
 

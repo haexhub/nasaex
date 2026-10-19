@@ -45,6 +45,19 @@ def test_only_plans_one_scenario_and_refuses_an_unknown_one():
         scenarios.plan(CRITERIA, only="S1.99")
 
 
+def test_only_plans_several_scenarios_in_criteria_order():
+    planned = scenarios.plan(CRITERIA, only="S1.10,S1.1,S1.3")
+
+    assert [p.id for p in planned] == ["S1.1", "S1.3", "S1.10"]
+
+
+def test_only_refuses_an_unknown_or_a_repeated_id_in_a_list():
+    with pytest.raises(ValueError, match="S1.99"):
+        scenarios.plan(CRITERIA, only="S1.1,S1.99")
+    with pytest.raises(ValueError, match="twice"):
+        scenarios.plan(CRITERIA, only="S1.1,S1.3,S1.1")
+
+
 def broken(mutate):
     criteria = copy.deepcopy(CRITERIA)
     mutate(criteria)
