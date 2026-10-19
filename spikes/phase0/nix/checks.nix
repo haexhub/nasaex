@@ -21,7 +21,8 @@ in
   # Every record validates and names a locked (version, hash) pair.
   records = verifyGroup "records";
 
-  # The pure-Python unit tests (oracle, manifests, recorder, sanitiser, spikectl, controls).
+  # The pure-Python unit tests (oracle, manifests, recorder, sanitiser, spikectl, controls), with
+  # line and branch coverage; below `fail_under` of pyproject.toml the check fails.
   oracle-unit = pkgs.runCommand "phase0-oracle-unit"
     { nativeBuildInputs = [ pythonEnv pkgs.git ]; }
     ''
@@ -29,7 +30,7 @@ in
       chmod -R u+w work
       cd work/spikes/phase0
       export HOME=$TMPDIR
-      pytest -q -p no:cacheprovider
+      pytest -q -p no:cacheprovider --cov
       touch $out
     '';
 

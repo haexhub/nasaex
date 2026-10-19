@@ -2,6 +2,7 @@
 
 import pytest
 from helpers import (
+    CRITERIA,
     LOCK,
     criteria_doc,
     lock_lines,
@@ -11,7 +12,7 @@ from helpers import (
 )
 
 from spikectl.freeze import FreezeError, freeze
-from spikectl.model import criteria_filename, parse_criteria_filename
+from spikectl.model import LockEntry, criteria_filename, parse_criteria_filename, parse_lock
 
 
 @pytest.fixture
@@ -103,6 +104,14 @@ def test_version_file_naming():
     assert parse_criteria_filename("frozen.lock") is None
 
 
+def test_blank_lines_in_the_lock_are_not_entries():
+    sha = "a" * 64
+
+    entries = parse_lock(f"S1.yaml 1 {sha}\n\nS2.yaml 1 {sha}\n")
+
+    assert entries == [LockEntry("S1.yaml", 1, sha), LockEntry("S2.yaml", 1, sha)]
+
+
 def test_amendment_is_frozen_as_its_own_version_file(root):
     write_criteria(root, version=1)
     freeze(root, "S1")
@@ -130,3 +139,67 @@ def test_freeze_refuses_an_amendment_while_the_earlier_version_is_not_frozen(roo
     with pytest.raises(FreezeError, match="earlier version"):
         freeze(root, "S1")
     assert lock_lines(root) == []
+
+
+def test_freeze_refuses_while_the_lock_is_malformed(root):
+    path = write_criteria(root)
+    original = path.read_bytes()
+    (root / LOCK).write_text("S1.yaml one-version\n", encoding="utf-8")
+
+    with pytest.raises(FreezeError, match="frozen.lock:1"):
+        freeze(root, "S1")
+
+    assert path.read_bytes() == original
+    assert lock_lines(root) == ["S1.yaml one-version"]
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [("spike: [S1\n", "not valid YAML"), ("- S1\n", "must be a mapping")],
+    ids=["broken-yaml", "not-a-mapping"],
+)
+def test_freeze_refuses_a_criteria_file_that_does_not_load(root, text, reason):
+    (root / CRITERIA / "S1.yaml").write_text(text, encoding="utf-8")
+
+    with pytest.raises(FreezeError, match=reason):
+        freeze(root, "S1")
+
+    assert lock_lines(root) == []
+
+
+def test_freeze_refuses_a_status_line_it_cannot_rewrite_to_frozen(root):
+    path = write_criteria(root)
+    quoted = path.read_text(encoding="utf-8").replace("status: draft", "status: 'draft'")
+    path.write_text(quoted, encoding="utf-8")
+
+    with pytest.raises(FreezeError, match="exactly one top-level 'status: draft' line"):
+        freeze(root, "S1")
+
+    assert path.read_text(encoding="utf-8") == quoted
+    assert lock_lines(root) == []
+
+
+def test_freeze_refuses_to_append_to_a_lock_without_a_final_newline(root):
+    write_criteria(root, spike="S1")
+    freeze(root, "S1")
+    (root / LOCK).write_text(lock_lines(root)[0], encoding="utf-8")
+    before = (root / LOCK).read_bytes()
+    path = write_criteria(root, spike="S3")
+    original = path.read_bytes()
+
+    with pytest.raises(FreezeError, match="newline"):
+        freeze(root, "S3")
+
+    assert (root / LOCK).read_bytes() == before
+    assert path.read_bytes() == original
+
+
+def test_an_amendment_date_written_as_an_unquoted_yaml_date_is_frozen(root):
+    write_criteria(root, version=1)
+    freeze(root, "S1")
+    path = write_criteria(root, version=2)
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace("date: '2026-10-15'", "date: 2026-10-15"), encoding="utf-8")
+    assert "date: 2026-10-15\n" in path.read_text(encoding="utf-8")
+
+    assert freeze(root, "S1").file == "S1.v2.yaml"

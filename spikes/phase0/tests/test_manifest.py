@@ -173,3 +173,15 @@ def test_subtree_keys_the_entries_below_a_directory_relative_to_it():
     assert subtree(manifest, "a") == {"b": item, "b/c.txt": item}
     assert subtree(manifest, "") == manifest
     assert subtree(manifest, "missing") == {}
+
+
+def test_a_symlink_is_recorded_as_other_and_never_followed(tree, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "secret.txt").write_bytes(b"secret")
+    (tree / "link").symlink_to(outside)
+
+    manifest = build_manifest(tree)
+
+    assert manifest["link"].kind == "other"
+    assert (manifest["link"].size, manifest["link"].sha256) == (None, None)
+    assert not any(path.startswith("link/") for path in manifest)

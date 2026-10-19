@@ -15,3 +15,18 @@ select = ["E", "F", "W", "I", "B", "UP"]
 [tool.ruff.lint.per-file-ignores]
 # NixOS test scripts run inside the driver, which provides the machines and helpers as globals.
 "vm-tests/**" = ["F821"]
+
+[tool.coverage.run]
+branch = true
+source = ["spikectl", "testlib", "vm-tests/s1"]
+# The S1 test script runs only inside the VM test driver (it needs the driver's machines); the
+# VM smoke job of the CI covers it. vm-tests/probes is outside `source`: finished measurement
+# tools whose results are committed.
+omit = ["vm-tests/s1/test_script.py"]
+
+[tool.coverage.report]
+# The floor only rises: a PR that raises the coverage raises it, lowering it is a visible diff.
+fail_under = 88.1
+precision = 1
+show_missing = true
+skip_covered = true

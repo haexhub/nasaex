@@ -1,11 +1,13 @@
 """spikectl verdict: derivation from scenario outcomes, current verdict per spike,
-voiding by a new frozen version, gate matrix with X1 on a separate line."""
+voiding by a new frozen version, gate matrix with X1 on a separate line (S2 and its review
+record: test_verdict_review.py)."""
 
 import json
 
 import pytest
 from helpers import (
-    LOCK,
+    CRITERIA,
+    RESULTS,
     S2_OUTCOMES,
     criteria_doc,
     make_root,
@@ -17,7 +19,7 @@ from helpers import (
 )
 
 from spikectl.freeze import freeze
-from spikectl.model import SPIKES, LockEntry, sha256_hex
+from spikectl.model import SPIKES
 from spikectl.verdict import current_verdicts, derive_verdict, format_matrix, gate_matrix
 
 CRITERIA_IDS = ("S1.1", "S1.2")
@@ -232,6 +234,36 @@ def test_a_typed_verdict_that_differs_from_the_derived_one_is_an_error(root):
     assert any("verdict" in e for e in verdict.errors)
 
 
+@pytest.mark.parametrize("data", ["{not json", "[]"], ids=["broken-json", "not-an-object"])
+def test_an_unreadable_record_is_an_error_and_the_readable_ones_still_decide(root, data):
+    entry = frozen(root, "S1")
+    put_record(root, entry, "S1", {"S1.1": "pass", "S1.2": "pass"})
+    broken = root / RESULTS / "S1" / "S1-20261023T090000Z-v1" / "record.json"
+    broken.parent.mkdir(parents=True)
+    broken.write_text(data, encoding="utf-8")
+
+    verdict = current_verdicts(root)["S1"]
+
+    assert verdict.verdict == "PASS"
+    assert len(verdict.errors) == 1 and verdict.errors[0].startswith("record.json: ")
+
+
+@pytest.mark.parametrize("text", [None, "spike: [S1\n"], ids=["missing", "broken-yaml"])
+def test_locked_criteria_that_cannot_be_read_are_an_error_and_give_no_verdict(root, text):
+    entry = frozen(root, "S1")
+    put_record(root, entry, "S1", {"S1.1": "pass", "S1.2": "pass"})
+    path = root / CRITERIA / "S1.yaml"
+    if text is None:
+        path.unlink()
+    else:
+        path.write_text(text, encoding="utf-8")
+
+    verdict = current_verdicts(root)["S1"]
+
+    assert (verdict.verdict, verdict.record_id) == ("none", None)
+    assert len(verdict.errors) == 1 and verdict.errors[0].startswith("S1.yaml: ")
+
+
 # --- gate matrix and X1 ----------------------------------------------------
 
 
@@ -291,6 +323,16 @@ def test_x1_without_a_record_is_reported_as_not_run(root):
     assert "S1 PASS" in text and "S5 PASS" in text
 
 
+def test_an_x1_record_without_gating_false_is_an_error(root):
+    entry = frozen(root, "X1")
+    put_record(root, entry, "X1", {"X1.1": "pass", "X1.2": "pass"}, gating=True)
+
+    verdict = current_verdicts(root)["X1"]
+
+    assert verdict.verdict == "PASS"
+    assert verdict.errors == ["X1-20261022T101500Z-v1: X1 record must carry gating: false"]
+
+
 def test_matrix_without_any_record_is_not_eligible(root):
     text = format_matrix(current_verdicts(root))
 
@@ -298,7 +340,7 @@ def test_matrix_without_any_record_is_not_eligible(root):
     assert "ADR-0005 eligible: no" in text
 
 
-# --- S2: derived pending and the review record ------------------------------
+# --- S2 builders (all_pass; the S2 tests: test_verdict_review.py) ---------------
 
 
 def frozen_s2(root, version=1):
@@ -312,199 +354,3 @@ def s2_run(root, entry, stamp="20261022T101500Z", **outcome_changes):
     doc = record_doc("S2", entry.version, entry.sha256, outcomes, stamp)
     write_record(root, doc)
     return doc
-
-
-def s2(root):
-    return current_verdicts(root)["S2"]
-
-
-def test_an_s2_run_without_a_review_is_pending(root):
-    entry = frozen_s2(root)
-    run = s2_run(root, entry)
-
-    verdict = s2(root)
-
-    assert run["verdict"] == "PASS"  # the stored verdict is the automated one
-    assert verdict.verdict == "pending"
-    assert verdict.record_id == run["record_id"]
-    assert verdict.errors == []
-
-
-def test_a_pending_s2_blocks_the_adr_gate_and_is_shown(root):
-    for spike in ("S1", "S3", "S4"):
-        entry = frozen(root, spike)
-        put_record(root, entry, spike, {f"{spike}.1": "pass", f"{spike}.2": "pass"})
-    s2_run(root, frozen_s2(root))
-    verdicts = current_verdicts(root)
-
-    assert verdicts["S2"].verdict == "pending"
-    assert gate_matrix(verdicts)["ADR-0002"] is False
-    assert "S2 pending" in format_matrix(verdicts)
-
-
-def test_a_passing_review_opens_the_adr_gate(root):
-    for spike in ("S1", "S3", "S4"):
-        entry = frozen(root, spike)
-        put_record(root, entry, spike, {f"{spike}.1": "pass", f"{spike}.2": "pass"})
-    run = s2_run(root, frozen_s2(root))
-    write_review(root, review_doc(run, "pass"))
-
-    assert gate_matrix(current_verdicts(root))["ADR-0002"] is True
-
-
-def test_a_passing_review_makes_the_s2_run_pass(root):
-    entry = frozen_s2(root)
-    run = s2_run(root, entry)
-    review = review_doc(run, "pass")
-    write_review(root, review)
-
-    verdict = s2(root)
-
-    assert verdict.verdict == "PASS"
-    assert verdict.record_id == run["record_id"]
-    assert verdict.review_id == review["record_id"]
-    assert verdict.errors == []
-
-
-def test_a_failing_review_makes_the_s2_run_fail(root):
-    entry = frozen_s2(root)
-    run = s2_run(root, entry)
-    write_review(root, review_doc(run, "fail"))
-
-    assert s2(root).verdict == "FAIL"
-
-
-def test_a_failed_automated_step_check_fails_without_waiting_for_review(root):
-    entry = frozen_s2(root)
-    s2_run(root, entry, **{"S2.7": "fail"})
-
-    assert s2(root).verdict == "FAIL"
-
-
-def test_a_passing_review_cannot_override_a_failed_automated_step_check(root):
-    entry = frozen_s2(root)
-    run = s2_run(root, entry, **{"S2.7": "fail"})
-    write_review(root, review_doc(run, "pass"))
-
-    assert s2(root).verdict == "FAIL"
-
-
-def test_a_failed_other_scenario_is_fail_not_pending(root):
-    # The review judges S2.7 only: it cannot rescue a run whose other scenario failed.
-    entry = frozen_s2(root)
-    s2_run(root, entry, **{"S2.3": "fail"})
-
-    assert s2(root).verdict == "FAIL"
-
-
-def test_a_passing_review_cannot_rescue_a_failed_other_scenario(root):
-    entry = frozen_s2(root)
-    run = s2_run(root, entry, **{"S2.3": "fail"})
-    write_review(root, review_doc(run, "pass"))
-
-    assert s2(root).verdict == "FAIL"
-
-
-def test_review_records_are_ignored_when_choosing_the_newest_spike_run(root):
-    entry = frozen_s2(root)
-    run = s2_run(root, entry, stamp="20261022T101500Z")
-    write_review(root, review_doc(run, "pass", stamp="20261030T000000Z"))
-
-    verdict = s2(root)
-
-    assert verdict.record_id == run["record_id"]
-    assert verdict.verdict == "PASS"
-
-
-def test_a_review_of_an_older_run_does_not_apply_to_a_newer_run(root):
-    entry = frozen_s2(root)
-    old = s2_run(root, entry, stamp="20261022T101500Z")
-    write_review(root, review_doc(old, "pass"))
-    new = s2_run(root, entry, stamp="20261025T080000Z")
-
-    verdict = s2(root)
-
-    assert verdict.record_id == new["record_id"]
-    assert verdict.verdict == "pending"
-
-
-def test_a_new_frozen_version_voids_the_review_too(root):
-    entry = frozen_s2(root)
-    run = s2_run(root, entry)
-    write_review(root, review_doc(run, "pass"))
-    frozen_s2(root, version=2)
-
-    verdict = s2(root)
-
-    assert (verdict.verdict, verdict.criteria_version) == ("none", 2)
-
-
-def test_a_review_whose_hash_differs_from_the_lock_line_is_an_error_and_not_applied(root):
-    entry = frozen_s2(root)
-    run = s2_run(root, entry)
-    write_review(root, {**review_doc(run, "pass"), "criteria_sha256": "f" * 64})
-
-    verdict = s2(root)
-
-    assert verdict.verdict == "pending"
-    assert any("hash differs" in e for e in verdict.errors)
-
-
-def test_conflicting_reviews_of_one_run_are_an_error_and_the_failure_stands(root):
-    entry = frozen_s2(root)
-    run = s2_run(root, entry)
-    write_review(root, review_doc(run, "fail", stamp="20261023T120000Z"))
-    write_review(root, review_doc(run, "pass", stamp="20261024T120000Z"))
-
-    verdict = s2(root)
-
-    assert verdict.verdict == "FAIL"
-    assert any("more than one review" in e for e in verdict.errors)
-
-
-def test_a_failing_review_without_fallback_decision_is_an_error(root):
-    entry = frozen_s2(root)
-    run = s2_run(root, entry)
-    review = review_doc(run, "fail")
-    del review["fallback_decision"]
-    write_review(root, review)
-
-    verdict = s2(root)
-
-    assert verdict.verdict == "FAIL"
-    assert any("fallback_decision" in e for e in verdict.errors)
-
-
-def test_a_non_pass_review_without_fallback_decision_is_an_error(root):
-    entry = frozen_s2(root)
-    run = s2_run(root, entry)
-    review = review_doc(run, "pass")
-    review["review"]["outcome"] = "unexpected"
-    write_review(root, review)
-
-    verdict = s2(root)
-
-    assert any("fallback_decision" in e for e in verdict.errors)
-
-
-def test_a_stored_pending_verdict_is_an_error(root):
-    entry = frozen_s2(root)
-    doc = record_doc("S2", entry.version, entry.sha256, S2_OUTCOMES)
-    doc["verdict"] = "pending"
-    write_record(root, doc)
-
-    verdict = s2(root)
-
-    assert verdict.verdict == "pending"
-    assert any("typed verdict" in e for e in verdict.errors)
-
-
-def test_a_spike_without_a_review_scenario_never_waits_for_review(root):
-    # freeze refuses S2 criteria without the reviewed S2.7 and verify reports them (T037d);
-    # the verdict still derives from the criteria as locked, so lock such a file by hand.
-    path = write_criteria(root, doc=criteria_doc("S2", status="frozen"))
-    entry = LockEntry(path.name, 1, sha256_hex(path.read_bytes()))
-    (root / LOCK).write_text(entry.line() + "\n", encoding="utf-8")
-    put_record(root, entry, "S2", {"S2.1": "pass", "S2.2": "pass"})
-
-    assert s2(root).verdict == "PASS"
