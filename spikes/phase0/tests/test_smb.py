@@ -17,6 +17,7 @@ from testlib.smb import (
     Share,
     SmbClient,
     SmbError,
+    nt_status,
     parse_dos_attributes,
 )
 
@@ -174,6 +175,25 @@ def test_smbclient_put_reports_the_exit_status_and_the_output_with_its_nt_status
         "-c",
         'put "/tmp/upload.bin" "dir/new file.bin"',
     ]
+
+
+@pytest.mark.parametrize(
+    ("output", "status"),
+    [
+        (
+            "NT_STATUS_MEDIA_WRITE_PROTECTED opening remote file \\a\n",
+            "NT_STATUS_MEDIA_WRITE_PROTECTED",
+        ),
+        (
+            "cli_push returned NT_STATUS_DISK_FULL\nNT_STATUS_INVALID_NETWORK_RESPONSE",
+            "NT_STATUS_DISK_FULL",
+        ),
+        ("putting file /root/a as \\a (0.0 kb/s)\n", None),
+        ("", None),
+    ],
+)
+def test_nt_status_is_the_first_status_an_smbclient_output_names(output, status):
+    assert nt_status(output) == status
 
 
 @pytest.mark.parametrize("change", ["h", "+x", "+", "+h;rm x", ""])

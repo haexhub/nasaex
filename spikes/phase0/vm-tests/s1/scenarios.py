@@ -38,6 +38,7 @@ CHECKS: dict[str, Callable] = {
 
 # Table entries a check reads (criteria `tables`), by check name.
 TABLE_KEYS = {
+    "new_data_placement": (("placement_pool_low", "leave_bytes"),),
     "large_files": (("large_file", "flip_offset"),),
     "pool_out_of_space": tuple(
         ("out_of_space", key) for key in ("errno", "smb_status", "leave_bytes", "write_bytes")

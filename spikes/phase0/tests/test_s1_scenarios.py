@@ -60,6 +60,7 @@ def broken(mutate):
         (lambda c: c["tables"]["out_of_space"].pop("smb_status"), "smb_status"),
         (lambda c: c["tables"]["mover_view"].pop("points"), "points"),
         (lambda c: c["tables"]["bounds"].pop("view_consistency_s"), "view_consistency_s"),
+        (lambda c: c["tables"]["placement_pool_low"].pop("leave_bytes"), "leave_bytes"),
     ],
 )
 def test_criteria_the_checks_cannot_run_with_are_refused_before_any_vm_starts(mutate, message):

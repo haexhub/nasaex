@@ -25,6 +25,7 @@ DOS_ARCHIVE = 0x20
 
 _SETMODE_CHANGE = re.compile(r"[+-][rsha]+")
 _ATTRIBUTES_LINE = re.compile(r"^attributes:\s*[A-Za-z]*\s*\(([0-9a-fA-F]+)\)", re.MULTILINE)
+_NT_STATUS = re.compile(r"NT_STATUS_[A-Z_]+")
 
 _MANIFEST = """import sys
 from pathlib import Path
@@ -64,6 +65,13 @@ def parse_dos_attributes(allinfo: str) -> int:
     if match is None:
         raise SmbError(f"no attributes line in allinfo output: {allinfo.strip()!r}")
     return int(match.group(1), 16)
+
+
+def nt_status(output: str) -> str | None:
+    """The first NT status that an smbclient output names, None if it names none; callers keep
+    the whole output as evidence, since a later line may name another status."""
+    match = _NT_STATUS.search(output)
+    return match.group(0) if match else None
 
 
 class CifsMount:
