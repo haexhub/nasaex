@@ -250,6 +250,36 @@ def test_an_only_id_that_the_criteria_do_not_name_is_refused(root, state_base):
     assert host.launches == []
 
 
+def test_several_only_ids_run_exactly_those_scenarios_in_criteria_order(root, state_base):
+    host = FakeHost(state_base, report={"scenarios": [scenario("S1.1")], "tool_versions": {}})
+
+    out = run_spike(root, "S1", "shakedown", only="S1.3,S1.1", env=env_for(state_base), host=host)
+
+    assert host.launches[0]["env"]["SPIKE_ONLY"] == "S1.3,S1.1"
+    outcome = json.loads((out / "outcome.json").read_text())
+    assert [(s["id"], s["outcome"]) for s in outcome["scenarios"]] == [
+        ("S1.1", "pass"),
+        ("S1.3", "error"),
+    ]
+
+
+@pytest.mark.parametrize("only", ["S1.1,S1.9", "S1.2,S1.2"])
+def test_an_only_list_with_an_unknown_or_a_repeated_id_is_refused(root, state_base, only):
+    host = FakeHost(state_base)
+    with pytest.raises(RunError):
+        run_spike(root, "S1", "shakedown", only=only, env=env_for(state_base), host=host)
+    assert host.launches == []
+
+
+def test_record_mode_refuses_only_since_a_partial_record_would_be_a_kept_fail(
+    locked_root, state_base
+):
+    host = FakeHost(state_base)
+    with pytest.raises(RunError, match="record"):
+        run_spike(locked_root, "S1", "record", only="S1.1", env=env_for(state_base), host=host)
+    assert host.launches == []
+
+
 def test_a_driver_without_topology_is_refused_before_anything_starts(root, state_base):
     host = FakeHost(state_base, meta=None)
     with pytest.raises(RunError):

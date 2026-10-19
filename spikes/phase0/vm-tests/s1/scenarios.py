@@ -80,16 +80,22 @@ def _problems(criteria: Mapping, scenario: Mapping) -> list[str]:
 
 
 def plan(criteria: Mapping, only: str | None = None) -> list[Planned]:
+    """The scenarios to run, in criteria order; `only` lists scenario ids, comma-separated."""
     scenarios = criteria["scenarios"]
-    if only is not None and only not in {s["id"] for s in scenarios}:
-        raise ValueError(f"{only} is not a scenario of the criteria")
+    wanted = None if only is None else only.split(",")
+    if wanted is not None:
+        unknown = [sid for sid in wanted if sid not in {s["id"] for s in scenarios}]
+        if unknown:
+            raise ValueError(f"{', '.join(unknown)} is not a scenario of the criteria")
+        if len(set(wanted)) != len(wanted):
+            raise ValueError(f"{only} names a scenario twice")
     problems = [p for s in scenarios for p in _problems(criteria, s)]
     if problems:
         raise ValueError("; ".join(problems))
     overrides = criteria.get("tables", {}).get("mount_variants", {})
     planned = []
     for scenario in scenarios:
-        if only is not None and scenario["id"] != only:
+        if wanted is not None and scenario["id"] not in wanted:
             continue
         variants = None
         if "variants" in scenario:

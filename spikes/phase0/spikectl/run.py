@@ -8,8 +8,8 @@ sandbox in a fresh state directory on disk (research D2), bound it by the spike'
 write scratch output (shakedown) or the record (record mode).
 
 The test script of a spike runs with its output directory as working directory and reads the
-environment variable SPIKE_ONLY (a scenario id, or unset). It writes `spike-result.json` there
-(testlib.spike_result):
+environment variable SPIKE_ONLY (comma-separated scenario ids, or unset). It writes
+`spike-result.json` there (testlib.spike_result):
 {"scenarios": <Recorder.scenarios()>, "tool_versions": {...}} and optionally "required_settings"
 and "coverage". Every expected scenario the result lacks becomes `error`."""
 
@@ -158,13 +158,18 @@ def check_state_dir(base: Path, mode: str, host: Host) -> dict:
 
 
 def _expected_ids(root: Path, spike: str, only: str | None) -> list[str]:
+    """The scenario ids the run must report, in criteria order; `only` is comma-separated."""
     path = _newest_criteria_file(root, spike)
     ids = [s["id"] for s in load_criteria(path)["scenarios"]] if path else []
     if only is None:
         return ids
-    if ids and only not in ids:
-        raise RunError(f"{only} is not a scenario of the {spike} criteria")
-    return [only]
+    wanted = only.split(",")
+    unknown = [sid for sid in wanted if ids and sid not in ids]
+    if unknown:
+        raise RunError(f"{', '.join(unknown)} is not a scenario of the {spike} criteria")
+    if len(set(wanted)) != len(wanted):
+        raise RunError(f"{only} names a scenario twice")
+    return [sid for sid in ids if sid in wanted] if ids else wanted
 
 
 def _read_result(path: Path) -> dict:
@@ -251,6 +256,8 @@ def run_spike(
 ) -> Path:
     """Run one spike; the scratch output directory (shakedown) or the record directory."""
     host = host or Host()
+    if mode == "record" and only is not None:  # a partial record would be a FAIL that is kept
+        raise RunError("record mode runs every scenario; --only is for shakedown runs")
     expected = _expected_ids(root, spike, only)
     driver = resolve_driver(root, spike, host)
     budget_mib = configured_ram_budget_mib(env)
