@@ -5,12 +5,12 @@ CLOCK_MONOTONIC seconds.
   capture <jsonl>   run by the ExecStop of probe-shutdown-capture.service, which is ordered before
                     mnt-base.mount and mnt-cache.mount and so stops after both at shutdown: every
                     mergerfs FUSE server still running (pid, cgroup, cmdline, /dev/fuse fds, per
-                    thread state, wait channel and kernel stack), the FUSE connections still open
-                    (/sys/fs/fuse/connections/<n>/waiting), the mount namespaces that still hold a
-                    fuse.mergerfs mount, then a poll of up to POLL_S for the servers to exit (the
-                    time each one went away) and, for any still running, a second snapshot; one
-                    JSON line with the boot id is appended to <jsonl> (fsynced) and a one-line
-                    summary goes to stdout
+                    thread state, wait channel, kernel stack, signal masks and system call), the
+                    FUSE connections still open (/sys/fs/fuse/connections/<n>/waiting), the mount
+                    namespaces that still hold a fuse.mergerfs mount, then a poll of up to POLL_S
+                    for the servers to exit (the time each one went away) and, for any still
+                    running, a second snapshot; one JSON line with the boot id is appended to
+                    <jsonl> (fsynced) and a one-line summary goes to stdout
   put <file> <bytes> <fsync 0|1>
                     write <bytes> random bytes to <file> (one write, then fsync or not, close) and
                     print their SHA-256
@@ -43,12 +43,18 @@ def _pids() -> list[int]:
 def _thread(pid: int, tid: str) -> dict:
     base = f"/proc/{pid}/task/{tid}"
     stat = _read(f"{base}/stat")
+    status = dict(
+        line.split(":\t", 1) for line in _read(f"{base}/status").splitlines() if ":\t" in line
+    )
     return {
         "tid": int(tid),
         "comm": _read(f"{base}/comm").strip(),
         "state": stat.rsplit(")", 1)[-1].split()[0] if stat else "?",
         "wchan": _read(f"{base}/wchan").strip() or "0",
         "stack": _read(f"{base}/stack").splitlines()[:8],
+        # which signals the thread blocks, ignores and catches, and its current system call
+        "signals": {k: status.get(k, "").strip() for k in ("SigBlk", "SigIgn", "SigCgt")},
+        "syscall": _read(f"{base}/syscall").split()[:3],
     }
 
 
