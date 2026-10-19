@@ -1,62 +1,26 @@
-"""Checks S1.8 and S1.9 (vm-tests/s1/checks_large_space.py): the decisions behind S1.9 over
-fabricated observations, and the order in which S1.9 acts. Large files, the filler and the
-client writes themselves need the VMs."""
+"""Checks S1.8 and S1.9 (vm-tests/s1/checks_large_space.py): the order in which S1.9 acts and
+what it reads, against recording machines (the decisions behind S1.9 are tested in
+test_s1_checks_space_leftover.py, task T047a). Large files, the filler and the client writes
+themselves need the VMs."""
 
-from helpers import RecordingMachine
+import hashlib
+import json
+from pathlib import Path
+
+from helpers import LocalMachine, RecordingMachine
 from s1 import checks_large_space
-from s1.checks_large_space import check_pool_out_of_space, space_failures
+from s1.checks_large_space import check_pool_out_of_space
 from s1.context import Lab
 from s1.fixture import ARCHIVE
 
 from testlib.faults import FaultEvent
 from testlib.recorder import Recorder
 
-TABLE = {"errno": "ENOSPC", "smb_status": "NT_STATUS_DISK_FULL", "write_bytes": 1000}
-CLEAN = {
-    "errnos": {"create": "ENOSPC", "append": "ENOSPC"},
-    "smbclient_output": "putting file ... NT_STATUS_DISK_FULL closing remote file",
-    "changed_archive_branches": [],
-    "new_sizes": {"s1.9/new.bin": None, "s1.9/new-smbclient.bin": 1000},
-    "append_head_intact": True,
-}
-
-
-def test_a_clean_out_of_space_error_everywhere_passes():
-    assert space_failures(TABLE, **CLEAN) == []
-
-
-def test_another_errno_a_missing_smb_status_or_a_written_archive_fails():
-    observed = {
-        **CLEAN,
-        "errnos": {"create": None, "append": "EIO"},
-        "smbclient_output": "putting file ... NT_STATUS_OK",
-        "changed_archive_branches": ["arch2"],
-    }
-
-    assert space_failures(TABLE, **observed) == [
-        "create returned errno None, expected ENOSPC",
-        "append returned errno EIO, expected ENOSPC",
-        "smbclient did not report NT_STATUS_DISK_FULL",
-        "archive branch arch2 changed",
-    ]
-
-
-def test_a_shorter_file_at_a_new_path_or_a_damaged_append_target_fails():
-    observed = {
-        **CLEAN,
-        "new_sizes": {"s1.9/new.bin": 0, "s1.9/new-smbclient.bin": 999},
-        "append_head_intact": False,
-    }
-
-    assert space_failures(TABLE, **observed) == [
-        "s1.9/new.bin is visible with 0 of 1000 bytes",
-        "s1.9/new-smbclient.bin is visible with 999 of 1000 bytes",
-        "the appended file no longer begins with its original bytes",
-    ]
-
 
 class Logged(RecordingMachine):
-    """A recording machine whose commands also go into a log shared with the other machine."""
+    """A recording machine whose commands also go into a log shared with the other machine;
+    `outputs` maps a command fragment to its output, as in RecordingMachine; an output that is
+    callable is called for every command it answers."""
 
     def __init__(self, name, log, outputs):
         super().__init__(outputs)
@@ -64,35 +28,95 @@ class Logged(RecordingMachine):
 
     def succeed(self, command, **kwargs):
         self.log.append((self.name, command))
-        return super().succeed(command, **kwargs)
+        out = super().succeed(command, **kwargs)
+        return out() if callable(out) else out
+
+    def wait_until_succeeds(self, command, **_):
+        self.log.append((self.name, command))
+
+
+SOURCE_ARGS = "/root/s1.9-source.bin 1000"
 
 
 def _step(machine, command):
     if machine == "filler":
         return "filler"
-    if machine == "client" and command.endswith((" wb 1000", " ab 1000")):
-        return "create" if " wb " in command else "append"
+    if machine == "client" and command.endswith((f" wb {SOURCE_ARGS}", f" ab {SOURCE_ARGS}")):
+        if " wb " in command:
+            return "create"
+        return "append (fresh session)" if "/mnt/share3/" in command else "append"
+    if machine == "client" and "mount -t cifs" in command and "/mnt/share3" in command:
+        return "mount fresh session"
+    if machine == "client" and command == "umount /mnt/share3":
+        return "umount fresh session"
+    if machine == "server" and "df --output=avail" in command:
+        return "free"
+    if machine == "host":
+        return command
     if machine == "client" and "-c 'put " in command:
         return "put"
-    if machine == "server" and command.startswith("rm -rf -- /mnt/pool/s1.9/"):
-        return "remove " + command.rsplit("/", 1)[1]
+    if machine == "client" and command.startswith("rm -f -- /mnt/share/s1.9/"):
+        return "delete " + command.split()[3].rsplit("/", 1)[1]
+    if machine == "server" and "inotifywait -m" in command:
+        return "watch"
+    if machine == "server" and command.startswith("touch ") and "marker" in command:
+        return "end watch"
     if machine == "server" and command == "rm -f /mnt/pool/.spike-filler":
         return "unfill"
     return None
 
 
-def _run_s1_9(tmp_path, monkeypatch, filler=None):
-    """Run check S1.9 against recording machines; the shared command log."""
+class FakeClock:
+    """The poll's clock and sleep: time moves only when the check sleeps."""
+
+    def __init__(self, log):
+        self.now, self.log = 0.0, log
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.log.append(("host", f"sleep {seconds}"))
+        self.now += seconds
+
+
+def _run_s1_9(
+    tmp_path, monkeypatch, filler=None, client_sha=None, space=None, writer_after_mount=None
+):
+    """Run check S1.9 against recording machines; the shared command log and the scenarios.
+    `space` gives the free bytes the server reports once the leftovers are deleted (a callable
+    called per sample); before that the pool reports 100 bytes. `writer_after_mount` is called
+    instead of the writer that runs through the session of its own."""
     monkeypatch.chdir(tmp_path)
     log = []
+    clock = FakeClock(log)
+    monkeypatch.setattr(checks_large_space, "monotonic", clock.monotonic)
+    monkeypatch.setattr(checks_large_space, "sleep", clock.sleep)
+    # The target is the filler (10) plus the two deleted leftovers (10 each), no epsilon.
+    monkeypatch.setattr(checks_large_space, "SPACE_EPSILON", 0)
+
+    def avail():
+        deleted = any(c.startswith("rm -f -- /mnt/share/s1.9/new-smbclient") for _, c in log)
+        return str(space() if deleted and space else 100)
+
     outputs = {
         "build_manifest": "{}",
-        "errorcode": '{"errno": "ENOSPC", "written": 1000}',
+        "errorcode": '{"errno": "ENOSPC", "step": "fsync", "written": 1000}',
+        "lexists": '["pool"]',
         "stat -c %s": "10",
-        "df --output=avail": "100",
+        "df --output=avail": avail,
         "sha256sum": "0" * 64,
     }
-    server, client = Logged("server", log, outputs), Logged("client", log, outputs)
+    server = Logged("server", log, outputs)
+
+    def writer():
+        if writer_after_mount and "/mnt/share3/" in log[-1][1]:
+            return writer_after_mount()
+        return outputs["errorcode"]
+
+    client = Logged(
+        "client", log, {**outputs, "errorcode": writer, "sha256sum": client_sha or "0" * 64}
+    )
     tables = {
         "out_of_space": {
             "errno": "ENOSPC",
@@ -101,7 +125,12 @@ def _run_s1_9(tmp_path, monkeypatch, filler=None):
             "write_bytes": 1000,
         }
     }
-    roots = {"pool": "/mnt/pool"} | {a: f"/mnt/archive/{a}/branch" for a in ARCHIVE}
+    roots = {"pool": "/mnt/pool"}
+    for serial in ARCHIVE:
+        roots |= {
+            serial: f"/mnt/archive/{serial}/branch",
+            f"trash:{serial}": f"/mnt/archive/{serial}/trash",
+        }
     lab = Lab(server, client, roots, Recorder(), user=None, tables=tables)
 
     if filler is None:
@@ -115,40 +144,130 @@ def _run_s1_9(tmp_path, monkeypatch, filler=None):
     return log, lab.recorder.scenarios()
 
 
-def test_each_write_of_s1_9_starts_from_the_precondition(tmp_path, monkeypatch):
-    # S1 shakedown (T051): the cifs create left a partial file that used up the free bytes,
-    # so the smbclient upload after it met a pool below minfreespace instead of the
-    # precondition of the criteria. Each write gets its own filler, and the file a write
-    # left on the pool is removed (on the pool branch, so an archive copy would stay for the
-    # tree hashes) before the next one.
+def test_each_write_of_s1_9_starts_from_the_precondition_and_is_retried_after_it(
+    tmp_path, monkeypatch
+):
+    # Each write gets its own filler (S1 shakedown T051: a shared filler let the first partial
+    # file use up the free bytes of the next) and is watched on the archive filesystems; then
+    # the client deletes the leftovers of the create and the upload through the share, the
+    # check looks at the free bytes of the pool branch (task T047b) and repeats every write
+    # without a filler, the append through a mount.cifs session of its own.
     log, _ = _run_s1_9(tmp_path, monkeypatch)
 
     steps = [s for s in (_step(m, c) for m, c in log) if s]
-    assert steps[:11] == [
-        "filler",
-        "create",
-        "remove new.bin",
-        "unfill",
-        "filler",
-        "put",
-        "remove new-smbclient.bin",
-        "unfill",
-        "filler",
-        "append",
-        "unfill",
+    assert steps == [
+        *("filler", "free", "watch", "create", "end watch", "free", "unfill"),
+        *("filler", "free", "watch", "put", "end watch", "free", "unfill"),
+        *("filler", "free", "watch", "append", "end watch", "free", "unfill"),
+        *("delete new.bin", "delete new-smbclient.bin", "free"),
+        *("create", "put", "mount fresh session", "append (fresh session)"),
+        *("umount fresh session", "delete new.bin", "delete new-smbclient.bin"),
     ]
 
 
-def test_s1_9_reads_the_size_of_a_new_file_through_both_client_sessions(tmp_path, monkeypatch):
-    # S1 shakedown (T051): the default mount, which caches attributes, showed the partial file
-    # of the cifs create once with the written size and once with the size on the server; the
-    # second session (actimeo=0) asks the server every time.
+def test_the_retries_wait_for_the_freed_space_and_record_the_seconds_until_it_appeared(
+    tmp_path, monkeypatch
+):
+    # The pool branch shows the space of the filler (10) and the deleted leftovers (10 and 10)
+    # only at the fourth sample, 1.5 s after the first (btrfs frees it at its next commit).
+    samples = iter([0, 0, 0, 30])
+
+    log, _ = _run_s1_9(tmp_path, monkeypatch, space=lambda: next(samples))
+
+    steps = [s for s in (_step(m, c) for m, c in log) if s]
+    deleted = steps.index("delete new-smbclient.bin") + 1
+    assert steps[deleted : deleted + 8] == [
+        *("free", "sleep 0.5", "free", "sleep 0.5", "free", "sleep 0.5", "free", "create"),
+    ]
+    evidence = json.loads(Path("status/S1.9-out-of-space.json").read_text())
+    assert evidence["freed_space"] == {
+        "appeared": True,
+        "waited_s": 1.5,
+        "avail": 30,
+        "target": 30,
+        "samples": 4,
+    }
+
+
+def test_the_retries_do_not_run_and_the_check_fails_when_the_space_never_appears(
+    tmp_path, monkeypatch
+):
+    log, scenarios = _run_s1_9(tmp_path, monkeypatch, space=lambda: 0)
+
+    steps = [s for s in (_step(m, c) for m, c in log) if s]
+    deleted = steps.index("delete new-smbclient.bin") + 1
+    after = steps[deleted:]
+    assert after.count("sleep 0.5") == 120
+    assert after[-2:] == ["delete new.bin", "delete new-smbclient.bin"]
+    assert not {"create", "put", "mount fresh session"} & set(after)
+    assert scenarios[0]["outcome"] == "fail"
+    assert "the freed space never appeared" in scenarios[0]["notes"]
+    assert "bound 60 s" in scenarios[0]["notes"]
+    evidence = json.loads(Path("status/S1.9-out-of-space.json").read_text())
+    assert evidence["freed_space"]["appeared"] is False
+
+
+def test_the_append_retry_goes_through_a_session_of_its_own_and_the_writers_size_is_recorded(
+    tmp_path, monkeypatch
+):
     log, _ = _run_s1_9(tmp_path, monkeypatch)
 
-    stats = [c for m, c in log if m == "client" and c.startswith("stat -c %s")]
-    for rel in ("s1.9/new.bin", "s1.9/new-smbclient.bin"):
-        assert f"stat -c %s /mnt/share/{rel}" in stats
-        assert f"stat -c %s /mnt/share2/{rel}" in stats
+    client = [c for m, c in log if m == "client"]
+    mount = next(c for c in client if "mount -t cifs" in c and "/mnt/share3" in c)
+    assert "nosharesock" in mount
+    retry = next(c for c in client if "/mnt/share3/s1.9/append.bin ab" in c)
+    failed = next(c for c in client if "/mnt/share/s1.9/append.bin ab" in c)
+    assert client.index(mount) < client.index(retry) and client.index(failed) < client.index(mount)
+    # The writer session's size is read right before the retry and before the new session.
+    sizes = [i for i, c in enumerate(client) if c == "stat -c %s /mnt/share/s1.9/append.bin"]
+    assert sizes[-1] < client.index(mount)
+    evidence = json.loads(Path("status/S1.9-out-of-space.json").read_text())
+    assert evidence["writes"]["append"]["retry"]["sizes_recorded"] == {
+        "writer session before the retry": 10,
+        "fresh session before the retry": 10,
+    }
+    assert "sizes_recorded" not in evidence["writes"]["create"]["retry"]
+
+
+def test_the_fresh_session_is_unmounted_when_the_append_retry_fails(tmp_path, monkeypatch):
+    # (a raising client command is a harness error, which the recorder turns into an error)
+    def failing_writer():
+        raise RuntimeError("writer failed")
+
+    log, scenarios = _run_s1_9(tmp_path, monkeypatch, writer_after_mount=failing_writer)
+
+    assert scenarios[0]["outcome"] == "error"
+    assert ("client", "umount /mnt/share3") in log
+
+
+def test_s1_9_watches_the_archive_data_filesystems_and_hashes_their_trash(tmp_path, monkeypatch):
+    log, _ = _run_s1_9(tmp_path, monkeypatch)
+
+    watch = next(c for m, c in log if "inotifywait -m" in c)
+    assert all(f" /mnt/archive/{serial} " in watch + " " for serial in ARCHIVE)
+    manifests = [c for m, c in log if m == "server" and "build_manifest" in c]
+    assert any("/mnt/archive/arch0/trash" in c for c in manifests)
+
+
+def test_s1_9_records_the_sizes_of_every_view_and_reads_the_leftover_on_the_pool_branch(
+    tmp_path, monkeypatch
+):
+    log, _ = _run_s1_9(tmp_path, monkeypatch)
+
+    commands = [c for _, c in log]
+    for rel in ("s1.9/new.bin", "s1.9/new-smbclient.bin", "s1.9/append.bin"):
+        assert f"stat -c %s /mnt/share/{rel}" in commands
+        assert f"stat -c %s /mnt/share2/{rel}" in commands
+        assert f"stat -c %s /mnt/cache/{rel}" in commands
+        assert f"stat -c %s /mnt/pool/{rel}" in commands
+    assert any("if=/mnt/pool/s1.9/append.bin" in c and "skip=4096" in c for c in commands)
+
+
+def test_s1_9_uses_one_seeded_source_checked_equal_on_both_machines(tmp_path, monkeypatch):
+    _, scenarios = _run_s1_9(tmp_path, monkeypatch, client_sha="1" * 64)
+
+    assert scenarios[0]["outcome"] == "error"
+    assert "source" in scenarios[0]["notes"]
 
 
 def test_s1_9_removes_a_filler_when_creation_fails(tmp_path, monkeypatch):
@@ -159,3 +278,20 @@ def test_s1_9_removes_a_filler_when_creation_fails(tmp_path, monkeypatch):
 
     assert scenarios[0]["outcome"] == "error"
     assert ("server", "rm -f /mnt/pool/.spike-filler") in log
+
+
+def test_a_byte_range_of_a_guest_file_hashes_as_those_bytes(tmp_path):
+    # The leftover, the source prefix and the retry's read-back are compared by these hashes
+    # (task T047a); the guest shell runs with pipefail, as LocalMachine does.
+    data = bytes(range(256)) * 9000
+    path = tmp_path / "data.bin"
+    path.write_bytes(data)
+    machine = LocalMachine()
+    sha = checks_large_space._range_sha256
+
+    assert sha(machine, str(path)) == hashlib.sha256(data).hexdigest()
+    assert sha(machine, str(path), 4096) == hashlib.sha256(data[4096:]).hexdigest()
+    assert sha(machine, str(path), 4096, 100_000) == hashlib.sha256(data[4096:104_096]).hexdigest()
+    assert sha(machine, str(path), 0, 0) == hashlib.sha256(b"").hexdigest()
+    assert sha(machine, str(path), len(data) + 10) == hashlib.sha256(b"").hexdigest()
+    assert sha(machine, str(tmp_path / "missing.bin")) is None

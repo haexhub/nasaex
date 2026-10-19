@@ -3,7 +3,8 @@
 Server side: the branch directories of the S1 data set (`pool`, the archive branches and the
 trash directories, keyed like vm-tests/s1/fixture.py), read and written directly, never through
 a pool; the cache pool and its mount variants. Client side: two mount.cifs mounts of the share
-(the default one and a second SMB session with `nosharesock,actimeo=0`) and smbclient
+(the default one and a second SMB session with `nosharesock,actimeo=0`, plus a short-lived
+session of its own on demand, `fresh_session`) and smbclient
 (testlib.smb). Evidence goes to status/ of the driver's output directory, which the evidence
 archive keeps (testlib.evidence).
 
@@ -31,6 +32,7 @@ from testlib.smb import CifsMount, Share, SmbClient
 
 CACHE = "/mnt/cache"
 BASE = "/mnt/base"
+FRESH_MOUNT = "/mnt/share3"
 CACHE_UNIT = "mnt-cache.mount"
 BASE_UNIT = "mnt-base.mount"
 SMBD = "samba-smbd.service"
@@ -213,6 +215,18 @@ class Lab:
     def remount_clients(self) -> None:
         self.umount_clients()
         self.mount_clients()
+
+    @contextmanager
+    def fresh_session(self) -> Iterator[CifsMount]:
+        """The share mounted by a mount.cifs session of its own (`nosharesock`: its own
+        superblock, so no size or handle of another mount of the client is reused) for the
+        duration, unmounted afterwards even when the block raises."""
+        session = CifsMount(self.client, self.share.share, FRESH_MOUNT, ("nosharesock",))
+        session.mount()
+        try:
+            yield session
+        finally:
+            session.umount()
 
     def client_run(self, command: str) -> tuple[int, str]:
         """Run a client command whose failure is an outcome, not a harness error: exit status
