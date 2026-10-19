@@ -94,7 +94,7 @@ Rationale, alternatives and sources for each are in [research.md](research.md) (
 | Degraded locks | Kernel-enforced read-only remount of archive and parity filesystems plus a status/refusal layer [D11] |
 | Layout and flake | Scaffolding only under `spikes/phase0/`; decisions under `docs/phase0/`; apps `suite`, `s1..s5`, `x1` and `x2` (optional), `controls`, `spikectl`; cheap `checks` without KVM [D12] |
 | Entry point | `nix run ./spikes/phase0#suite -- --mode record [--repeat 3] [--include-x1] [--include-x2]`; `shakedown` mode never records [D13] |
-| CI | `static` (no KVM), `suite` (KVM runner where one exists, dispatch/label, shakedown by default), `repro` (optional, three chained clean jobs); record runs are local on the reference runner (spec, "Reference runner"); actions pinned by SHA; budget table in research (adjusted 2026-10-15 for an S3 matrix of 38 cases instead of 68; the matrix is now 42 cases, which the shakedown re-measures), S3 sharded [D14] |
+| CI | `static` (no KVM; with `vm-smoke` and `vm-full` for S1 pulled forward to the Foundation on 2026-10-19, tasks T037g to T037j, spec Clarifications 2026-10-19 (CI)), `suite` (KVM runner where one exists, dispatch/label, shakedown by default), `repro` (optional, three chained clean jobs); record runs are local on the reference runner (spec, "Reference runner"); actions pinned by SHA; budget table in research (adjusted 2026-10-15 for an S3 matrix of 38 cases instead of 68; the matrix is now 42 cases, which the shakedown re-measures), S3 sharded [D14] |
 | Reproducibility | `--repeat 3` from clean state, per-scenario comparison, any difference is `flaky` = FAIL [D13] |
 
 ## Constitution Check
