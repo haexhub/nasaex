@@ -12,7 +12,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from s1.context import BASE_UNIT, CACHE_UNIT, Lab
+from s1.context import BASE_UNIT, CACHE_UNIT, Lab, running_baseline
 from s1.fixture import FIXTURE, POOL_BRANCH, roots
 from s1.scenarios import plan, run_plan
 
@@ -64,6 +64,18 @@ lab.required_settings["share"] = {
     ).strip()
     for key in SHARE["required_keys"]
 }
+# The running server must be the baseline of the criteria (tables.baseline and the values of
+# tables.share.required_keys): a difference ends the run before any scenario is judged.
+lab.required_settings["baseline"], DIFFERENCES = running_baseline(
+    CRITERIA["tables"]["baseline"], lab.effective
+)
+DIFFERENCES += [
+    f"share key {key} is {value}, the criteria say {SHARE['required_keys'][key]}"
+    for key, value in lab.required_settings["share"].items()
+    if value.lower() != SHARE["required_keys"][key].lower()  # testparm prints Yes for yes
+]
+if DIFFERENCES:
+    raise RuntimeError("the server is not the baseline of the criteria: " + "; ".join(DIFFERENCES))
 
 
 def save() -> None:

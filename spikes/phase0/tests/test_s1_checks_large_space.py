@@ -5,6 +5,9 @@ themselves need the VMs."""
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from helpers import LocalMachine, RecordingMachine
@@ -14,6 +17,7 @@ from s1.context import Lab
 from s1.fixture import ARCHIVE
 
 from testlib.faults import FaultEvent
+from testlib.manifest import build_manifest, from_json
 from testlib.recorder import Recorder
 
 
@@ -428,3 +432,19 @@ def test_a_byte_range_of_a_guest_file_hashes_as_those_bytes(tmp_path):
     assert sha(machine, str(path), 0, 0) == hashlib.sha256(b"").hexdigest()
     assert sha(machine, str(path), len(data) + 10) == hashlib.sha256(b"").hexdigest()
     assert sha(machine, str(tmp_path / "missing.bin")) is None
+
+
+def test_the_pool_rest_compares_every_path_but_the_filler_in_full(tmp_path):
+    # "No other pool file changed" (S1.9): a top-level file and a top-level directory are
+    # compared like every other path, only the filler is left out.
+    (tmp_path / "top.txt").write_bytes(b"top")
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "a.txt").write_bytes(b"alpha")
+    (tmp_path / ".spike-filler").write_bytes(b"x" * 100)
+    script = [sys.executable, "-c", checks_large_space._POOL_REST, str(tmp_path), ".spike-filler"]
+    env = os.environ | {"PYTHONPATH": os.pathsep.join(sys.path)}
+
+    out = subprocess.run(script, capture_output=True, text=True, check=True, env=env).stdout
+
+    full = build_manifest(tmp_path)
+    assert from_json(out) == {path: full[path] for path in ("top.txt", "d", "d/a.txt")}

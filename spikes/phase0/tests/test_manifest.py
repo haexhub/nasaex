@@ -33,6 +33,15 @@ def tree(tmp_path):
     return tmp_path
 
 
+def test_a_skipped_path_and_everything_below_it_are_left_out(tree):
+    (tree / "d" / "sub").mkdir()
+    (tree / "d" / "sub" / "c.txt").write_bytes(b"gamma")
+
+    manifest = build_manifest(tree, skip=("b.txt", "d/sub"))
+
+    assert set(manifest) == {"d", "d/a.txt"}
+
+
 def test_build_manifest_records_every_comparison_field(tree):
     manifest = build_manifest(tree)
 

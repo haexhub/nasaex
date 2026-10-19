@@ -15,6 +15,9 @@ fallback: >-
 tables:
   # The one SMB share of the server (task T041) and the keys the probe of task T039 measured as
   # required: without them a DOS attribute change is lost and user xattrs fail with EOPNOTSUPP.
+  # Before the first scenario the run reads each key with testparm and compares its value,
+  # ignoring case (testparm prints Yes); a difference ends the run before any scenario is
+  # judged, so every scenario is recorded with outcome error.
   share:
     name: cache
     path: /mnt/cache
@@ -25,9 +28,15 @@ tables:
   # The baseline mount of the cache pool (plan O16 and O9, spikes/phase0/nix/tiered-cache.nix).
   # The unlink policy is the mergerfs default: no func.unlink option is set and the effective
   # policy, read at run time, is expected to be epall (spec Clarifications 2026-10-17).
+  # Before the first scenario the run reads every option from the running cache pool (the
+  # mergerfs runtime xattrs; minfreespace in bytes, 64M being 64 x 1024 x 1024; the mode of
+  # every archive branch from its branch list) and records them as required settings. `branches`
+  # is the complete ordered runtime list, including the pool branch and its RW mode; a
+  # difference ends the run before any scenario is judged, as for tables.share.
   baseline:
     category.create: ff
     archive_branch_mode: NC
+    branches: /mnt/pool=RW:/mnt/archive/arch0/branch=NC:/mnt/archive/arch1/branch=NC:/mnt/archive/arch2/branch=NC
     moveonenospc: "false"
     minfreespace: 64M
     passthrough.io: "off"
@@ -42,9 +51,9 @@ tables:
     passthrough-rw-auto-full:
       passthrough.io: rw
       cache.files: auto-full
-  # Bounded times of the verdict model (initial targets, not measured).
+  # The bounded time of S1.10 (verdict model, an initial target, not measured). S1 fixes no
+  # bound per client operation: no S1 observable names one.
   bounds:
-    client_operation_s: 30
     view_consistency_s: 30
   # S1.8: the byte whose bits a case flips in place in the archived file above 4 GiB (beyond
   # 2**32, so 64-bit offsets are exercised); each case flips its own byte.
@@ -59,7 +68,7 @@ tables:
     smb_status: NT_STATUS_DISK_FULL
     leave_bytes: 100663296
     write_bytes: 268435456
-  # S1.2, proposed (spec Clarifications 2026-10-19, NC placement): the filler of the pool-low
+  # S1.2 (spec Clarifications 2026-10-19, NC placement): the filler of the pool-low
   # step leaves `leave_bytes` free on the pool, below minfreespace, so the baseline create policy
   # does not choose the pool and only the no-create mode keeps a create off the archive branches.
   placement_pool_low:
@@ -154,7 +163,7 @@ scenarios:
     action: The client flips the bits of three bytes of the file in place through the share.
     observable: >-
       The client reads the expected new content; the file on arch1 has the expected new content and
-      the same inode; no path of it exists on the pool branch; every other file on the pool and the
+      the same inode; it lies on arch1 and on no other branch; every other file on the pool and the
       archive branches has the same type, size and SHA-256 as before, and no path appeared or
       disappeared.
     check: inplace_modify
@@ -167,7 +176,8 @@ scenarios:
       The client deletes the archive-only file through the share; for the measurement the client
       deletes the file held on two branches through the share.
     observable: >-
-      The archive-only file is not visible through the share and exists on no branch; the manifest of
+      The delete exits with status 0; the archive-only file is not visible through the share and
+      exists on no branch; the manifest of
       the pool branch is unchanged (no marker, no copy). Recorded in the evidence, not a pass
       condition: the branches that held the two-branch file before and after its delete, whether it
       was visible afterwards, and the effective func.unlink of the cache pool.
@@ -181,8 +191,9 @@ scenarios:
       deletes the directory with its entries, creates a directory at the same path and a file in it;
       the client mounts the share again and reads once more.
     observable: >-
-      Before and after the new mount the file shows the new content and the directory lists only the
-      new file; no branch holds the old file content at the path or any old entry of the directory.
+      Each delete and the creation of the directory exit with status 0; before and after the new
+      mount the file shows the new content and the directory lists only the new file; no branch
+      holds the old file content at the path or any old entry of the directory.
     check: delete_then_recreate
   - id: S1.6
     title: Renames and moves of every origin succeed completely
@@ -218,10 +229,14 @@ scenarios:
       and smbclient, and the pool file is moved into the archive with the move primitives of the
       mover.
     observable: >-
-      After every step the user xattr set by the client and the xattr already present on the branch
-      read back with their values through the mount.cifs mounts, and smbclient allinfo shows the
-      hidden and system bits. DOS attributes are read with smbclient allinfo only, never through the
-      cifs pseudo-xattr.
+      Every attribute change and every rename succeeds, and the move leaves the pool file on an
+      archive branch and not on the pool branch. After every step the user xattr set by the client
+      and the xattr already present on the branch read back with their values, and smbclient
+      allinfo shows the hidden and system bits; the xattrs are read through the default mount.cifs
+      mount after the attribute change, the rename and the new mount, through the second session
+      after the new mount and after the move (S1.10 reads the xattrs of a moved file through the
+      default mount). DOS attributes are read with smbclient allinfo only, never through the cifs
+      pseudo-xattr.
     check: attributes_preserved
   - id: S1.8
     title: Files larger than 4 GiB keep their content end to end
@@ -232,9 +247,10 @@ scenarios:
       share and checksums the copy, writes large/new-through-share.bin (above 4 GiB) through the
       share, and flips the bits of the case's byte above 4 GiB of the archived file in place.
     observable: >-
-      Every checksum equals the reference; the copy and the new file lie on the pool branch only; after
-      the flip the archived file reads with the expected new SHA-256 through the share and on arch1,
-      keeps its inode, and no copy of it exists on the pool branch.
+      Every checksum equals the reference; the copy exits with status 0; the copy and the new file
+      lie on the pool branch only; after the flip the archived file reads with the expected new
+      SHA-256 through the share and on arch1, keeps its inode, and lies on arch1 and on no other
+      branch.
     check: large_files
     cases: mount-variants
     variants:
@@ -291,10 +307,13 @@ scenarios:
     observable: >-
       At every point the file is visible through the share with its full size and expected SHA-256;
       the reader reads the complete expected content; the mover exits with status 0; after the move
-      the client manifest of the file's directory (path, type, size, mtime, mode, SHA-256) equals the
-      manifest before the move within bounds.view_consistency_s without intervention, or after the
-      verified refresh procedure of tables.mover_view.refresh_procedure. A differing view after both
-      is a FAIL; the time to a consistent view is recorded.
+      the file lies on an archive branch and not on the pool branch, and the client manifest of the
+      file's directory (path, type, size, mtime, mode, SHA-256) equals the manifest before the move
+      within bounds.view_consistency_s without intervention, or after the verified refresh
+      procedure of tables.mover_view.refresh_procedure. A differing view after both is a FAIL; the
+      time to a consistent view is recorded. After that the user xattrs of every path of the
+      directory read through the share equal those before the move. A point that the mover does
+      not reach within 300 s ends the scenario with outcome error.
     check: mover_view
   - id: S1.11
     title: The share comes back after repeated reboots with the same view
@@ -304,13 +323,16 @@ scenarios:
     action: >-
       The client reads the manifest of the whole share and unmounts; the server reboots
       tables.reboot.count times in a row, nothing mounted or started by hand on the server; after
-      each boot the check waits for multi-user.target and an empty job queue; after the last boot
-      the client mounts the share again and reads the manifest of the whole share.
+      each boot the check waits for multi-user.target (at most 900 s, the test driver's default)
+      and then for an empty job queue (at most 120 s); after the last boot the client mounts the
+      share again and reads the manifest of the whole share.
     observable: >-
       After every boot the base pool, the cache pool and smbd are active and every by-label mount
-      of /etc/fstab is mounted; a boot that does not settle or misses any of them fails the
-      scenario, its boot diagnostics are captured (status/S1.11-boot-diagnostics.json) and no
-      further reboot runs. After the last boot the client manifest of the whole share (path, type,
+      of /etc/fstab is mounted; a boot that misses any of them fails the scenario, a boot that
+      does not settle within the two waits ends it with outcome error (counted as failed by the
+      verdict model); either way its boot diagnostics are captured
+      (status/S1.11-boot-diagnostics.json) and no further reboot runs. After the last boot the
+      client manifest of the whole share (path, type,
       size, mtime, mode, user xattrs, SHA-256) is identical to the one before the first reboot.
       Recorded, not judged, per reboot: the result, exit status and run time of the retrigger unit
       and the shutdown and boot times; the number of reboots completed. Required settings
@@ -540,3 +562,44 @@ changelog:
     IO pressure avg300 5.3 % at the start and 11.5 % during S1.8), while S1.8 took 438 to 678 s
     in the earlier quiet runs; how much of the 917 s and of the longer later boots the load
     caused is not measured. Not a criteria change.
+  - >-
+    2026-10-19, finalized for the freeze (task T052); no expected value changed, no scenario
+    added or dropped. Edits that came from shakedown (plan O2): S1.1 compares mode, owner and
+    group on the cache pool mount (shakedown T051; spec Clarifications 2026-10-18); S1.9 judges
+    a leftover as a byte-exact prefix of seeded data instead of "no truncated file" (T051 with
+    probes T051b and T051c) and polls for the freed space before its retries (probe T051h);
+    S1.11 reboots tables.reboot.count times on a server that carries the pool retrigger unit
+    (T051 and T051e with probes T051f and T051i); S1.2 gained the pool-low step (the S1.2
+    evidence of T051 and probe T051h); the serial time budget rose to 40 minutes (a loaded full
+    shakedown). Not from shakedown: tables.share (probe T039) and the unlink policy epall
+    (probes T037c and T037f). Edits of this entry, from an audit of every check against this
+    file (not a shakedown): tables.bounds.client_operation_s is removed, since no check reads it
+    and no S1 observable names a bound per client operation; tables.baseline and the values of
+    tables.share.required_keys are now verified against the running server before the first
+    scenario (before, the baseline was documented only, the archive branch mode was recorded as
+    a constant and the share values were recorded only), and the options read go to the record
+    as required_settings.baseline; S1.9 compares the rest of the pool branch in full (before, a
+    top-level path was compared by its name only); the observables now state what the checks
+    already judged: the exit status of the deletes, creates, renames and the copy (S1.4, S1.5,
+    S1.7, S1.8), a modified archived file on arch1 only (S1.3, S1.8), where a moved file lies
+    and its xattrs after the move (S1.7, S1.10), which mount S1.7 reads after which step, and
+    the waits of S1.10 (300 s per point) and S1.11 (900 s and 120 s) with their outcome error.
+    Merging the PR that carries this entry confirms the parts proposed in spec Clarifications
+    2026-10-18 and 2026-10-19 (the DOS attribute rule of S1.1 and dropping its user xattrs; the
+    recorded sizes and the retry order of S1.9; the two empty creates in the S1.9 window; every
+    by-label mount judged after each S1.11 boot; the S1.2 pool-low step) and decides that the
+    zero-filled append of the writer's own mount.cifs session is not a finding of S1 (spec
+    Clarifications 2026-10-19, S1 criteria finalized). Shakedowns of the edited checks (no
+    record): S1.9 alone passed in 74 s; with cache.files set to auto-full in tables.baseline
+    (a local edit, not committed) the run stopped before the scenario with "cache.files is off,
+    the criteria say auto-full" and recorded S1.4 with outcome error; the full run passed every
+    scenario in 1809 s (30.2 min; S1.1 40 s, S1.2 98 s, S1.3 to S1.7 17 s together, S1.8 836
+    s, S1.9 78 s with a refusal window of 26.2 s, S1.10 11 s, S1.11 676 s with 20 of 20
+    complete boots, 98 paths identical after the last; shutdown 0.95 to 90.96 s, median 1.14,
+    the 90.96 s in reboot 3 a SIGKILL wait for a leftover mount.fuse.merg as in probe T051i;
+    boot 13.9 to 31.5 s, median 16.3; the retrigger unit ended with success and exit status 0
+    after 0.87 to 6.23 s, median 1.06, once logging that udev had not settled within 5 s), the
+    baseline read from the running server equal to tables.baseline (branches
+    /mnt/pool=RW:/mnt/archive/arch0/branch=NC:/mnt/archive/arch1/branch=NC:/mnt/archive/arch2/branch=NC,
+    minfreespace 67108864) and the share keys Yes. Load average during the run 9 to 22. Status
+    stays draft until task T053.
