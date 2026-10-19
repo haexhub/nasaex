@@ -3,7 +3,7 @@
 # pre-freeze edit is noted in `changelog`. Checks: spikes/phase0/vm-tests/s1/.
 spike: S1
 criteria_version: 1
-status: draft
+status: frozen
 name: The tiered-cache share behaves like a normal filesystem
 gates: ADR-0002
 fallback: >-
