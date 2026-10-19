@@ -12,6 +12,7 @@ from s1.boot_diag import (
     label_mounts,
     missing_mounts,
     unit_name,
+    unit_run,
     units_to_inspect,
 )
 
@@ -42,6 +43,42 @@ def test_missing_mounts_are_the_expected_mount_points_findmnt_does_not_list():
 
     assert missing_mounts(SPIKE_MOUNTS, targets) == ["/mnt/archive-content/arch0", "/mnt/parity"]
     assert missing_mounts(SPIKE_MOUNTS, "\n".join(SPIKE_MOUNTS)) == []
+
+
+SHOW_RAN = """LoadState=loaded
+ActiveState=active
+SubState=exited
+Result=success
+ExecMainStatus=0
+ExecMainStartTimestampMonotonic=5085064
+ExecMainExitTimestampMonotonic=6027691
+"""
+
+
+def test_the_run_of_the_retrigger_unit_is_its_result_exit_status_and_run_time():
+    # Task T043b: what S1.11 records of tables.reboot.retrigger_unit per boot (systemctl show).
+    assert unit_run(SHOW_RAN) == {
+        "load_state": "loaded",
+        "active_state": "active",
+        "sub_state": "exited",
+        "result": "success",
+        "exit_status": 0,
+        "run_s": 0.943,
+    }
+
+
+def test_a_failed_or_absent_retrigger_unit_is_recorded_as_it_is():
+    failed = SHOW_RAN.replace("Result=success", "Result=exit-code").replace(
+        "ExecMainStatus=0", "ExecMainStatus=1"
+    )
+    absent = "LoadState=not-found\nActiveState=inactive\nSubState=dead\nResult=success\n" + (
+        "ExecMainStatus=0\nExecMainStartTimestampMonotonic=0\nExecMainExitTimestampMonotonic=0\n"
+    )
+
+    assert (unit_run(failed)["result"], unit_run(failed)["exit_status"]) == ("exit-code", 1)
+    assert unit_run(absent)["load_state"] == "not-found"
+    assert unit_run(absent)["run_s"] is None
+    assert unit_run("")["result"] is None
 
 
 def test_unit_names_are_escaped_like_systemd_escape_path():

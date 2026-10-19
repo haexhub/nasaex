@@ -48,6 +48,7 @@ TABLE_KEYS = {
         ("mover_view", "refresh_procedure"),
         ("bounds", "view_consistency_s"),
     ),
+    "reboot_view": (("reboot", "count"), ("reboot", "retrigger_unit")),
 }
 
 

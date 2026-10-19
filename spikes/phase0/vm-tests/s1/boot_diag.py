@@ -16,6 +16,8 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 
+from probes.boot_timing import monotonic_s, parse_properties
+
 BY_LABEL = "/dev/disk/by-label/"
 FULL_JOURNAL_S = 60.0  # the journal is kept whole up to this many seconds after kernel start
 # After that only these identifiers (kernel, PID 1, udev daemon and its workers) are kept.
@@ -27,6 +29,12 @@ _SAFE = re.compile(r"[A-Za-z0-9:_.]")
 SHOW = (
     "Id,LoadState,ActiveState,SubState,Result,InactiveExitTimestampMonotonic,"
     "ActiveEnterTimestampMonotonic,InactiveEnterTimestampMonotonic,JobRunningTimeoutUSec"
+)
+# What S1.11 records of its oneshot retrigger unit after every boot (task T043b), as the probes
+# of tasks T051g and T051i read it (vm-tests/probes/retrigger_boot.py).
+RUN_SHOW = (
+    "LoadState,ActiveState,SubState,Result,ExecMainStatus,ExecMainStartTimestampMonotonic,"
+    "ExecMainExitTimestampMonotonic"
 )
 
 
@@ -58,6 +66,23 @@ def unit_name(path: str, suffix: str) -> str:
         else:
             escaped.append(f"\\x{ord(ch):02x}")
     return "".join(escaped) + "." + suffix
+
+
+def unit_run(show: str) -> dict:
+    """State, result, exit status and run time (seconds from the start to the exit of its main
+    process, None if it never ran) of a oneshot unit, from `systemctl show -p RUN_SHOW`."""
+    props = parse_properties(show)
+    status = props.get("ExecMainStatus")
+    start = monotonic_s(props.get("ExecMainStartTimestampMonotonic"))
+    end = monotonic_s(props.get("ExecMainExitTimestampMonotonic"))
+    return {
+        "load_state": props.get("LoadState"),
+        "active_state": props.get("ActiveState"),
+        "sub_state": props.get("SubState"),
+        "result": props.get("Result"),
+        "exit_status": int(status) if status and status.isdigit() else status,
+        "run_s": None if start is None or end is None else round(end - start, 3),
+    }
 
 
 def failed_units(listing: str) -> list[str]:

@@ -15,14 +15,23 @@ of either pool on the server, and a file created through the share at the path o
 lands on the pool and leaves the trash untouched. That exclusion is an expected behaviour that
 was UNVERIFIED before this check; its outcome is recorded in the evidence either way.
 
-S1.11 reboots the server and does nothing by hand there: the base pool, the cache pool and
-smbd must come back by themselves, and the client manifest of the whole share must be
-identical before and after. A boot that comes up incomplete leaves its diagnostics
-(s1.boot_diag, task T051e) in the evidence first; they never change the outcome. Scaffolding
-for the spikes, not product code."""
+S1.11 (amended by task T043b, spec Clarifications 2026-10-19, S1.11 reboots) reads the client
+manifest of the whole share, then reboots the server tables.reboot.count times in a row and does
+nothing by hand there: after every boot the base pool, the cache pool and smbd must be active
+and every by-label mount of /etc/fstab mounted (the latter proposed in the clarification). A
+boot that comes up incomplete leaves its diagnostics (s1.boot_diag, task T051e) in the evidence
+first, they never change the outcome, and no further reboot runs. After the last boot the
+clients mount again and the manifest of the whole share must equal the one before the first
+reboot. Per reboot the evidence keeps the judged units, the missing mounts, the result, exit
+status and run time of the retrigger unit tables.reboot.retrigger_unit and the host seconds of
+the shutdown and of the boot until the job queue was empty; the unit's name and text, the count
+and the reboots completed are recorded as the required setting. No reboot is retried.
+Scaffolding for the spikes, not product code."""
 
 import json
+import shlex
 from collections.abc import Iterable, Mapping
+from time import monotonic
 
 from s1 import boot_diag
 from s1.context import BASE, BASE_UNIT, CACHE, CACHE_UNIT, SMBD, Lab
@@ -109,11 +118,23 @@ def trash_leaks(listing: Iterable[str], entries: Iterable[str]) -> list[str]:
     return sorted(path for path in listing if leaked(path))
 
 
-def reboot_failures(units_active: Mapping[str, bool], differences: list[Difference]) -> list[str]:
-    down = [unit for unit, up in units_active.items() if not up]
-    failures = [f"{unit} is not active after the boot" for unit in down]
+def boot_failures(boot: Mapping) -> list[str]:
+    """What makes one boot of S1.11 incomplete: it never settled, a judged unit is down, or a
+    by-label mount of /etc/fstab is missing."""
+    index = boot["index"]
+    if not boot["settled"]:
+        return [f"reboot {index}: the boot never settled"]
+    down = [unit for unit, up in boot.get("units_active", {}).items() if not up]
+    missing = boot.get("missing_mounts", [])
+    return [f"reboot {index}: {unit} is not active after the boot" for unit in down] + [
+        f"reboot {index}: {mount} is not mounted after the boot" for mount in missing
+    ]
+
+
+def reboot_failures(boots: Iterable[Mapping], differences: list[Difference]) -> list[str]:
+    failures = [failure for boot in boots for failure in boot_failures(boot)]
     if differences:
-        failures.append(f"view differs after the reboot: {describe(differences)}")
+        failures.append(f"view differs after the last reboot: {describe(differences)}")
     return failures
 
 
@@ -206,23 +227,27 @@ def check_archive_view(lab: Lab) -> None:
     assert not failures, "; ".join(failures)
 
 
-def _boot_diagnostics(lab: Lab, units: Mapping[str, bool], settled: bool, host) -> None:
+def _boot_diagnostics(lab: Lab, boot: Mapping, host) -> None:
     """Capture the boot state into the evidence if the boot is incomplete (s1.boot_diag);
     whatever goes wrong here never reaches the check."""
     try:
         data = boot_diag.capture_if_incomplete(
-            lab.server, units, settled=settled, host_at_start=host
+            lab.server, boot.get("units_active", {}), settled=boot["settled"], host_at_start=host
         )
         if data is not None:
-            lab.evidence("S1.11-boot-diagnostics", data)
+            lab.evidence("S1.11-boot-diagnostics", {"reboot": boot["index"], **data})
     except Exception:  # the diagnostics are evidence only, never an outcome
         pass
 
 
-def check_reboot_view(lab: Lab) -> None:
-    before = lab.share.manifest()
-    lab.umount_clients()
+def _reboot(lab: Lab, boot: dict) -> None:
+    """One reboot, nothing started by hand: shutdown, start, the wait for multi-user.target and
+    an empty job queue, then what the boot shows, into `boot`. A boot that never settles is
+    captured and its error raised."""
+    started = monotonic()
     lab.server.shutdown()
+    booted = monotonic()
+    boot["shutdown_s"] = round(booted - started, 3)
     try:
         host = boot_diag.host_state()
     except Exception:  # evidence only
@@ -232,24 +257,60 @@ def check_reboot_view(lab: Lab) -> None:
         lab.server.wait_for_unit("multi-user.target")
         lab.server.wait_until_succeeds('test -z "$(systemctl list-jobs --no-legend)"', timeout=120)
     except Exception:
-        _boot_diagnostics(lab, {}, False, host)
+        boot["settled"] = False
+        _boot_diagnostics(lab, boot, host)
         raise
-    units = {
+    finally:
+        boot["boot_s"] = round(monotonic() - booted, 3)
+    boot["settled"] = True
+    boot["units_active"] = {
         unit: lab.server.execute(f"systemctl is-active {unit}")[0] == 0
         for unit in (BASE_UNIT, CACHE_UNIT, SMBD)
     }
-    _boot_diagnostics(lab, units, True, host)
+    mounts = boot_diag.label_mounts(lab.server.succeed("cat /etc/fstab"))
+    found = lab.server.succeed("findmnt -rn -o TARGET")
+    boot["missing_mounts"] = boot_diag.missing_mounts(mounts, found)
+    _boot_diagnostics(lab, boot, host)
+    unit = shlex.quote(lab.tables["reboot"]["retrigger_unit"])
+    show = lab.server.succeed(f"systemctl show -p {boot_diag.RUN_SHOW} {unit}")
+    boot["retrigger_unit"] = boot_diag.unit_run(show)
+
+
+def check_reboot_view(lab: Lab) -> None:
+    table = lab.tables["reboot"]
+    before = lab.share.manifest()
+    unit_text = lab.server.succeed(f"systemctl cat {shlex.quote(table['retrigger_unit'])}")
+    lab.umount_clients()
+    boots: list[dict] = []
     differences: list[Difference] = []
-    if all(units.values()):
-        lab.mount_clients()
-        differences = compare(before, lab.share.manifest())
-    failures = reboot_failures(units, differences)
-    lab.evidence(
-        "S1.11-reboot-view",
-        {
-            "units_active": units,
-            "paths": len(before),
-            "differences": describe(differences, limit=None),
-        },
-    )
+    try:
+        for index in range(1, table["count"] + 1):
+            boots.append({"index": index, "settled": False})
+            _reboot(lab, boots[-1])
+            if boot_failures(boots[-1]):
+                break
+        if all(boots[-1]["units_active"].values()):
+            lab.mount_clients()
+            differences = compare(before, lab.share.manifest())
+    finally:
+        # Complete: measured to the end (the retrigger unit is read last) and judged complete.
+        completed = sum(1 for b in boots if "retrigger_unit" in b and not boot_failures(b))
+        lab.required_settings["reboot"] = {
+            "retrigger_unit": table["retrigger_unit"],
+            "unit_text": unit_text,
+            "count": table["count"],
+            "reboots_completed": completed,
+            "found_by": "S1.11",
+        }
+        lab.evidence(
+            "S1.11-reboot-view",
+            {
+                "count": table["count"],
+                "reboots_completed": completed,
+                "reboots": boots,
+                "paths": len(before),
+                "differences": describe(differences, limit=None),
+            },
+        )
+    failures = reboot_failures(boots, differences)
     assert not failures, "; ".join(failures)
