@@ -45,10 +45,17 @@ RESULT["unit_script"] = server.execute(
 )[1]
 # PROBE_CAPTURE_SIGTERM=1: diagnostic run, the capture sends SIGTERM to a leftover server itself
 # (shutdown_observe.py SIGTERM_FLAG); never set in a run whose kill waits are counted.
+# PROBE_CAPTURE_WATCH=1: diagnostic run, the capture leaves a watcher of a leftover server that
+# reports its threads on the console during systemd-shutdown (shutdown_observe.py WATCH_FLAG).
 RESULT["capture_sigterm"] = os.environ.get("PROBE_CAPTURE_SIGTERM") == "1"
-run("mkdir -p /var/lib/probe-t051i && rm -f /var/lib/probe-t051i/sigterm")
+RESULT["capture_watch"] = os.environ.get("PROBE_CAPTURE_WATCH") == "1"
+run(
+    "mkdir -p /var/lib/probe-t051i && rm -f /var/lib/probe-t051i/sigterm /var/lib/probe-t051i/watch"
+)
 if RESULT["capture_sigterm"]:
     run("touch /var/lib/probe-t051i/sigterm")
+if RESULT["capture_watch"]:
+    run("touch /var/lib/probe-t051i/watch")
 RESULT["environment"]["capture_unit"] = server.execute(
     "systemctl cat probe-shutdown-capture.service 2>&1"
 )[1]
@@ -106,7 +113,7 @@ def shutdown_evidence(console: list[str], previous_boot: str, shutdown_s: float)
             captures.append(entry)
     run(f"rm -f {CAPTURE_LOG}")
     result = classify_shutdown(console, lines, shutdown_s)
-    result["console_lines"] = console[-120:]
+    result["console_lines"] = console[-300:]
     result["journal_lines"] = lines[-200:]
     result["captures"] = captures
     result["capture_summaries"] = [capture_summary(c) for c in captures]
