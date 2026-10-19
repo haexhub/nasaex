@@ -89,6 +89,19 @@ def test_a_timeline_reports_when_the_first_write_succeeds_and_what_failed_before
     assert (got["pool_avail_first"], got["pool_avail_last"]) == (0, 899 * MIB)
 
 
+def test_first_write_success_uses_the_write_timestamp_not_the_sample_timestamp():
+    timeline = [
+        sample(0.1, 0, 5, "EROFS"),
+        sample(0.6, 900 * MIB, 6),
+    ]
+    timeline[1]["write_t"] = 0.9
+
+    got = summarize(timeline, need=800 * MIB, minfree=64 * MIB)
+
+    assert got["first_write_ok_s"] == 0.9
+    assert got["first_free_need_s"] == 0.6
+
+
 def test_a_timeline_without_success_commit_or_freed_space_reports_none():
     timeline = [sample(0.1, 10 * MIB, 3, "EROFS"), sample(0.6, 10 * MIB, 3, "EROFS")]
     got = summarize(timeline, need=800 * MIB, minfree=64 * MIB)

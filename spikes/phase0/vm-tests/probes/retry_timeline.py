@@ -67,7 +67,9 @@ def summarize(timeline: list[dict], need: int, minfree: int) -> dict:
     commits = timeline[0]["commits"] if timeline else None
     return {
         "samples": len(timeline),
-        "first_write_ok_s": timeline[first_ok]["t"] if ok else None,
+        "first_write_ok_s": (
+            timeline[first_ok].get("write_t", timeline[first_ok]["t"]) if ok else None
+        ),
         "errors_before_ok": sorted(errors),
         "failed_after_ok": sum(1 for s in timeline[first_ok:] if s["write"]["errno"]),
         "first_free_need_s": _first(timeline, lambda s: s["pool_avail"] >= need),
