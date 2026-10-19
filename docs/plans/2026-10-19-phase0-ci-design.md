@@ -15,11 +15,13 @@ that every PR proves it breaks nothing.
 
 ## Workflow `.github/workflows/phase0.yml`
 
-Triggers: every pull request, every push to `main`, manual dispatch.
+Triggers: pull requests on `opened`, `synchronize`, `reopened` and `labeled` (so adding
+`ci:full-s1` starts `vm-full`), every push to `main`, and manual dispatch with an explicit `base`
+input.
 
 | Job | Runs | Content |
 |---|---|---|
-| `changes` | always | `git diff` against the base decides whether `spikes/`, `specs/001-phase0-storage-spikes/`, `docs/phase0/` or `docs/adr/` changed |
+| `changes` | always | `git diff` against the event-specific base decides whether `spikes/`, `specs/001-phase0-storage-spikes/`, `docs/phase0/` or `docs/adr/` changed: the pull request base SHA for pull requests, the push event's `before` SHA for pushes, and the explicit `base` input for manual dispatch |
 | `static` | always; required | install Nix; `nix flake check ./spikes/phase0` (unit tests with coverage, lint, formatting, schema and lock checks, evaluation checks); `spikectl verify --base origin/main` with full git history (append-only lock, criteria before record) |
 | `vm-smoke` | when `spikes/` changed; required | enable and prove KVM; S1 shakedown of a fast scenario subset |
 | `vm-full` | PR label `ci:full-s1` or manual dispatch | the full S1 shakedown; uploads `junit.xml` and the scratch output as an artifact; never writes a record |
