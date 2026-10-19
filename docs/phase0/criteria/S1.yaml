@@ -59,6 +59,16 @@ tables:
     smb_status: NT_STATUS_DISK_FULL
     leave_bytes: 100663296
     write_bytes: 268435456
+  # S1.2, proposed (spec Clarifications 2026-10-19, NC placement): the filler of the pool-low
+  # step leaves `leave_bytes` free on the pool, below minfreespace, so the baseline create policy
+  # does not choose the pool and only the no-create mode keeps a create off the archive branches.
+  placement_pool_low:
+    leave_bytes: 16777216
+  # S1.11: the reboots in a row (one reboot cannot show a rare boot race) and the unit of the
+  # two-device pool that the server must carry (spec Clarifications 2026-10-19, S1.11 reboots).
+  reboot:
+    count: 20
+    retrigger_unit: pool-retrigger.service
   # S1.10: the points of the move primitives (contracts/mover-steps.md, M1 and M5) at which the
   # share is observed, and the refresh procedure, none until the shakedown finds one is needed.
   mover_view:
@@ -111,13 +121,24 @@ scenarios:
     action: >-
       The client creates a file and a directory inside the archive-only directory and a new
       top-level directory with a file; then, with the NC mode removed from the archive branches, the
-      client creates one more file inside the archive-only directory.
+      client creates one more file inside the archive-only directory. Then a filler (fault kind
+      enospc) leaves tables.placement_pool_low.leave_bytes free on the pool branch, below
+      minfreespace; with NC in effect the client creates a small file inside the archive-only
+      directory through mount.cifs and one with smbclient put; with the NC mode removed, the client
+      creates the mount.cifs file once more; the file and the filler are removed and the check
+      polls f_bavail of the pool branch every 0.5 s, at most 60 s, until it is back to its value
+      before the filler less 16 MiB.
     observable: >-
       Every new path exists on the pool branch with its expected content and on no archive branch;
       the tree hash of every archive branch is the same before and after; the client manifest shows
       the archive-only and the new content as one tree. The branch that held the file created without
-      NC is recorded as evidence and is not a pass condition. Required settings recorded: create
-      policy and archive branch mode.
+      NC is recorded as evidence and is not a pass condition. With the pool branch below
+      minfreespace and NC in effect, neither create reports success, neither path exists on any
+      branch and the tree hash of every archive branch is unchanged; their errno and SMB status are
+      recorded; the space is back within the poll bound. The branch that holds the file created
+      there without NC and the available bytes of every branch before that create are recorded as
+      evidence and are not a pass condition. Required settings recorded: create policy and archive
+      branch mode.
     check: new_data_placement
     cases: mount-variants
     variants:
@@ -237,9 +258,11 @@ scenarios:
       f_bavail of the pool branch every 0.5 s until it is at least the bytes of the last filler
       plus the sizes of the deleted leftovers less 16 MiB (btrfs frees the space at its next
       transaction commit, 30 s by default; the scenario fails if it has not appeared after 60 s,
-      and the seconds until it appeared are recorded); the client then repeats each write, the
-      append through a mount.cifs session of its own (nosharesock), the writer session's size
-      before that retry being recorded.
+      and the seconds until it appeared are recorded); right after the deletion and before the
+      poll, the client creates an empty file through mount.cifs and one with smbclient put, a
+      create that succeeds being deleted through the share before the poll; the client then
+      repeats each write, the append through a mount.cifs session of its own (nosharesock), the
+      writer session's size before that retry being recorded.
     observable: >-
       Per write: the mount.cifs create and append fail with errno ENOSPC and smbclient reports
       NT_STATUS_DISK_FULL, no write reports success; the tree hash of every archive branch and
@@ -251,8 +274,12 @@ scenarios:
       with its original bytes. Each repeated write reports no error, lies on the pool branch only
       and reads back with the written data (the append: original head, leftover, source).
       Recorded, not judged: the leftover's size and the sizes that the writer's session, the
-      second session and the server report. Required settings recorded: archive branch mode,
-      moveonenospc and minfreespace.
+      second session and the server report; the refusal window, the seconds from the end of the
+      client's deletion of the leftovers until the poll saw the freed space, during which a
+      create through the share is refused (EROFS, NT_STATUS_MEDIA_WRITE_PROTECTED; probe T051h),
+      a finding beyond the 60 s bound of the poll; the errno and SMB status of the two empty
+      creates. Required settings recorded: archive branch mode, moveonenospc and minfreespace,
+      with the refusal window beside them.
     check: pool_out_of_space
   - id: S1.10
     title: A file moved the mover's way keeps the same view through the share
@@ -270,12 +297,24 @@ scenarios:
       is a FAIL; the time to a consistent view is recorded.
     check: mover_view
   - id: S1.11
-    title: The share comes back after a reboot with the same view
-    precondition: The share populated with archive and pool files.
-    action: The server reboots; nothing is mounted or started by hand on the server.
+    title: The share comes back after repeated reboots with the same view
+    precondition: >-
+      The share populated with archive and pool files; the server carries the required unit
+      tables.reboot.retrigger_unit of the two-device pool (spec Clarifications 2026-10-19).
+    action: >-
+      The client reads the manifest of the whole share and unmounts; the server reboots
+      tables.reboot.count times in a row, nothing mounted or started by hand on the server; after
+      each boot the check waits for multi-user.target and an empty job queue; after the last boot
+      the client mounts the share again and reads the manifest of the whole share.
     observable: >-
-      The base pool, the cache pool and smbd are active after the boot, and the client manifest of the
-      whole share (path, type, size, mtime, mode, user xattrs, SHA-256) is identical before and after.
+      After every boot the base pool, the cache pool and smbd are active and every by-label mount
+      of /etc/fstab is mounted; a boot that does not settle or misses any of them fails the
+      scenario, its boot diagnostics are captured (status/S1.11-boot-diagnostics.json) and no
+      further reboot runs. After the last boot the client manifest of the whole share (path, type,
+      size, mtime, mode, user xattrs, SHA-256) is identical to the one before the first reboot.
+      Recorded, not judged, per reboot: the result, exit status and run time of the retrigger unit
+      and the shutdown and boot times; the number of reboots completed. Required settings
+      recorded: the retrigger unit (name and unit text).
     check: reboot_view
 
 changelog:
@@ -437,3 +476,31 @@ changelog:
     upload and append retries succeeded, lay on the pool branch only and read back with the
     written data; the writer session and the fresh session showed the same size before the
     append retry. Not a criteria change.
+  - >-
+    2026-10-19, spec amendment (spec Clarifications 2026-10-19, S1.11 reboots, pool retrigger,
+    S1.9 window, NC placement), the maintainer's decisions on the open S1.11 and S1.9 points
+    above, not re-predictions from a shakedown. S1.11: probe T051f found the mechanism of the
+    shakedown's boot failure (the not-ready pool member misses every 64-btrfs.rules retrigger and
+    owns the label link; unforced 1 of 16 boots with 4 vCPUs, 0 of 100 with 2, 1 of the 11 S1.11
+    reboots of T051 and T051e; that the shakedown failure was this race is UNVERIFIED), and T051i
+    measured the bounded unit U2 (change, pool_race_modules.nix:68-83, retrigger_v2.nix:56):
+    forced race rescued 10 of 10, 30 normal boots up without any event sent or side effect, 10
+    degraded boots exit 0 and running, with udev unsettled for 31 s the unit ended with exit 0
+    after 5.4 s, local-fs.target waiting only for the 10 s device timeout. The unit is
+    now a required setting of the pool storage (tables.reboot.retrigger_unit, tasks T028b and
+    T043b), and S1.11 reboots tables.reboot.count = 20 times in a row (0 of 20 bounds the
+    per-boot failure rate below 13.9 % at 95 %); each boot must bring the base pool, the cache
+    pool and smbd up, the full manifest is compared only before the first and after the last
+    reboot (a manifest per reboot would add 475 to 1672 s and leave the 40 min budget without a
+    margin; with the last only the run is planned at most at about 34 min, typically 24 to 27).
+    S1.9: the refusal window measured in T051h (0.1 to 31.5 s; 21.1 s and 26.4 s in the
+    shakedowns) is recorded as a finding beside minfreespace, not judged beyond the 60 s bound
+    of the poll (task T047c); whether the zero-filled append of the writer's own session is a
+    finding is still open. Proposed for the maintainer's confirmation: every by-label mount of
+    /etc/fstab judged after each S1.11 boot; the two empty creates of S1.9 in the window; the
+    S1.2 pool-low step (tables.placement_pool_low), which answers the open NC point: under ff the
+    pool wins whenever it passes the create filters, so NC decides the placement only with the
+    pool below minfreespace, and no case measured the control without NC (task T044a). UNVERIFIED
+    until the shakedowns of those tasks: the per-reboot time, the unit under S1 load with the
+    client VM, and every expected value of the S1.2 pool-low step (derived from the mergerfs
+    2.41.1 source). Status stays draft.
