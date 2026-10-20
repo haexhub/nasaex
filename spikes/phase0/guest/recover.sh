@@ -45,6 +45,16 @@ _log() {
     mkdir -p "$LOG_DIR"
     echo "$LOG_DIR/$1-$2-$(date +%Y%m%dT%H%M%S%N).log"
 }
+_replace_cleanup() {
+    local disk=$1 path cleanup_failed=0
+    for path in "$CONTENT_ROOT/$disk" "$ARCHIVE/$disk"; do
+        _al_is_mount "$path" || continue
+        if ! umount "$path" && ! umount -l "$path"; then
+            cleanup_failed=1
+        fi
+    done
+    return "$cleanup_failed"
+}
 
 #: 1. detect DISK
 #: Do: Look for evidence that DISK failed: its data filesystem is not mounted, no device carries
@@ -54,7 +64,11 @@ _log() {
 #: Check: At least one piece of evidence is found. Without any the procedure stops: a disk that
 #: shows no failure is never recovered.
 recover_detect() {
-    local disk=$1 mount=$ARCHIVE/$1 device evidence=()
+    local disk=$1 mount=$ARCHIVE/$1 device evidence=() state
+    state=$(_state "$disk")
+    # A new detection starts a new recovery attempt. Do not let a completed attempt authorize
+    # verify or resync after the operator has unlocked the array.
+    rm -f "$state/unrecoverable" "$state/verified"
     _al_is_mount "$mount" || evidence+=("$mount is not mounted")
     [[ -e $LABELS/$disk ]] || evidence+=("no device carries the label $disk")
     if _al_is_mount "$mount"; then
@@ -100,37 +114,82 @@ recover_lock() {
 #: Check: The data path is mounted from DEVICE, DEVICE carries the label DISK, `branch` is empty
 #: and `.snapshots` is a btrfs subvolume.
 recover_replace() {
-    local disk=$1 device=${2:?$USAGE} failed_bytes=${3:?$USAGE} size tmp source real
-    [[ -e $(_al_dir)/reason ]] ||
-        fail "the archive is not locked; replace only after step 2" || return
-    size=$(blockdev --getsize64 "$device") || fail "cannot read the size of $device" || return
+    local disk=$1 device=${2:?$USAGE} failed_bytes=${3:?$USAGE} size tmp source real state
+    state=$(_state "$disk")
+    rm -f "$state/replaced"
+    [[ -e $(_al_dir)/reason ]] || {
+        fail "the archive is not locked; replace only after step 2"
+        return
+    }
+    size=$(blockdev --getsize64 "$device") || {
+        fail "cannot read the size of $device"
+        return
+    }
     ((size >= failed_bytes)) ||
         fail "$device holds $size bytes, less than the $failed_bytes of the failed disk" || return
     if blkid -p "$device" >/dev/null 2>&1; then
         fail "$device already carries a filesystem signature; use a blank disk"
         return
     fi
-    mkfs.btrfs -q -L "$disk" "$device" || fail "mkfs.btrfs on $device" || return
+    mkfs.btrfs -q -L "$disk" "$device" || {
+        fail "mkfs.btrfs on $device"
+        return
+    }
     udevadm settle
-    tmp=$(mktemp -d)
-    mount "$device" "$tmp" &&
-        btrfs subvolume create "$tmp/data" >/dev/null &&
-        btrfs subvolume create "$tmp/content" >/dev/null &&
-        umount "$tmp" || fail "subvolumes on $device" || return
-    rmdir "$tmp"
+    tmp=$(mktemp -d) || {
+        fail "temporary mount directory"
+        return
+    }
+    if ! mount "$device" "$tmp" ||
+        ! btrfs subvolume create "$tmp/data" >/dev/null ||
+        ! btrfs subvolume create "$tmp/content" >/dev/null ||
+        ! umount "$tmp"; then
+        umount "$tmp" 2>/dev/null || umount -l "$tmp" 2>/dev/null || true
+        rmdir "$tmp" 2>/dev/null || true
+        fail "subvolumes on $device"
+        return
+    fi
+    rmdir "$tmp" || {
+        fail "temporary mount directory"
+        return
+    }
     mkdir -p "$ARCHIVE/$disk" "$CONTENT_ROOT/$disk"
-    mount -o subvol=data "$device" "$ARCHIVE/$disk" &&
-        mount -o subvol=content "$device" "$CONTENT_ROOT/$disk" &&
-        mkdir "$ARCHIVE/$disk/branch" "$ARCHIVE/$disk/trash" &&
-        spike-snapshots-init "$disk" || fail "the layout of $disk" || return
+    if ! mount -o subvol=data "$device" "$ARCHIVE/$disk" ||
+        ! mount -o subvol=content "$device" "$CONTENT_ROOT/$disk" ||
+        ! mkdir "$ARCHIVE/$disk/branch" "$ARCHIVE/$disk/trash" ||
+        ! spike-snapshots-init "$disk"; then
+        _replace_cleanup "$disk" || true
+        fail "the layout of $disk"
+        return
+    fi
 
-    source=$(findmnt -n -o SOURCE --mountpoint "$ARCHIVE/$disk") || fail "not mounted" || return
+    source=$(findmnt -n -o SOURCE --mountpoint "$ARCHIVE/$disk") || {
+        _replace_cleanup "$disk" || true
+        fail "not mounted"
+        return
+    }
     real=$(readlink -f "$device")
-    [[ ${source%%[*} == "$real" ]] || fail "$ARCHIVE/$disk is mounted from $source" || return
-    [[ $(blkid -s LABEL -o value "$device") == "$disk" ]] || fail "label of $device" || return
-    [[ -z $(ls -A "$ARCHIVE/$disk/branch") ]] || fail "branch is not empty" || return
-    btrfs subvolume show "$ARCHIVE/$disk/.snapshots" >/dev/null ||
-        fail ".snapshots is no subvolume" || return
+    if [[ ${source%%[*} != "$real" ]]; then
+        _replace_cleanup "$disk" || true
+        fail "$ARCHIVE/$disk is mounted from $source"
+        return
+    fi
+    if [[ $(blkid -s LABEL -o value "$device") != "$disk" ]]; then
+        _replace_cleanup "$disk" || true
+        fail "label of $device"
+        return
+    fi
+    if [[ -n $(ls -A "$ARCHIVE/$disk/branch") ]]; then
+        _replace_cleanup "$disk" || true
+        fail "branch is not empty"
+        return
+    fi
+    if ! btrfs subvolume show "$ARCHIVE/$disk/.snapshots" >/dev/null; then
+        _replace_cleanup "$disk" || true
+        fail ".snapshots is no subvolume"
+        return
+    fi
+    touch "$state/replaced"
     say "$device replaces $disk"
 }
 
@@ -146,6 +205,7 @@ recover_recover() {
     local disk=$1 plain=0 log rc=0 state
     [[ ${2-} == --plain ]] && plain=1
     state=$(_state "$disk")
+    [[ -e $state/replaced ]] || fail "run step 3 first" || return
     log=$(_log fix "$disk")
     if ((plain)); then
         snapraid -c "$CONF" -d "$disk" -l "$log" fix || rc=$?
@@ -224,6 +284,9 @@ recover_resync() {
         bash "$HERE/snapsync.sh" complete || fail "the snapshot set is not complete" || return
         bash "$HERE/snapsync.sh" covered || fail "the array is not covered" || return
     fi
+    # Resync is the terminal data step. Clear its authorization before unlock so this recovery
+    # attempt cannot be replayed from stale state if the operator pauses or reboots here.
+    rm -f "$state/unrecoverable" "$state/verified"
     say "the array is synchronised and covered again"
 }
 
@@ -232,13 +295,15 @@ recover_resync() {
 #: Check: `archive-lock status` says unlocked and every data, parity and content location of the
 #: array is writable.
 recover_unlock() {
-    local path target
+    local path target state
     archive_lock_unlock || fail "the unlock" || return
     [[ $(archive_lock_status) == unlocked ]] || fail "still locked" || return
     while read -r path; do
         target=$(_al_mount_of "$path")
         ! _al_readonly "$target" || fail "$target is still read-only" || return
     done < <(_al_paths '^(data|([2-6z]-)?parity|content)$')
+    state=$(_state "$1")
+    rm -f "$state/unrecoverable" "$state/verified"
     say "unlocked"
 }
 

@@ -177,6 +177,11 @@ def replace(box, device="spare2", size=512 * MIB):
     return run(box, "replace", "arch2", str(box["devices"] / device), str(size))
 
 
+def prepare_recovery(box):
+    assert run(box, "lock", "arch2").returncode == 0
+    assert replace(box).returncode == 0
+
+
 def test_replace_refuses_before_the_lock(box):
     result = replace(box)
 
@@ -230,6 +235,19 @@ def test_replace_fails_its_check_without_a_snapshots_subvolume(box):
 
     assert result.returncode == 1
     assert ".snapshots is no subvolume" in result.stderr
+    assert box["data"]["arch2"] not in stubs.mounts(box["stubs"])
+    assert str(box["tmp"] / "mnt" / "archive-content" / "arch2") not in stubs.mounts(box["stubs"])
+
+
+def test_recover_refuses_after_a_replacement_was_rejected(box):
+    run(box, "lock", "arch2")
+
+    assert replace(box, "spare-small").returncode == 1
+    result = run(box, "recover", "arch2")
+
+    assert result.returncode == 1
+    assert "run step 3 first" in result.stderr
+    assert stubs.calls(box["stubs"], "snapraid-btrfs") == []
 
 
 # --- 4. recover ----------------------------------------------------------------------------------
@@ -245,6 +263,7 @@ LOSS = (
 
 
 def test_recover_fixes_the_disk_through_the_snapshot_workflow(box):
+    prepare_recovery(box)
     configure(box, srb={"fix": {"rc": 0, "log": RECOVERED}})
 
     result = run(box, "recover", "arch2")
@@ -257,6 +276,7 @@ def test_recover_fixes_the_disk_through_the_snapshot_workflow(box):
 
 
 def test_recover_plain_runs_snapraid_fix(box):
+    prepare_recovery(box)
     configure(box, snapraid={"fix": {"rc": 0, "log": RECOVERED}})
 
     result = run(box, "recover", "arch2", "--plain")
@@ -269,6 +289,7 @@ def test_recover_plain_runs_snapraid_fix(box):
 
 
 def test_recover_lists_unrecoverable_files_and_exits_3(box):
+    prepare_recovery(box)
     configure(box, srb={"fix": {"rc": 1, "log": LOSS}})
 
     result = run(box, "recover", "arch2")
@@ -279,6 +300,7 @@ def test_recover_lists_unrecoverable_files_and_exits_3(box):
 
 
 def test_recover_fails_without_a_summary_in_the_log(box):
+    prepare_recovery(box)
     configure(box, srb={"fix": {"rc": 1, "log": ""}})
 
     assert run(box, "recover", "arch2").returncode == 1
@@ -295,6 +317,7 @@ def test_verify_needs_step_4(box):
 
 
 def test_verify_runs_an_audit_only_check_of_the_disk(box):
+    prepare_recovery(box)
     configure(box, srb={"fix": {"log": RECOVERED}}, snapraid={"check": {"rc": 0, "log": ""}})
     run(box, "recover", "arch2")
 
@@ -312,6 +335,7 @@ CHECK_LOSS = (
 
 
 def test_verify_accepts_listed_losses_only_when_asked(box):
+    prepare_recovery(box)
     configure(
         box, srb={"fix": {"rc": 1, "log": LOSS}}, snapraid={"check": {"rc": 1, "log": CHECK_LOSS}}
     )
@@ -325,6 +349,7 @@ def test_verify_accepts_listed_losses_only_when_asked(box):
 
 
 def test_verify_fails_on_a_file_that_step_4_did_not_list(box):
+    prepare_recovery(box)
     other = "error:3:arch2:branch/a.bin: Data error at position 0\n"
     configure(box, srb={"fix": {"rc": 1, "log": LOSS}}, snapraid={"check": {"rc": 1, "log": other}})
     run(box, "recover", "arch2")
@@ -422,6 +447,17 @@ def test_unlock_ends_with_every_location_writable(box):
     assert "unlocked" in result.stdout
     table = stubs.mounts(box["stubs"])
     assert set(table.values()) == {"rw"}
+
+
+def test_unlock_clears_authorization_from_the_completed_recovery(box):
+    prepare_resync(box)
+    assert run(box, "resync", "arch2").returncode == 0
+    assert run(box, "unlock", "arch2").returncode == 0
+
+    result = run(box, "verify", "arch2")
+
+    assert result.returncode == 1
+    assert "run step 4 first" in result.stderr
 
 
 def test_steps_need_a_disk_name(box):
