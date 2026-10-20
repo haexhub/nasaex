@@ -82,8 +82,6 @@ def phase_snap() -> None:
     kept = {k: v for k, v in hyp1.items() if k in EXPECTED and k not in phys2}
     hyp2 = hypothesis(kept, list(phys2), sizes, physical_order(phys2))
     note(ph, "locate2_vs_first_fit", against_locate(hyp2, locate()))
-    as_of_sync2 = dict(EXPECTED)
-
     # Evidence of a completed snapshot-supported sync.
     rc, conf_text = attempt(f"{bt} -u sync config > /root/synced.conf; cat /root/synced.conf")
     note(
@@ -99,6 +97,7 @@ def phase_snap() -> None:
         "diff_against_synced_snapshots",
         brief(snapraid("snap-cov1", "diff", conf="/root/synced.conf")),
     )
+    as_of_sync2 = dict(EXPECTED)
     s22 = s22_history(hyp2, sizes)
     synced_arch2 = s22.pop("synced_arch2")
     note(ph, "s22_history", s22)
