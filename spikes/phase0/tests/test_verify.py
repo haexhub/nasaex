@@ -3,7 +3,9 @@ reference rule (the git group: test_verify_git.py)."""
 
 import hashlib
 import io
+import lzma
 import tarfile
+import zlib
 
 import pytest
 from helpers import (
@@ -21,6 +23,7 @@ from helpers import (
     write_record,
 )
 
+from spikectl import verify as verify_module
 from spikectl.freeze import freeze
 from spikectl.verify import verify
 
@@ -255,6 +258,22 @@ def test_an_evidence_archive_that_is_not_a_readable_tar_is_detected(root, eviden
 
     assert [f.check for f in findings] == ["record-evidence"]
     assert "not a readable tar archive" in findings[0].message
+
+
+@pytest.mark.parametrize("error", [lzma.LZMAError("corrupt xz"), zlib.error("corrupt zlib")])
+def test_compressed_archive_errors_are_reported_and_skipped(root, monkeypatch, error):
+    entry = frozen_s1(root)
+    write_record(root, record_doc("S1", 1, entry.sha256))
+
+    def open_archive(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(verify_module.tarfile, "open", open_archive)
+
+    findings = verify(root, only=("records",))
+
+    assert [f.check for f in findings] == ["record-evidence"]
+    assert verify(root, only=("hygiene",), forbidden_names=()) == []
 
 
 def test_x1_records_are_never_required(root):

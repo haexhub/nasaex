@@ -119,7 +119,12 @@ jobs:
           jq -r '.scenarios[] | "\(.id) \(.outcome) \(.duration_s // "-")"' "$out/outcome.json" | tee -a "$GITHUB_STEP_SUMMARY"
           jq -e '(.scenarios | length) > 0 and all(.scenarios[]; .outcome == "pass")' "$out/outcome.json"
           # Both guests booted under KVM, not under a silent fallback to TCG emulation.
+          if [ ! -r "$out/driver.log" ]; then
+            echo "::error::the driver log is missing or unreadable; KVM boot cannot be verified"
+            exit 1
+          fi
           kvm_boots=$(grep -c 'Hypervisor detected: KVM' "$out/driver.log" || true)
+          kvm_boots=${kvm_boots:-0}
           echo "guest boots under KVM: $kvm_boots"
           if [ "$kvm_boots" -lt 2 ]; then
             echo "::error::the guests did not report KVM; the run may have used TCG emulation"
