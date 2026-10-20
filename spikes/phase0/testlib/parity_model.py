@@ -13,7 +13,8 @@ completed sync (what `fix` restores), and `unsynced`, content written or changed
 after it, which is never recoverable. Rules of a file prediction:
   intact     recoverable
   blocked    a position of the file cannot be rebuilt (`positions` names them)
-  changed    the file was changed or deleted on the failed disk after the last completed sync
+  changed    S2.4: the interrupted sync scanned the file changed or deleted on the failed disk,
+             so its content file no longer holds the synced version
   unsynced   unsynced content (`positions`: where the interrupted sync recorded it, if it did)
 An added block over a position that was empty at the last completed sync is no change: the
 manual's "newly added files don't prevent recovery of already existing files".
@@ -97,12 +98,13 @@ def after_sync(
     """Failure of the `failed` data disks after a completed sync (S2.1, S2.2, S2.3, S2.8, S2.9).
 
     `changed`: files of the last completed sync changed in place, rewritten or deleted since,
-    per disk; `unsynced`: files written or rewritten on a failed disk since. Plain (S2.2): a
-    synced file is recoverable iff it is unchanged and at each of its positions at most one
-    block is missing, counting the failed disks' blocks and the changed or deleted blocks of the
-    surviving disks (two failed disks share the single parity level too, S2.8). Snapshot
-    (S2.9): every synced file is recoverable apart from the failed disks' own overlap, whatever
-    changed afterwards."""
+    per disk; `unsynced`: files written or rewritten on a failed disk since, always lost. Plain
+    (S2.2): the synced version of a failed disk's file is recoverable iff at each of its
+    positions at most one block is missing, counting the failed disks' blocks and the changed
+    or deleted blocks of the surviving disks (two failed disks share the single parity level
+    too, S2.8); a later change of the file itself does not matter, fix reverts it to the synced
+    version (maintainer decision on S2.2, 2026-10-20). Snapshot (S2.9): every synced version is
+    recoverable apart from the failed disks' own overlap, whatever changed afterwards."""
     failed = _known(synced, failed)
     changed = {} if snapshot else (changed or {})
     missing = Counter(
@@ -115,10 +117,7 @@ def after_sync(
     files = []
     for disk in failed:
         for path, positions in synced[disk].items():
-            if path in changed.get(disk, ()):
-                files.append(FilePrediction(disk, path, "synced", False, "changed"))
-            else:
-                files.append(_judged(disk, path, [p for p in positions if missing[p] > 1]))
+            files.append(_judged(disk, path, [p for p in positions if missing[p] > 1]))
         files += _unsynced(disk, (unsynced or {}).get(disk, ()), {})
     return _prediction(snapshot, None, files)
 
@@ -141,17 +140,17 @@ def after_interrupted_sync(
     start only), `boundary` the first position it did not process (from the parity file),
     `changed` the synced files changed or deleted before it scanned, `changed_after` those
     changed after it stopped, `unsynced` the failed disk's files written or rewritten since the
-    last completed sync. A synced file of the failed disk is recoverable iff it is unchanged
-    and, at each of its positions, every surviving disk's block is unchanged since the last
+    last completed sync. A synced file of the failed disk is recoverable iff the interrupted
+    sync scanned it unchanged (a change after it stopped is reverted by fix, as in S2.2) and,
+    at each of its positions, every surviving disk's block is unchanged since the last
     completed sync or the position was processed with the surviving block present (still as
     the interrupted sync scanned it). The snapshot variant reads the surviving disks from the
     interrupted sync's snapshots, so changes after it stopped do not count there."""
     if fault not in (PROCESS_KILL, DEVICE_FAILURE):
         raise ValueError(f"{fault}: the S2.4 faults are {PROCESS_KILL} and {DEVICE_FAILURE}")
     _known(synced, [failed])
-    after = changed_after or {}
-    seen_after = {} if snapshot else after
-    old, new = _owners(synced), _owners(scanned)
+    seen_after = {} if snapshot else (changed_after or {})
+    old, new = _owners(synced, failed), _owners(scanned, failed)
 
     def rebuilt(p: int) -> bool:
         parity_old = all(
@@ -163,10 +162,9 @@ def after_interrupted_sync(
         )
         return parity_old or parity_new
 
-    gone = {*changed.get(failed, ()), *after.get(failed, ())}
     files = []
     for path, positions in synced[failed].items():
-        if path in gone:
+        if path in changed.get(failed, ()):
             files.append(FilePrediction(failed, path, "synced", False, "changed"))
         else:
             files.append(_judged(failed, path, [p for p in positions if not rebuilt(p)]))
@@ -182,14 +180,14 @@ def _known(layout: Layout, disks: Iterable[str]) -> tuple[str, ...]:
     return disks
 
 
-def _owners(layout: Layout) -> dict[int, list[tuple[str, str]]]:
-    """position -> (disk, path) of every block there. The failed disk's own block at a position
-    of an unchanged file is that file, which is never in a change set, so it needs no filter."""
+def _owners(layout: Layout, failed: str) -> dict[int, list[tuple[str, str]]]:
+    """position -> (disk, path) of every surviving disk's block there."""
     out: dict[int, list[tuple[str, str]]] = {}
     for disk, files in layout.items():
-        for path, positions in files.items():
-            for p in positions:
-                out.setdefault(p, []).append((disk, path))
+        if disk != failed:
+            for path, positions in files.items():
+                for p in positions:
+                    out.setdefault(p, []).append((disk, path))
     return out
 
 
