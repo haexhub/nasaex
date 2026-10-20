@@ -158,18 +158,27 @@ def test_s2_2_changes_on_surviving_disks_block_the_shared_positions():
         assert set(LOCATED_SYNC2["arch2"][path]) - set(result[(path, "synced")][2]) == fixed
 
 
-def test_s2_2_a_file_changed_on_the_failed_disk_is_not_recoverable():
-    """Spec S2.2: recoverable only if "the file itself is unchanged"; files "last changed on the
-    failed disk after that sync are not recoverable". Measured (runs 1, 6, 7): fix restored t2
-    bit-exact in its synced version (its positions 9-10 are not blocked), so the probe counted
-    plain 1 of 4; the spec rule counts 0 of 4. Reported as a conflict for T066."""
+def test_s2_2_a_file_changed_on_the_failed_disk_keeps_its_synced_version():
+    """Maintainer decision on S2.2 (2026-10-20): the version as of the last completed sync is
+    recoverable when none of its positions is blocked, also when the file was rewritten on the
+    failed disk afterwards; only the content written after the sync is lost. Measured (runs 1,
+    6, 7): fix restored t2 bit-exact to its synced hash, plain 1 of 4."""
     prediction = after_sync(LOCATED_SYNC2, ["arch2"], S22_CHANGED, S22_UNSYNCED)
     result = outcome(prediction)
-    assert result[("t2", "synced")] == (False, "changed", ())
-    assert recovered(prediction) == set()
-    unblocked = {f.path for f in prediction.files if f.version == "synced" and f.rule != "blocked"}
-    assert unblocked == {"t2"}  # what fix restored, measured
+    assert result[("t2", "synced")] == (True, "intact", ())
+    assert result[("t2", "unsynced")] == (False, "unsynced", ())
+    assert recovered(prediction) == {"t2"}
     assert prediction.beyond_parity == (0, 1, 2, 3, 4, 5, 7)
+
+
+def test_s2_2_a_file_changed_on_the_failed_disk_at_a_blocked_position_is_lost():
+    """x2 (0-2) rewritten on arch2 after the sync shares positions with the deleted arch1 y1:
+    its synced version is blocked there, and its new content is lost as unsynced content."""
+    changed = {**S22_CHANGED, "arch2": {"t2", "x2"}}
+    unsynced = {"arch2": {"t2", "w2", "x2"}}
+    result = outcome(after_sync(LOCATED_SYNC2, ["arch2"], changed, unsynced))
+    assert result[("x2", "synced")] == (False, "blocked", (0, 1, 2))
+    assert result[("x2", "unsynced")] == (False, "unsynced", ())
 
 
 def test_s2_3_files_written_to_the_failed_disk_after_the_sync_are_lost():
@@ -196,11 +205,11 @@ def test_s2_9_snapshot_variant_recovers_the_synced_state_whatever_changed_elsewh
 
 
 def test_s2_9_the_value_of_the_snapshot_workflow_is_the_difference_to_s2_2():
-    """Results: the probe counted plain 1 of 4, snapshot 4 of 4 (3 files). By the spec rows the
-    plain variant recovers none of the four synced versions, so the model's difference is 4."""
+    """Measured: plain 1 of 4 (t2), snapshot 4 of 4; the value of the workflow here is 3 files."""
     plain = after_sync(LOCATED_SYNC2, ["arch2"], S22_CHANGED, S22_UNSYNCED)
     snapshot = after_sync(LOCATED_SYNC2, ["arch2"], S22_CHANGED, S22_UNSYNCED, snapshot=True)
-    assert recovered(snapshot) - recovered(plain) == {"x2", "e2", "n2", "t2"}
+    assert recovered(plain) == {"t2"}
+    assert recovered(snapshot) - recovered(plain) == {"x2", "e2", "n2"}
 
 
 def test_s2_8_two_failed_disks_with_one_parity_never_claim_unreconstructable_files():
@@ -254,9 +263,9 @@ KILL_CHANGED = {"arch1": {"q1"}, "arch2": {"h"}}
 KILL_UNSYNCED = {"arch2": {"n1", "n2"}}
 
 
-def killed(boundary=418, **kwargs):
+def killed(boundary=418, changed=KILL_CHANGED, **kwargs):
     return after_interrupted_sync(
-        KILL_SYNCED, KILL_SCANNED, "arch2", boundary, KILL_CHANGED, KILL_UNSYNCED, **kwargs
+        KILL_SYNCED, KILL_SCANNED, "arch2", boundary, changed, KILL_UNSYNCED, **kwargs
     )
 
 
@@ -338,9 +347,21 @@ def test_s2_4_snapshot_variant_still_counts_changes_before_the_interrupted_sync(
     assert recovered(prediction) == {"a", "c"}
 
 
-def test_s2_4_a_file_of_the_failed_disk_changed_after_the_kill_is_not_unchanged():
-    result = outcome(killed(changed_after={"arch2": {"a"}}, snapshot=True))
-    assert result[("a", "synced")] == (False, "changed", ())
+def test_s2_4_a_file_of_the_failed_disk_changed_after_the_kill_keeps_its_synced_version():
+    """Same reasoning as the S2.2 decision: the interrupted sync scanned a unchanged, so its
+    content file still holds a's synced version, which fix restores where no position is
+    blocked; a's own later change is not a surviving-disk change. Not measured."""
+    for snapshot in (False, True):
+        result = outcome(killed(changed_after={"arch2": {"a"}}, snapshot=snapshot))
+        assert result[("a", "synced")] == (True, "intact", ()), snapshot
+
+
+def test_s2_4_a_file_of_the_failed_disk_changed_before_the_interrupted_sync_is_lost():
+    """The interrupted sync recorded the rewrite (no hash of the new blocks), so the synced
+    version is gone from its content file: spec S2.4 "unchanged since the last completed
+    sync"."""
+    result = outcome(killed(changed={**KILL_CHANGED, "arch2": {"h", "c"}}))
+    assert result[("c", "synced")] == (False, "changed", ())
 
 
 def test_s2_4_device_failure_has_its_own_provisional_prediction():
