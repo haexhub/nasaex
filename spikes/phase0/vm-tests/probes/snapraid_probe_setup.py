@@ -267,7 +267,7 @@ def in_background(name: str, command: str) -> None:
 # The nixpkgs `snapraid` is a makeWrapper script that execs `.snapraid-wrapped` with argv[0] set
 # to the script's path, so the process name is `.snapraid-wrapp` and only the command line
 # (".../bin/snapraid <args>") identifies it; the shells around it start with "bash".
-SNAPRAID_PROCESS = "^/[^ ]*/bin/snapraid "
+SNAPRAID_PROCESS = faults.SNAPRAID_PROCESS
 
 
 def kill_at_position(name: str, threshold: int) -> dict:

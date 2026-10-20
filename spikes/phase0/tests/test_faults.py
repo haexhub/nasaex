@@ -299,7 +299,7 @@ def test_kill_sync_at_position_waits_for_the_logged_position_then_kills_the_one_
     assert [w for w, _ in machine.calls].index("wait_until_succeeds") < len(machine.calls) - 1
 
 
-@pytest.mark.parametrize("pids", ["", "4711\n4712\n"])
+@pytest.mark.parametrize("pids", ["", "4711\n4712\n", "not-a-pid\n"])
 def test_kill_sync_at_position_refuses_unless_exactly_one_sync_runs(pids):
     machine = sync_machine(pids)
 

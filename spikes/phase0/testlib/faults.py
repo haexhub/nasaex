@@ -90,18 +90,16 @@ def wait_sync_position(machine, log: str, threshold: int, timeout: int = 600) ->
     return machine.succeed(f"grep '^run:pos:' {shlex.quote(log)} | tail -n 1").strip()
 
 
-def kill_sync_at_position(
-    machine, log: str, threshold: int, point: str = "", pattern: str = SNAPRAID_PROCESS
-) -> FaultEvent:
+def kill_sync_at_position(machine, log: str, threshold: int, point: str = "") -> FaultEvent:
     """SIGKILL of a running SnapRAID sync at the point `sync:pos:<threshold>` (fault kind
     kill-sync-at-position). The sync must run with `--gui` and a bandwidth limit, for example
     `--bw-limit=20M`, so that it is still running at K. The kill is refused unless exactly one
-    process matches `pattern`. Checks take the processed boundary from the parity file, never
-    from the log."""
+    SnapRAID command-line process matches. The later S2.4 check takes the processed boundary from
+    the parity file, never from the log."""
     last = wait_sync_position(machine, log, threshold)
-    pids = machine.succeed(f"pgrep -f {shlex.quote(pattern)} || true").split()
-    if len(pids) != 1:
-        raise RuntimeError(f"expected one SnapRAID process for {pattern!r}, found {pids}")
+    pids = machine.succeed(f"pgrep -f {shlex.quote(SNAPRAID_PROCESS)} || true").split()
+    if len(pids) != 1 or not re.fullmatch(r"[1-9][0-9]*", pids[0]):
+        raise RuntimeError(f"expected one SnapRAID process, found {pids}")
     machine.succeed(f"kill -9 {pids[0]}")
     point = point or f"sync:pos:{threshold}"
     return FaultEvent("kill-sync-at-position", point, f"pid {pids[0]} after {last}")

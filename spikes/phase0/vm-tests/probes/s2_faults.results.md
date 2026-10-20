@@ -28,8 +28,9 @@ SPIKE_STATE_DIR=<...> PROBE_WRITE_ERROR=arch1 PROBE_DROP_CACHES=1 nix run ./spik
 | `snap`: `snapsync sync --log LOG -- --gui --bw-limit=20M` | the shell, `bash .../snapsync sync`, `bash - .../.snapraid-btrfs-wrapped -c /etc/snapraid.conf --noninteractive sync -l LOG --gui --bw-limit=20M`, and one `/nix/store/...-snapraid-14.4/bin/snapraid -c /tmp/.snapraid-btrfs-wrapped.XXXX sync ...` | only the SnapRAID process matched; killed after `run:pos:376`, `394`, `389` | snapraid-btrfs `line 1310: <pid> Killed`, `snapsync: sync exited 137; every snapshot is kept`, exit 137; `snapsync complete` rc 1, `newest snapraid-btrfs snapshot 2 is syncing` on all three configs; the next `snapsync sync` rc 0, set 3 `synced`, `complete` and `covered` rc 0 |
 
 The kill came at the first logged line at or past K: lines are at most one per second, 19 to 20 positions
-apart at this bandwidth (probe T057), so the kill lands up to about 20 positions past K, and the processed
-boundary lies 1 to 2 positions further (probe T057). Checks take the boundary from the parity file.
+apart at this bandwidth (probe T057), so the kill lands up to about 20 positions past K. The processed
+boundary lies 1 to 2 positions further (probe T057); the later S2.4 check must derive that boundary from
+the parity file rather than from the log.
 
 ## write-error (runs 2 to 4)
 
