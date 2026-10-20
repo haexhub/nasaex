@@ -3,7 +3,8 @@ snapraid-btrfs, snapper, systemctl, btrfs, df), so the scripts' decisions run on
 
 Every stub appends its argv (and LC_ALL) as one JSON line to `calls.jsonl`. The mount table is a
 JSON file {target: "ro" | "rw"}; `busy` lists targets whose read-only remount fails like a
-filesystem with a file open for writing. Other behaviour comes from `stub.json`."""
+filesystem with a file open for writing. `state.json` keeps what the stubs create (the source
+device of a mount, the label mkfs gave a device). Other behaviour comes from `stub.json`."""
 
 import json
 import os
@@ -24,6 +25,18 @@ def save(t):
     TABLE.write_text(json.dumps(t))
 def arg(flag):
     return sys.argv[sys.argv.index(flag) + 1] if flag in sys.argv else None
+STATE = STUBS / "state.json"
+def state():
+    return json.loads(STATE.read_text()) if STATE.exists() else {"sources": {}, "labels": {}}
+def keep(s):
+    STATE.write_text(json.dumps(s))
+def command(words):
+    return next((a for a in sys.argv[1:] if a in words), None)
+def respond(entry):
+    log = arg("-l")
+    if log:
+        Path(log).write_text(entry.get("log", ""))
+    sys.exit(entry.get("rc", 0))
 """
 
 STUBS = {
@@ -37,15 +50,29 @@ elif "--mountpoint" in sys.argv:
     target = arg("--mountpoint").rstrip("/")
     if target not in t:
         sys.exit(1)
-    print(t[target] + ",relatime")
+    if arg("-o") == "SOURCE":
+        print(state()["sources"].get(target, "?"))
+    else:
+        print(t[target] + ",relatime")
 """,
     "mount": r"""
 t = table()
 args = sys.argv[1:]
+options = args[1].split(",") if args[0] == "-o" else []
+places = args[2:] if args[0] == "-o" else args
 if args[0] == "--bind":
     t[args[2].rstrip("/")] = "rw"
+elif len(places) == 1 and "remount" not in options:  # a target of the fstab
+    t[places[0].rstrip("/")] = "rw"
+elif len(places) == 2:  # DEVICE TARGET
+    t[places[1].rstrip("/")] = "rw"
+    s = state()
+    subvol = options[0].split("=")[1] if options and options[0].startswith("subvol=") else ""
+    s["sources"][places[1].rstrip("/")] = os.path.realpath(places[0]) + (
+        f"[/{subvol}]" if subvol else "")
+    keep(s)
 else:
-    options, target = args[1].split(","), args[2].rstrip("/")
+    target = places[0].rstrip("/")
     if target not in t:
         print(f"mount: {target}: not mounted", file=sys.stderr); sys.exit(32)
     if "ro" in options and target in CONF.get("busy", []):
@@ -55,15 +82,41 @@ save(t)
 """,
     "umount": r"""
 t = table()
-t.pop(sys.argv[1].rstrip("/"), None)
+if sys.argv[-1].rstrip("/") in CONF.get("umount_fails", []) and "-l" not in sys.argv:
+    print(f"umount: {sys.argv[-1]}: target is busy.", file=sys.stderr); sys.exit(32)
+t.pop(sys.argv[-1].rstrip("/"), None)
 save(t)
 """,
+    "blkid": r"""
+device = os.path.realpath(sys.argv[-1])
+if "-p" in sys.argv:
+    sys.exit(0 if device in CONF.get("formatted", []) else 2)
+print(state()["labels"].get(device, ""))
+""",
+    "blockdev": r"""
+print(CONF.get("sizes", {}).get(os.path.realpath(sys.argv[-1]), 0))
+""",
+    "mkfs.btrfs": r"""
+s = state()
+s["labels"][os.path.realpath(sys.argv[-1])] = arg("-L")
+keep(s)
+""",
+    "udevadm": "",
+    "dd": r"""
+sys.exit(CONF.get("dd_rc", 0))
+""",
+    "spike-snapshots-init": "",
     "sync": "",
     "touch": r"""
 Path(sys.argv[-1]).touch()
 """,
     "systemctl": "",
-    "btrfs": "",
+    "btrfs": r"""
+if sys.argv[1:3] == ["device", "stats"]:
+    sys.exit(CONF.get("stats_rc", 0))
+if sys.argv[1:3] == ["subvolume", "show"]:
+    sys.exit(1 if sys.argv[-1] in CONF.get("not_subvolume", []) else 0)
+""",
     "df": r"""
 print("Avail"); print(CONF.get("avail", 4096))
 """,
@@ -74,6 +127,8 @@ if "config" in sys.argv:
 log = arg("-l")
 if log:
     Path(log).write_text(CONF.get("log", ""))
+if command(("fix",)) in CONF.get("srb", {}):
+    respond(CONF["srb"]["fix"])
 args, command = sys.argv[1:], None
 while args:
     if args[0] in ("-c", "-u", "-U", "-C", "-d", "-l"):
@@ -86,6 +141,9 @@ while args:
 sys.exit(CONF.get("rc", {}).get(command, 0))
 """,
     "snapraid": r"""
+word = command(("fix", "check", "sync", "scrub", "status", "diff"))
+if word in CONF.get("snapraid", {}):
+    respond(CONF["snapraid"][word])
 log = arg("-l")
 if log:
     Path(log).write_text(CONF.get("diff_log", ""))

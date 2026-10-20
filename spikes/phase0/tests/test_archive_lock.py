@@ -262,3 +262,53 @@ def test_every_mover_primitive_is_refused_while_locked_and_touches_nothing(box, 
     assert (result.returncode, result.stderr) == (30, REFUSED.format(action=primitive))
     assert src.read_bytes() == b"pool copy"
     assert not dest.parent.exists()
+
+
+def test_open_for_resync_makes_everything_writable_and_lets_only_the_sync_through(box):
+    run(box, "lock", "arch2 failed")
+
+    result = run(box, "open-for-resync")
+
+    assert result.returncode == 0, result.stderr
+    table = stubs.mounts(box["stubs"])
+    assert {t: table[t] for t in [*DATA, "/mnt/parity"]} == dict.fromkeys(
+        [*DATA, "/mnt/parity"], "rw"
+    )
+    assert str(box["system"]) not in table
+    assert stubs.calls(box["stubs"], "systemctl") == [["systemctl", "stop", "snapperd.service"]]
+    assert run(box, "status").stdout.splitlines()[:3] == [
+        "locked",
+        "reason: arch2 failed",
+        "stage: resync",
+    ]
+    assert run(box, "snapraid", "sync").returncode == 0
+    assert run(box, "snapraid-btrfs", "-c", "/etc/snapraid.conf", "sync").returncode == 0
+    # snapsync sync deletes the older sets once the new one is complete (probe T062 run 1)
+    assert run(box, "snapraid-btrfs", "-c", "/etc/snapraid.conf", "cleanup").returncode == 0
+    for refused in (
+        ["snapraid", "scrub"],
+        ["snapraid-btrfs", "cleanup-all"],
+        ["snapraid", "touch"],
+    ):
+        assert run(box, *refused).returncode == 30
+    mover = run(box, "mover_copy_item", "/nonexistent", "/nonexistent2", script=EFFECTS)
+    assert mover.returncode == 30
+
+
+def test_open_for_resync_needs_the_lock(box):
+    result = run(box, "open-for-resync")
+
+    assert result.returncode == 1
+    assert "not locked" in result.stderr
+    assert stubs.calls(box["stubs"], "mount") == []
+
+
+def test_unlock_after_the_resync_stage_lifts_everything(box):
+    run(box, "lock", "arch2 failed")
+    run(box, "open-for-resync")
+
+    result = run(box, "unlock")
+
+    assert result.returncode == 0, result.stderr
+    assert run(box, "status").stdout == "unlocked\n"
+    assert run(box, "snapraid", "scrub").returncode == 0
