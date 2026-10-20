@@ -216,7 +216,9 @@ that no stable patch changed the analysed code paths is **UNVERIFIED**.
   `parity /path/snapraid.parity`), not a raw device. `[Certain]` (SnapRAID manual, section
   "parity"; `services.snapraid.parityFiles`). SnapRAID content files that live on a data disk
   must sit in a dedicated subvolume that is not snapshotted. `[Certain]` (snapraid-btrfs README,
-  see 7.3).
+  see 7.3). Superseded for S2: no content copy lives on an archive data disk, because one there
+  deadlocks a full disk with retained snapshots; the copies live on the system and the parity
+  disk (measured by probe T057, spec Clarifications 2026-10-20, S2 SnapRAID probe).
 - **Alternatives**: (a) One profile for everything: S2-S4 would pay large-disk costs per boot and
   per sync. (b) Real loop devices inside the VM instead of virtio disks: no host-side device
   failure. (c) Raw instead of qcow2 images: full allocation, no benefit. (d) Keep XFS or ext4
@@ -359,8 +361,9 @@ The oracle is host-side Python (`spikes/phase0/testlib`) that determines expecte
   disks and is compared with the plain result of scenario 2. SnapRAID's own `status:unrecoverable`
   log tags are collected as evidence and compared, but the verdict compares the predicted set
   with the *actual* result: a file is recovered if and only if its restored bytes equal the
-  expected hash. The block-allocation model of SnapRAID is **UNVERIFIED**; it is validated
-  during shakedown and corrected in the criteria before the freeze (plan open item O2).
+  expected hash. The block-allocation model of SnapRAID was measured by probe T057: removals
+  happen before insertions, and new or rewritten files are assigned by FIEMAP physical start
+  using first-fit positions per disk (plan item O2).
 - **S4**: the state table is data in the criteria file; the oracle drives each cell and
   checks the result through the lock and status mechanism of D9 and the archive/parity tree
   hashes taken before and after the refused action.
@@ -767,7 +770,8 @@ All `[Certain]` unless marked.
   Predictions must therefore be computed per parity block position.
 - **`fix` semantics**: compares files and parity with the snapshot of the last sync and
   "unconditionally reverts the file state to the last sync"; `-d`, `-f`, `-m` (undelete),
-  `-e` filters; `-l` writes the log; `-i/--import` lets `fix` use files moved out of the array.
+  `-e` filters; `-l` writes the log; `-i/--import` lets `fix` use files moved out of the array,
+  but not blocks that an interrupted sync recorded as deleted (measured by probe T057, spec Clarifications 2026-10-20, S2 SnapRAID probe).
 - **`sync` semantics**: can be stopped with Ctrl+C and resumes where it stopped; files are
   identified by path and/or inode and checked by size and timestamp; changed files get their
   parity recomputed; only content and parity files are modified, never the array files. `-E`
@@ -780,11 +784,11 @@ All `[Certain]` unless marked.
 - **Deterministic partial sync**: `-S/--start BLKSTART` and `-B/--count BLKCOUNT` process only a
   range of blocks ("mainly for advanced manual recovery"). A sync limited to the first K blocks is
   a clean, deterministic "stopped after K blocks"; the oracle's S2.4 prediction for the device
-  failure case uses it. For a real process kill the progress log of `-l` carries tag lines
-  `run:pos:<blockpos>:...` (`cmdline/state.c`) that can serve as the named trigger "kill when
-  position >= K". How frequently these lines are flushed to the log file, and whether the
-  content file state at the kill matches a prediction, is **UNVERIFIED**; the S2.4 result
-  record maps the prediction to files, so the oracle works from what the kill left.
+  failure case uses it. For a real process kill the tag lines `run:pos:<blockpos>:...`
+  (`cmdline/state.c`) serve as the named trigger "kill when position >= K", but only with the
+  undocumented `--gui` option, at most one line per second, and the processed boundary lies 1 to
+  2 positions past the last line; the kill leaves the content file of the sync start, so the check
+  derives the boundary from the parity file, never from the log (measured by probe T057, spec Clarifications 2026-10-20, S2 SnapRAID probe).
 - **Machine-readable log**: with `-l`, `check`/`fix` write tags `status:unrecoverable:<disk>:<path>`,
   `status:recovered:...`, `status:recoverable:...`, `status:correct:...`, `error:...`,
   `unrecoverable:...` and `summary:exit:ok|recovered|...` (`cmdline/check.c`). They are evidence,
@@ -793,12 +797,16 @@ All `[Certain]` unless marked.
   changing it requires recreating parity. Each file occupies a whole number of blocks per disk,
   so fixtures use file sizes that are multiples of the block size to make per-file block
   positions computable.
-- **Block-position allocation model** (first-fit per disk in scan order, parity of position *p* =
-  combination of the blocks at position *p* on every disk): assumed from the manual's
-  description of parity as per-position redundancy; **UNVERIFIED** and validated in shakedown.
+- **Block-position allocation model**: per disk, removals happen before insertions; new and
+  rewritten files are ordered by FIEMAP physical start and take the lowest free positions from
+  position 0, while parity position *p* combines the blocks at position *p* on every disk. Probe
+  T057 matched this model against `locate` and the parity file in all measured runs. The model is
+  still scoped to the measured single-parity allocation cases; double parity and other variants
+  remain listed below as unverified.
 - **Parity files** are normal files on the parity disk; at least `n_parity + 1` copies of the
-  `content` file are needed (manual "content"), so the configuration keeps one on the system
-  disk and one on each archive disk and the parity disk.
+  `content` file are needed (manual "content"), so the S2 configuration keeps one on the system
+  disk and one on each parity disk; it keeps none on an archive data disk because retained
+  snapshots can deadlock a full data disk before cleanup releases space.
 - `snapraid pool` (symlink view) is superseded by mergerfs per the manual and is not used.
 
 ### 3.5 btrfs pool behaviour (docs, 6.19.1 era)
@@ -876,9 +884,8 @@ All `[Certain]`, nixpkgs `a033e66`:
    and btrfs reaction (D5).
 2. `blkdebug` backing definitions inside the NixOS test start script (D5).
 3. Copying the state of a powered-off machine into a second machine (drill machine, D7).
-4. SnapRAID block allocation model, flush frequency of `run:pos` log lines, the state left by a
-   process kill, and exact `snapraid diff`/`check` commands that express "parity-covered" for a
-   path set (3.4).
+4. Residual SnapRAID variants not run by probe T057: double parity, autosave, a device failure or
+   power-off during sync, `scan:move`/`copy` placement, and concurrent writers (3.4).
 5. `CONFIG_FUSE_PASSTHROUGH`, `CONFIG_OVERLAY_FS_REDIRECT_DIR` in the NixOS 6.18 kernel (3.2, 3.3); X1 only.
 6. Whether the stable patches between kernel 6.18 and 6.18.56 touch the analysed paths (1).
 7. Whether overlayfs over mergerfs behaves as the code reading predicts (3.1, 3.3). This is what
@@ -897,13 +904,15 @@ All `[Certain]`, nixpkgs `a033e66`:
     effect of the cache timeouts (1 s default) on the view while the mover changes branches (7.2).
 14. Whether `NC` branch mode excludes a branch from the `moveonenospc` policy; behaviour with
     `moveonenospc` off and `minfreespace` below the free space (F10, 7.2).
-15. The recovery procedure with `snapraid-btrfs` after a disk failure, including the snapper
-    configuration of the replacement disk and the written sequence of S2.7 (7.3).
-16. Which evidence shows that a file is parity-covered by a completed snapshot-supported sync (7.3).
-17. `snapraid-btrfs` and `snapper` on NixOS at the pin: packaging by pinned revision, `snapper`
-    configuration generated by the harness, bash and `snapper` runtime needs (F12).
-18. The native `snapshot` option of SnapRAID 15.0 (release candidate only; not at the pin) (7.3).
-19. btrfs on the `small` archive disks with retained snapshots: headroom and `ENOSPC` behaviour (D3).
+15. The written recovery sequence of S2.7 after a disk failure and the replacement-disk snapper
+    configuration remain **UNVERIFIED**; T057 measured replacement-disk configuration and runtime
+    behaviour, but not the recovery sequence or snapper integration.
+16. T057 measured the pinned `snapraid-btrfs` probe's generated configuration and runtime
+    behaviour; NixOS packaging and the full snapshot/recovery workflow remain **UNVERIFIED**
+    (F12).
+17. The native `snapshot` option of SnapRAID 15.0 (release candidate only; not at the pin) (7.3).
+18. btrfs headroom on `arch0` and `arch1`, and `ENOSPC` behaviour with all content copies off the
+    data disks (D3); probe T057 measured only the `arch2` case and the copy-on-data-disk hazard.
 
 ---
 
@@ -1008,8 +1017,9 @@ script say; **none of it was run** and the whole workflow is **UNVERIFIED in pra
 - Parity coverage and the mover: `snapraid-btrfs sync` takes new snapshots of all data disks
   before syncing, so M3 (sync) and M4 (verification) of the mover refer to that snapshot set; a
   copy item counts as parity-covered only if it exists in the snapshot set of a **completed**
-  sync (the snapper userdata that the tool uses to record completion is the candidate evidence,
-  **UNVERIFIED**).
+  sync: the `synced` userdata of the newest snapshot of every data disk together with
+  `snapraid -c <config of that set> diff` exit 0 `summary:exit:equal`; `-u sync diff` rewrites
+  the userdata and is never run (measured by probe T057, spec Clarifications 2026-10-20, S2 SnapRAID probe).
 
 ### 7.4 What changed in the plan
 
