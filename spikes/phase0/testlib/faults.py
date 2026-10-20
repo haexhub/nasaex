@@ -10,8 +10,8 @@ on the `pc` machine type): `poweroff`, `device-unplug`, `device-ioerror` and
 `poweroff` is QEMU process termination: data the guest synced survives, data only in the guest
 page cache is lost, and the machine restarts on the same disks with its mounts. It is not host
 power loss: device-level volatile caches are not emulated (stated in every record's
-`residual_risk`). The kinds `write-error`, `kill-sync-at-position` and `concurrent-modify` are
-added by the spikes that need them (S2, S3).
+`residual_risk`). S2 adds `write-error` and `kill-sync-at-position`; `concurrent-modify` is added
+by S3.
 
 The `machine` arguments are driver machine objects (duck-typed). Standard library only."""
 
@@ -24,6 +24,11 @@ from pathlib import Path
 
 HOOK_DIR = "/run/spike-hooks"
 DEFAULT_FILLER = ".spike-filler"
+# The SnapRAID process by its command line (probe T057): the nixpkgs `snapraid` is a wrapper that
+# execs `.snapraid-wrapped` with argv[0] set to its own path, so the process name is
+# `.snapraid-wrapp` and only the command line (".../bin/snapraid <args>") names it; the shells of
+# snapraid-btrfs and of the archive-lock wrappers start with their interpreter.
+SNAPRAID_PROCESS = "^/[^ ]*/bin/snapraid "
 FILL_ROUNDS = 4  # enospc: measurements of the free space, each followed by a fill if needed
 
 
@@ -73,6 +78,35 @@ def kill(machine, process_pattern: str, point: str = "") -> FaultEvent:
     return FaultEvent("kill", point, process_pattern)
 
 
+def wait_sync_position(machine, log: str, threshold: int, timeout: int = 600) -> str:
+    """Wait until the last `run:pos:<block>` line of a sync's `-l` log has block >= `threshold`
+    (the point `sync:pos:<K>`) and return that line. Only `--gui` writes these lines, at most one
+    per second; the processed boundary lies 1 to 2 positions past them (probe T057)."""
+    condition = (
+        'awk -F: \'$1 == "run" && $2 == "pos" {p = $3} '
+        f'END {{exit !(p != "" && p + 0 >= {threshold})}}\' {shlex.quote(log)}'
+    )
+    machine.wait_until_succeeds(condition, timeout=timeout)
+    return machine.succeed(f"grep '^run:pos:' {shlex.quote(log)} | tail -n 1").strip()
+
+
+def kill_sync_at_position(
+    machine, log: str, threshold: int, point: str = "", pattern: str = SNAPRAID_PROCESS
+) -> FaultEvent:
+    """SIGKILL of a running SnapRAID sync at the point `sync:pos:<threshold>` (fault kind
+    kill-sync-at-position). The sync must run with `--gui` and a bandwidth limit, for example
+    `--bw-limit=20M`, so that it is still running at K. The kill is refused unless exactly one
+    process matches `pattern`. Checks take the processed boundary from the parity file, never
+    from the log."""
+    last = wait_sync_position(machine, log, threshold)
+    pids = machine.succeed(f"pgrep -f {shlex.quote(pattern)} || true").split()
+    if len(pids) != 1:
+        raise RuntimeError(f"expected one SnapRAID process for {pattern!r}, found {pids}")
+    machine.succeed(f"kill -9 {pids[0]}")
+    point = point or f"sync:pos:{threshold}"
+    return FaultEvent("kill-sync-at-position", point, f"pid {pids[0]} after {last}")
+
+
 def poweroff(machine, point: str = "") -> FaultEvent:
     """QEMU process termination through the driver. Never calls sync."""
     machine.crash()
@@ -118,6 +152,15 @@ def device_failed_at_boot(machine, disk: dict, qemu_img: Path | str, point: str 
         capture_output=True,
     )
     return FaultEvent("device-failed-at-boot", point, disk["serial"])
+
+
+def write_error(machine, serial: str, point: str = "") -> FaultEvent:
+    """Failed writes to the parity or an archive disk (fault kind write-error): the disk fails at
+    a point by `device-ioerror`. The single-block `blkdebug` form of the contract is not built."""
+    if not serial.startswith(("parity", "arch")):
+        raise ValueError(f"write-error fails a parity or archive disk, not {serial}")
+    event = device_ioerror(machine, serial, point)
+    return FaultEvent("write-error", point, f"{serial}: {event.detail}")
 
 
 # --- data and space faults -----------------------------------------------------------------------
