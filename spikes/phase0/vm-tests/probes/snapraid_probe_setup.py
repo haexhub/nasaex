@@ -30,7 +30,7 @@ from testlib import faults
 from testlib.fixtures import Entry, content_sha256
 
 STARTED = time.monotonic()
-PHASES = os.environ.get("PROBE_PHASES", "alloc,kill,snap,headroom").split(",")
+PHASES = os.environ.get("PROBE_PHASES", "alloc,kill,snap,headroom,headroom-sys").split(",")
 SEED = "t057-snapraid-probe"
 MIB = 1 << 20
 ARCH = ["arch0", "arch1", "arch2"]
@@ -135,10 +135,19 @@ def fresh_array(snapshots: bool) -> None:
     EXPECTED.clear()
 
 
-def write_conf(path: str = CONF, disks: tuple[str, ...] = tuple(ARCH), name: str = "snapraid"):
+def write_conf(
+    path: str = CONF,
+    disks: tuple[str, ...] = tuple(ARCH),
+    name: str = "snapraid",
+    archive_content: bool = True,
+):
+    """A SnapRAID config; `archive_content` False keeps the content copies on the system and the
+    parity disk only (manual "content": at least parity levels + 1 copies,
+    doc/snapraid.d:1107-1120)."""
     lines = [f"parity /mnt/parity/{name}.parity", f"content /var/lib/snapraid/{name}.content"]
     lines += [f"content /mnt/parity/{name}.content"]
-    lines += [f"content {CONTENT[s]}/{name}.content" for s in disks]
+    if archive_content:
+        lines += [f"content {CONTENT[s]}/{name}.content" for s in disks]
     lines += [f"data {s} {DATA[s]}/" for s in disks]
     lines += ["exclude /.snapshots/"]
     put(path, "\n".join(lines) + "\n")

@@ -1,6 +1,6 @@
-# Phases snap and headroom of the SnapRAID probe (task T057); snapraid.nix places this file
-# between snapraid_probe_setup.py and probe_snapraid.py, whose main flow calls them. It measures,
-# it never writes a record. Scaffolding for the Phase 0 spikes, not product code.
+# Phases snap, headroom and headroom-sys of the SnapRAID probe (task T057); snapraid.nix places
+# this file between snapraid_probe_setup.py and probe_snapraid.py, whose main flow calls them. It
+# measures, it never writes a record. Scaffolding for the Phase 0 spikes, not product code.
 #
 # snap: snapraid-btrfs (pinned in nix/snapraid-btrfs.nix) with one NixOS snapper config per
 #   archive data subvolume. What it needs at run time (config discovery through `snapper
@@ -15,6 +15,10 @@
 #   a snapshot, all but two of those files deleted, then new data written until ENOSPC with the
 #   snapshot retained; a snapper snapshot and a snapshot-supported sync at ENOSPC; the sync again
 #   after removing the partial file; cleanup.
+# headroom-sys: the headroom sequence with the content copies on the system and the parity disk
+#   only: writes at ENOSPC, the sync at ENOSPC, cleanup and the space it returns (settled after
+#   commits and the cleaning of deleted subvolumes), then deletes, writes until ENOSPC, sync and
+#   cleanup once more; status and diff after each sync.
 from probes.enospc_writes import SOURCE_SCRIPT, WRITER
 
 SNAP_BW = os.environ.get("PROBE_SNAP_BW_LIMIT", "10M")
@@ -316,3 +320,138 @@ def phase_headroom() -> None:
             "avail_bytes": df(DATA["arch2"]),
         },
     )
+
+
+def settled_avail(path: str) -> dict:
+    """Free bytes of a filesystem after a commit (`sync -f`), then after `btrfs subvolume sync`
+    (waits until deleted subvolumes are cleaned), then polled every 2 s until two reads agree
+    (at most 30 s), so that a delayed free is not read as no free."""
+    out: dict = {"after_sync_f": df(path)}
+    out["deleted_subvolumes_pending"] = len(run(f"btrfs subvolume list -d {path}").splitlines())
+    run(f"btrfs subvolume sync {path}")
+    out["after_subvolume_sync"] = df(path)
+    last, reads = out["after_subvolume_sync"], []
+    for _ in range(15):
+        time.sleep(2)
+        now = df(path)
+        reads.append(now)
+        if now == last:
+            break
+        last = now
+    out["polled"] = reads
+    return out
+
+
+def parity_stamp(name: str) -> str:
+    return run(f"stat -c '%s bytes, mtime %Y' /mnt/parity/{name}.parity").strip()
+
+
+def phase_headroom_sys() -> None:
+    """The headroom sequence with every content copy off the archive disks (system disk and
+    parity disk only): does the snapshot-supported sync complete at ENOSPC, and does cleanup
+    give the space back?"""
+    ph = "headroom-sys"
+    conf, name = "/root/hsys.conf", "hsys"
+    fail_disk("arch2")
+    new_disk("arch2", snapshots=True)
+    run("systemctl stop snapperd.service")  # no snapshot list of the old arch2 in its cache
+    run(f"rm -f /mnt/parity/{name}.* /var/lib/snapraid/{name}.*")
+    note(ph, "conf", write_conf(conf, ("arch2",), name, archive_content=False))
+    prefix = RESULT["phases"].get("snap", {}).get("prefix_used", "env LC_ALL=C ")
+    bt = f"{prefix}snapraid-btrfs -c {conf} --snapper-configs arch2 --noninteractive"
+    chunk = 32 * MIB
+    run(f"python3 -c {shlex.quote(SOURCE_SCRIPT)} /root/fill.src {chunk}")
+    avail0 = df(DATA["arch2"])
+    count = int(avail0 * 0.5) // chunk
+    first = write_files("d1", count, chunk, stop_on_error=True)
+    note(
+        ph,
+        "start",
+        {"avail_bytes": avail0, "d1_files": count, "d1_errors": [r for r in first if r["errno"]]},
+    )
+    sync = snapraid("hsys-sync1", "sync", conf=conf, tool=bt)
+    note(
+        ph,
+        "sync1",
+        {
+            **brief(sync, 4),
+            "avail_bytes": df(DATA["arch2"]),
+            "snapper": snapper_list("arch2"),
+            "parity": parity_stamp(name),
+        },
+    )
+    run(f"rm $(ls {DATA['arch2']}/branch/d1-*.bin | tail -n +3)")
+    note(ph, "avail_after_deleting_d1_but_two", settled_avail(DATA["arch2"]))
+    rows = write_files("d2", 64, chunk, stop_on_error=True)
+    failed = rows[-1] if rows[-1]["errno"] else None
+    note(
+        ph,
+        "d2_until_enospc",
+        {
+            "files_complete": sum(1 for r in rows if not r["errno"]),
+            "bytes_written_total": sum(r["written"] for r in rows),
+            "failed_write": failed,
+            "avail_bytes": df(DATA["arch2"]),
+        },
+    )
+    probes = {
+        size: json.loads(
+            run(
+                f"python3 -c {shlex.quote(WRITER)} "
+                f"{DATA['arch2']}/branch/probe-{size}.bin wb /root/fill.src {size}"
+            )
+        )
+        for size in (4096, MIB)
+    }
+    note(ph, "writes_at_enospc", probes)
+    full = snapraid("hsys-sync-at-enospc", "sync", conf=conf, tool=bt)
+    note(
+        ph,
+        "sync_at_enospc",
+        {**brief(full, 8), "snapper": snapper_list("arch2"), "parity": parity_stamp(name)},
+    )
+    note(ph, "status_after_sync", brief(snapraid("hsys-status", "status", conf=conf), 3))
+    note(ph, "diff_after_sync", brief(snapraid("hsys-diff", "diff", conf=conf), 3))
+    rc, out = attempt(f"{bt} cleanup")
+    note(
+        ph,
+        "cleanup",
+        {
+            "rc": rc,
+            "out_tail": tail(out, 4),
+            "snapper": snapper_list("arch2"),
+            "avail": settled_avail(DATA["arch2"]),
+        },
+    )
+    # The user deletes files and writes again; the next sync and cleanup release that space.
+    run(f"rm $(ls {DATA['arch2']}/branch/d2-*.bin | head -n 4)")
+    note(ph, "avail_after_deleting_four_d2", settled_avail(DATA["arch2"]))
+    rows = write_files("d3", 64, chunk, stop_on_error=True)
+    note(
+        ph,
+        "d3_until_enospc",
+        {
+            "files_complete": sum(1 for r in rows if not r["errno"]),
+            "bytes_written_total": sum(r["written"] for r in rows),
+            "failed_write": rows[-1] if rows[-1]["errno"] else None,
+        },
+    )
+    again = snapraid("hsys-sync3", "sync", conf=conf, tool=bt)
+    note(
+        ph,
+        "sync3",
+        {**brief(again, 6), "snapper": snapper_list("arch2"), "parity": parity_stamp(name)},
+    )
+    rc, out = attempt(f"{bt} cleanup")
+    note(
+        ph,
+        "cleanup3",
+        {
+            "rc": rc,
+            "out_tail": tail(out, 4),
+            "snapper": snapper_list("arch2"),
+            "avail": settled_avail(DATA["arch2"]),
+        },
+    )
+    note(ph, "status_end", brief(snapraid("hsys-status-end", "status", conf=conf), 3))
+    note(ph, "diff_end", brief(snapraid("hsys-diff-end", "diff", conf=conf), 3))

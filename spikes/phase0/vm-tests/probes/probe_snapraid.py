@@ -1,9 +1,9 @@
 # SnapRAID and snapshot-tool probe (task T057, research section 6 items 4, 15, 16, 17 and 19).
 # It measures, it does not judge, and it never writes a record. snapraid.nix prepends
-# snapraid_probe_setup.py (helpers) and probe_snapraid_snapshots.py (phases snap and headroom);
-# this file holds the phases alloc and kill and the main flow. PROBE_PHASES (default
-# alloc,kill,snap,headroom) selects phases; each starts from a fresh array. Scaffolding for the
-# Phase 0 spikes, not product code.
+# snapraid_probe_setup.py (helpers) and probe_snapraid_snapshots.py (phases snap, headroom
+# and headroom-sys); this file holds the phases alloc and kill and the main flow. PROBE_PHASES
+# (default alloc,kill,snap,headroom,headroom-sys) selects phases; each starts from a fresh
+# array. Scaffolding for the Phase 0 spikes, not product code.
 #
 # alloc: seeded files written in an order that differs from the alphabetical one; sync; the
 #   positions `snapraid locate` reports against the first-fit hypothesis in physical order (and in
@@ -354,9 +354,13 @@ RESULT["environment"]["vm_resources"] = TOPOLOGY["vmResources"]
 run(f"spike-mkfs parity && mount /mnt/parity && mkdir -p /var/lib/snapraid {LOGS} /root/copies")
 for phase in PHASES:
     began = time.monotonic()
-    {"alloc": phase_alloc, "kill": phase_kill, "snap": phase_snap, "headroom": phase_headroom}[
-        phase
-    ]()
+    {
+        "alloc": phase_alloc,
+        "kill": phase_kill,
+        "snap": phase_snap,
+        "headroom": phase_headroom,
+        "headroom-sys": phase_headroom_sys,
+    }[phase]()
     note(phase, "phase_seconds", round(time.monotonic() - began, 1))
     server.copy_from_machine(LOGS, phase)
     RESULT["seconds"] = round(time.monotonic() - STARTED, 1)
