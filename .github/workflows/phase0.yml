@@ -62,8 +62,12 @@ jobs:
             exit 0
           fi
           git diff --name-only "$base" HEAD | tee changed.txt
-          # The VM runs read the spikes and the S1 criteria (embedded into the test driver).
-          if grep -q -E '^(spikes/|docs/phase0/criteria/)' changed.txt; then vm=true; else vm=false; fi
+          # Run the VM checks when spike inputs or their governing spec and decisions change.
+          if grep -q -E '^(spikes/|specs/001-phase0-storage-spikes/|docs/phase0/|docs/adr/)' changed.txt; then
+            vm=true
+          else
+            vm=false
+          fi
           echo "vm=$vm" | tee -a "$GITHUB_OUTPUT"
 
   static:
