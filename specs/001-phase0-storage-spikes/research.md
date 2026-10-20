@@ -904,10 +904,12 @@ All `[Certain]`, nixpkgs `a033e66`:
     effect of the cache timeouts (1 s default) on the view while the mover changes branches (7.2).
 14. Whether `NC` branch mode excludes a branch from the `moveonenospc` policy; behaviour with
     `moveonenospc` off and `minfreespace` below the free space (F10, 7.2).
-15. The written recovery sequence of S2.7 after a disk failure (7.3); the replacement-disk
-    configuration and runtime behaviour were measured by probe T057.
-16. `snapraid-btrfs` packaging by pinned revision at the project pin (F12); its generated
-    configuration and runtime needs were measured by probe T057.
+15. The written recovery sequence of S2.7 after a disk failure and the replacement-disk snapper
+    configuration remain **UNVERIFIED**; T057 measured replacement-disk configuration and runtime
+    behaviour, but not the recovery sequence or snapper integration.
+16. T057 measured the pinned `snapraid-btrfs` probe's generated configuration and runtime
+    behaviour; NixOS packaging and the full snapshot/recovery workflow remain **UNVERIFIED**
+    (F12).
 17. The native `snapshot` option of SnapRAID 15.0 (release candidate only; not at the pin) (7.3).
 18. btrfs headroom on `arch0` and `arch1`, and `ENOSPC` behaviour with all content copies off the
     data disks (D3); probe T057 measured only the `arch2` case and the copy-on-data-disk hazard.
