@@ -308,6 +308,27 @@ def test_s2_4_a_surviving_change_after_the_kill_blocks_processed_positions():
         assert result[("a", "synced")] == (False, "blocked", span(0, 159)), boundary
 
 
+@pytest.mark.parametrize("snapshot, expected_rule", [(False, "blocked"), (True, "intact")])
+def test_s2_4_a_changed_added_survivor_block_does_not_use_old_parity(snapshot, expected_rule):
+    """At a processed position, parity is from the scanned layout even when the old layout was
+    empty there; a survivor block added and changed after the kill therefore blocks plain
+    recovery, while the snapshot variant still reads its unchanged scanned block."""
+    prediction = after_interrupted_sync(
+        {"failed": {"file": (0,)}, "survivor": {}},
+        {"failed": {"file": (0,)}, "survivor": {"added": (0,)}},
+        "failed",
+        1,
+        {},
+        {},
+        changed_after={"survivor": {"added"}},
+        snapshot=snapshot,
+    )
+
+    result = outcome(prediction)
+    expected = (False, "blocked", (0,)) if expected_rule == "blocked" else (True, "intact", ())
+    assert result[("file", "synced")] == expected
+
+
 def test_s2_4_snapshot_variant_reads_surviving_disks_from_the_interrupted_set():
     """Measured killed snapshot-supported sync (snap phase, runs 5 to 7): arch0 c0 (position 0,
     shared with arch2 x2) was rewritten after the kill; fix read arch0 and arch1 from the
