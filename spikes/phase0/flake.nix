@@ -105,7 +105,7 @@
         probe-nc-moveonenospc = apps.runDriver "probe-nc-moveonenospc" probeNcMoveOnEnospc.driver;
         probe-retry-timeline = apps.runDriver "probe-retry-timeline" probeRetryTimeline.driver;
         probe-append-retry = apps.runDriver "probe-append-retry" probeAppendRetry.driver;
-        # PROBE_PHASES (alloc,kill,snap,headroom) selects phases (probe_snapraid.py).
+        # PROBE_PHASES (alloc,kill,snap,headroom,headroom-sys) selects phases (probe_snapraid.py).
         probe-snapraid = apps.runDriver "probe-snapraid" probeSnapraid.driver;
       } // lib.mapAttrs'
         (v: p: lib.nameValuePair "probe-pool-race-${v}" (apps.runDriver "probe-pool-race-${v}" p.driver))
