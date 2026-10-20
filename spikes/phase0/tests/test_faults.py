@@ -3,6 +3,7 @@ The machine is a recording fake; the real behaviour of the kinds was observed by
 probe (vm-tests/probes)."""
 
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -18,10 +19,12 @@ from testlib.faults import (
     enospc,
     fire,
     kill,
+    kill_sync_at_position,
     parse_drive,
     poweroff,
     release,
     sync_limited,
+    write_error,
 )
 
 INFO_BLOCK = """drive4 (#block134): /state/vm-state-server/empty2.qcow2 (qcow2)
@@ -55,6 +58,9 @@ class FakeMachine:
 
     def wait_until_fails(self, command, **_):
         return self._record("wait_until_fails", command)
+
+    def wait_until_succeeds(self, command, **_):
+        return self._record("wait_until_succeeds", command)
 
     def wait_for_file(self, path, **_):
         self._record("wait_for_file", path)
@@ -266,3 +272,71 @@ def test_fire_waits_for_the_point_marker_before_the_fault_and_never_sleeps():
     assert machine.commands("wait_for_file") == [f"{HOOK_DIR}/reached/post:M3"]
     assert order[0][-1] == ("wait_for_file", f"{HOOK_DIR}/reached/post:M3")
     assert event == "fault-result"
+
+
+LOG = "/var/log/recover/sync.log"
+PGREP = "pgrep -f '^/[^ ]*/bin/snapraid ' || true"
+
+
+def sync_machine(pids="4711\n"):
+    last = "grep '^run:pos:' /var/log/recover/sync.log | tail -n 1"
+    return FakeMachine(outputs={PGREP: pids, last: "run:pos:416:257:202113024:42:17:15:0:14::\n"})
+
+
+def test_kill_sync_at_position_waits_for_the_logged_position_then_kills_the_one_sync():
+    machine = sync_machine()
+
+    event = kill_sync_at_position(machine, LOG, 400)
+
+    (condition,) = machine.commands("wait_until_succeeds")
+    assert LOG in condition and ">= 400" in condition and "run" in condition
+    assert machine.commands("succeed")[-1] == "kill -9 4711"
+    assert event == FaultEvent(
+        "kill-sync-at-position",
+        "sync:pos:400",
+        "pid 4711 after run:pos:416:257:202113024:42:17:15:0:14::",
+    )
+    assert [w for w, _ in machine.calls].index("wait_until_succeeds") < len(machine.calls) - 1
+
+
+@pytest.mark.parametrize("pids", ["", "4711\n4712\n"])
+def test_kill_sync_at_position_refuses_unless_exactly_one_sync_runs(pids):
+    machine = sync_machine(pids)
+
+    with pytest.raises(RuntimeError, match="SnapRAID process"):
+        kill_sync_at_position(machine, LOG, 400)
+
+    assert not [c for c in machine.commands("succeed") if c.startswith("kill")]
+
+
+def test_the_position_condition_compares_numbers_and_needs_a_line(tmp_path):
+    machine = sync_machine()
+    kill_sync_at_position(machine, LOG, 400)
+    (condition,) = machine.commands("wait_until_succeeds")
+    log = tmp_path / "sync.log"
+
+    def holds(text):
+        log.write_text(text)
+        command = condition.replace(LOG, str(log))
+        return subprocess.run(["sh", "-c", command]).returncode == 0
+
+    assert not holds("")
+    assert not holds("run:begin:0:760:600\nrun:pos:160:1:0:0::::0::\nrun:pos:397:238:0:39::::0::\n")
+    assert holds("run:pos:397:238:0:39::::0::\nrun:pos:416:257:0:42::::0::\n")
+    assert not holds("run:pos:1000:1:0:0::::0::\nrun:pos:80:2:0:0::::0::\n")  # the last line counts
+
+
+@pytest.mark.parametrize("serial", ["parity0", "arch2"])
+def test_write_error_fails_a_parity_or_archive_disk_by_device_ioerror(serial):
+    info = INFO_BLOCK.replace("disk-arch1", f"disk-{serial}")
+    machine = FakeMachine(outputs={"info block": info})
+
+    event = write_error(machine, serial, point="sync:pos:400")
+
+    assert machine.commands("monitor") == ["info block", "drive_del drive5"]
+    assert event == FaultEvent("write-error", "sync:pos:400", f"{serial}: drive5")
+
+
+def test_write_error_refuses_a_pool_disk():
+    with pytest.raises(ValueError, match="parity or archive"):
+        write_error(FakeMachine(), "pool0")
