@@ -57,6 +57,8 @@
       };
       # The SnapRAID and snapshot-tool probe of S2 (T057).
       probeSnapraid = import ./vm-tests/probes/snapraid.nix { inherit mkSpike; };
+      # The S2 guest scripts snapsync.sh and archive-lock.sh against the real tools (T060, T061).
+      probeGuestS2 = import ./vm-tests/probes/guest_s2.nix { inherit mkSpike; };
       # The spikes' VM tests.
       s1 = import ./vm-tests/s1/default.nix { inherit mkSpike; };
 
@@ -107,6 +109,7 @@
         probe-append-retry = apps.runDriver "probe-append-retry" probeAppendRetry.driver;
         # PROBE_PHASES (alloc,kill,snap,headroom,headroom-sys) selects phases (probe_snapraid.py).
         probe-snapraid = apps.runDriver "probe-snapraid" probeSnapraid.driver;
+        probe-guest-s2 = apps.runDriver "probe-guest-s2" probeGuestS2.driver;
       } // lib.mapAttrs'
         (v: p: lib.nameValuePair "probe-pool-race-${v}" (apps.runDriver "probe-pool-race-${v}" p.driver))
         probePoolRace
@@ -137,6 +140,7 @@
         driver-probe-retry-timeline = probeRetryTimeline.driver;
         driver-probe-append-retry = probeAppendRetry.driver;
         driver-probe-snapraid = probeSnapraid.driver;
+        driver-probe-guest-s2 = probeGuestS2.driver;
       }
       // lib.mapAttrs' (v: p: lib.nameValuePair "driver-probe-pool-race-${v}" p.driver) probePoolRace
       // lib.mapAttrs'

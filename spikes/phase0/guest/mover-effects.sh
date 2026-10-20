@@ -8,10 +8,13 @@
 # Source this file or run it with a function name:  mover-effects.sh mover_copy_item SRC DEST 1
 #
 # Hooks fire only for the first item of a loop step (`first` = 1), like the point list says.
+# While the archive lock of S2 holds (archive-lock.sh), every primitive is refused before it acts.
 
 HERE=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 # shellcheck source-path=SCRIPTDIR source=spike_hook.sh
 source "$HERE/spike_hook.sh"
+# shellcheck source-path=SCRIPTDIR source=archive-lock.sh
+source "$HERE/archive-lock.sh"
 
 _hook_first() { # <first> <point>
     [[ $1 == 1 ]] && spike_hook "$2"
@@ -76,6 +79,7 @@ _copy_range() {
 # xattrs, mtime and the hole map of a sparse source are kept ("Metadata preservation"); further
 # links of a copied pool inode are made by mover_link_item.
 mover_copy_item() {
+    archive_lock_guard mover_copy_item || return
     local src=$1 dest=$2 first=${3:-0}
     local dir base tmp size half
 
@@ -116,6 +120,7 @@ mover_copy_item() {
 # copied, never linked. Whether a link through the base pool lands on the disk of ARCHIVE_COPY
 # (mergerfs link behaviour) is UNVERIFIED and probed in the S3 shakedown.
 mover_link_item() {
+    archive_lock_guard mover_link_item || return
     local target=$1 dest=$2
     local dir tmp
 
@@ -134,6 +139,7 @@ mover_link_item() {
 # The removal of one pool copy of M5. The caller has validated the item (identity unchanged
 # since M2, parity coverage verified); this primitive marks the points and unlinks.
 mover_unlink_pool_copy() {
+    archive_lock_guard mover_unlink_pool_copy || return
     local path=$1 first=${2:-0}
 
     _hook_first "$first" "mid:M5:item-validated"
