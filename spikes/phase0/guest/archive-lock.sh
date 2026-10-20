@@ -6,6 +6,9 @@
 #                                   each parity disk and each content-file location (a content
 #                                   directory on no locked filesystem gets a read-only bind mount
 #                                   of itself, so the system disk stays writable)
+#   archive-lock.sh open-for-resync the resync stage of the recovery (recover.sh): remount them
+#                                   read-write and stop snapperd, but keep refusing everything
+#                                   except the sync itself
 #   archive-lock.sh unlock          remount them read-write, stop snapperd; the refusal is lifted
 #                                   last
 #   archive-lock.sh status          "locked" or "unlocked", the reason, one line per location
@@ -34,6 +37,10 @@ _AL_EROFS=30
 _AL_SNAPRAID_RUN="check diff dup fix list locate status devices smart probe up down"
 _AL_SRB_RUN="check config dup fix list locate ls status"
 
+# The actions that the resync stage lets through: the sync, and the cleanup that snapsync sync runs
+# once the new snapshot set is complete (it deletes the older sets).
+_AL_RESYNC="snapsync sync|snapraid sync|snapraid-btrfs sync|snapraid-btrfs cleanup"
+
 _al_dir() { echo "${ARCHIVE_LOCK_DIR:-/run/archive-lock}"; }
 
 # archive_lock_guard ACTION: return 0 when unlocked, else print the refusal and return 30.
@@ -41,6 +48,9 @@ archive_lock_guard() {
     local dir
     dir=$(_al_dir)
     [[ -e $dir/reason ]] || return 0
+    if [[ -e $dir/resync && "|$_AL_RESYNC|" == *"|$1|"* ]]; then
+        return 0
+    fi
     echo "archive-lock: refused: $1: the archive is locked ($(<"$dir/reason"))" >&2
     return "$_AL_EROFS"
 }
@@ -118,12 +128,14 @@ archive_lock_lock() {
     fi
 }
 
-archive_lock_unlock() {
+# _al_release: every locked location read-write again and snapperd stopped; 1 if one stays
+# read-only. A snapperd started while locked (fix starts one) keeps refusing with EROFS after the
+# remount until it restarts (guest-script probe); the next snapper call starts a fresh one.
+_al_release() {
     local dir kind path failed=()
     dir=$(_al_dir)
-    [[ -e $dir/reason ]] || return 0
     while read -r kind path; do
-        _al_is_mount "$path" || continue # a failed disk that was unmounted
+        _al_is_mount "$path" || continue # a failed disk that was unmounted, a lifted bind
         if [[ $kind == bind ]]; then
             umount "$path" || failed+=("$path")
         else
@@ -134,10 +146,26 @@ archive_lock_unlock() {
         echo "archive-lock: still read-only, the refusal stays: ${failed[*]}" >&2
         return 1
     fi
-    # A snapperd started while locked (fix starts one) keeps refusing with EROFS after the
-    # remount until it restarts (guest-script probe); it is started again on the next call.
     systemctl stop snapperd.service
-    rm -f "$dir/mounts" "$dir/reason"
+}
+
+archive_lock_unlock() {
+    local dir
+    dir=$(_al_dir)
+    [[ -e $dir/reason ]] || return 0
+    _al_release || return 1
+    rm -f "$dir/mounts" "$dir/resync" "$dir/reason"
+}
+
+archive_lock_open_for_resync() {
+    local dir
+    dir=$(_al_dir)
+    if [[ ! -e $dir/reason ]]; then
+        echo "archive-lock: not locked; the resync stage follows a lock" >&2
+        return 1
+    fi
+    _al_release || return 1
+    touch "$dir/resync"
 }
 
 archive_lock_status() {
@@ -149,6 +177,9 @@ archive_lock_status() {
     fi
     echo locked
     echo "reason: $(<"$dir/reason")"
+    if [[ -e $dir/resync ]]; then
+        echo "stage: resync"
+    fi
     while read -r kind path; do
         if ! _al_is_mount "$path"; then
             state=missing
@@ -219,6 +250,7 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
     set -euo pipefail
     case ${1-} in
     lock | unlock | status) "archive_lock_$1" "${@:2}" ;;
+    open-for-resync) archive_lock_open_for_resync ;;
     snapraid)
         _al_wrap snapraid "${ARCHIVE_LOCK_SNAPRAID:?the real snapraid}" \
             "$_AL_SNAPRAID_RUN" "$_AL_SNAPRAID_SHORT" "$_AL_SNAPRAID_LONG" "${@:2}"
@@ -228,7 +260,8 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
             "$_AL_SRB_RUN" "$_AL_SRB_SHORT" "$_AL_SRB_LONG" "${@:2}"
         ;;
     *)
-        echo "usage: archive-lock.sh lock REASON | unlock | status | snapraid ARGS | snapraid-btrfs ARGS" >&2
+        echo "usage: archive-lock.sh lock REASON | open-for-resync | unlock | status" \
+            "| snapraid ARGS | snapraid-btrfs ARGS" >&2
         exit 2
         ;;
     esac
