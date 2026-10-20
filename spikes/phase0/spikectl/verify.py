@@ -12,10 +12,12 @@ Scaffolding for the Phase 0 spikes, not product code. Check groups:
 """
 
 import getpass
+import lzma
 import re
 import socket
 import subprocess
 import tarfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +37,8 @@ from spikectl.model import (
     sha256_hex,
 )
 from testlib.sanitiser import HOST_PATH_PATTERNS, name_pattern
+
+ARCHIVE_ERRORS = (tarfile.TarError, EOFError, OSError, lzma.LZMAError, zlib.error)
 
 GROUPS = ("criteria", "records", "git", "hygiene")
 
@@ -222,7 +226,7 @@ def _archive_readable(archive: Path) -> bool:
         with tarfile.open(archive, mode="r:*") as tar:
             tar.getmembers()
         return True
-    except (tarfile.TarError, EOFError, OSError):
+    except ARCHIVE_ERRORS:
         return False
 
 
@@ -231,7 +235,7 @@ def _archive_member_sha256(archive: Path, name: str) -> str | None:
         with tarfile.open(archive, mode="r:*") as tar:
             extracted = tar.extractfile(tar.getmember(name))
             return sha256_hex(extracted.read()) if extracted else None
-    except (KeyError, tarfile.TarError, EOFError, OSError):
+    except (KeyError, *ARCHIVE_ERRORS):
         return None
 
 
@@ -439,7 +443,7 @@ def _evidence_texts(path: Path):
                 text = _text(extracted.read()) if extracted else None
                 if text is not None:
                     yield member.name, text
-    except (tarfile.TarError, EOFError, OSError):
+    except ARCHIVE_ERRORS:
         # Not a readable archive: the records group reports it (record-evidence).
         return
 
