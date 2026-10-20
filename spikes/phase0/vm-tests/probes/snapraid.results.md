@@ -244,6 +244,57 @@ Workflow, same history as `alloc` (item 4a and the S2.2 changes):
   disk 'arch2' at dir '/mnt/archive/arch2/.snapshots/10/snapshot/' are now missing or have been rewritten!`,
   rc 1, `scan.c:1846-1891`, finding F3) before any space question.
 
+## Item 19 follow-up: no content copy on an archive disk (measured, runs 8, 9)
+
+Question: does the ENOSPC deadlock of item 19 disappear when no SnapRAID content copy lives on an archive
+data disk? Phase `headroom-sys` (commit `de048c9`, the code of both runs), run in the same VM run as the
+unchanged phase `headroom` for comparison: `SPIKE_STATE_DIR=<short directory on an ext4 disk>
+PROBE_PHASES=headroom,headroom-sys nix run ./spikes/phase0#probe-snapraid`, twice (runs 8 and 9). Config:
+`parity /mnt/parity/hsys.parity`, `content /var/lib/snapraid/hsys.content`, `content
+/mnt/parity/hsys.content`, `data arch2 /mnt/archive/arch2/`, `exclude /.snapshots/`: two copies for one
+parity level, the minimum of the manual ("You must store at least one copy for each parity disk used plus
+one", doc/snapraid.d:1107-1120). The cache pool `/mnt/pool` was not used (the probe never formats or mounts
+it). Free space is read three ways (`settled_avail`): `df` after `sync -f` (a transaction commit), `df` after
+`btrfs subvolume sync` (waits until deleted subvolumes are cleaned), then `df` every 2 s until two reads agree.
+Runs 8 and 9 gave the same numbers in every step:
+
+| Step | Result (runs 8 and 9) |
+| --- | --- |
+| arch2 fresh, `.snapshots`, snapperd stopped | avail 451936256 |
+| 6 x 32 MiB, `snapraid-btrfs sync` | rc 0, snapshot 1 `synced`, parity 201326592 B, avail 250609664 |
+| 4 of the 6 deleted | avail 250609664 after commit and subvolume cleaning (held by snapshot 1) |
+| new 32 MiB files until ENOSPC | 7 complete, the 8th `ENOSPC` at `write()` after 15728640 B; total 250609664 |
+| writes at ENOSPC: 4096 B and 1 MiB to new files | both `ENOSPC` at `write()`, 0 bytes written (empty files remain) |
+| `snapraid-btrfs sync` at ENOSPC | rc 0, `Everything OK`, `summary:exit:ok` (10 added, 4 removed), snapshot 2 `synced`, parity 317718528 B; `status`: 12 files, `block_unsynced:0`, `summary:exit:ok` |
+| `snapraid-btrfs cleanup` | rc 0, `snapper -c arch2 rm 1`; avail 0 after `sync -f` with 1 deleted subvolume pending; 134217728 after `btrfs subvolume sync`; unchanged in the poll |
+| 4 of the new files deleted | avail stays 134217728 (held by snapshot 2) |
+| new 32 MiB files until ENOSPC | 4 complete (134217728 B), the 5th `ENOSPC` at `write()` with 0 bytes |
+| `snapraid-btrfs sync` at ENOSPC again | rc 0, snapshot 3 `synced`, `summary:exit:ok` (5 added, 4 removed) |
+| `cleanup` | `snapper -c arch2 rm 2`; avail 0 after `sync -f`, 134217728 after `btrfs subvolume sync` |
+| unchanged variant `headroom` in the same runs | as in item 19: sync rc 1 `Error writing the content file '/mnt/archive-content/arch2/headroom.content.tmp' (in flush before crc). No space left on device.`, cleanup deletes nothing, avail 0 |
+
+- Answer: yes. With the content copies off the archive disk the snapshot-supported sync completed at ENOSPC
+  (content written, parity grown from 201326592 to 317718528 B, a new `synced` set) and `cleanup` deleted the
+  old set, giving back exactly the 4 x 32 MiB = 134217728 B of files deleted before that sync. The user could
+  delete files and write again, but only into what the previous cleanup had freed: deleting 4 more files gave
+  nothing back until the next sync and cleanup, which then returned their 134217728 B. Two cycles, two runs.
+- The space comes back late: snapraid-btrfs calls `snapper rm` without `--sync` unless given `-s/--sync`
+  (snapraid-btrfs:298-299, 1417-1418), and btrfs frees a deleted snapshot when its cleaner has removed it. A
+  commit alone (`sync -f`) still showed 0 bytes with one deleted subvolume pending (`btrfs subvolume list -d`);
+  `btrfs subvolume sync` then showed 134217728, and polling showed no further change. A check that reads free
+  space right after `cleanup` sees no gain; it has to wait for the cleaning or use `snapraid-btrfs -s cleanup`
+  (not run).
+- No write landed at ENOSPC: every write after the first failure returned `ENOSPC` with 0 bytes.
+- `status` stayed consistent (`summary:exit:ok`, `block_unsynced:0` after each sync). `diff` on the live disk
+  did not return to `equal`: it exited 2 with `scan:update` for the empty files created at ENOSPC, the mtime
+  1 ms newer on the live file than in the snapshot the sync used (run 8: `scan:update:arch2:branch/probe-4096.bin:
+  0 1792499453.369796297 -> 0 1792499453.370920183`, likewise `probe-1048576.bin` and, after the second cycle,
+  `d3-004.bin`), and so did the next sync's snapshot. Files with data, including the partial one, showed no
+  difference. The cause (an mtime update at ENOSPC that does not reach the snapshot) is UNVERIFIED.
+- UNVERIFIED: `snapraid-btrfs -s cleanup`; the cache pool or another disk as a content location; the two-copy
+  minimum with a failure of the system or the parity disk; arch0 and arch1; a full disk without the 50 %
+  pre-fill.
+
 ## Contradictions with the spec, research and tasks
 
 - Research 3.4: "the progress log of `-l` carries tag lines `run:pos:<blockpos>:...`" and the fault-points
@@ -318,5 +369,11 @@ Workflow, same history as `alloc` (item 4a and the S2.2 changes):
 > `snapraid -c <config of the synced set> diff` exit 0 `summary:exit:equal`. Headroom: arch2 (512 MiB) has
 > 451936256 B free after mkfs; with a retained snapshot new data fails cleanly with ENOSPC at `write()`, a
 > snapper snapshot still works, but the snapshot-supported sync fails writing the content copy on that disk and
-> `cleanup` frees nothing. The S2 expected values are not changed by this note; the S2.4 prediction and the
-> content-file placement are for the maintainer to decide.
+> `cleanup` frees nothing. Follow-up (runs 8 and 9, identical): with the content copies only on the system and
+> the parity disk (none on an archive disk), the snapshot-supported sync completes at ENOSPC (parity
+> 201326592 -> 317718528 B, new `synced` set) and `cleanup` returns the 134217728 B deleted before that sync,
+> visible only after the deleted snapshot is cleaned (`btrfs subvolume sync`; 0 B after a commit alone); files
+> deleted later come back only after the next sync and cleanup, which also complete at ENOSPC; no write lands at
+> ENOSPC; empty files created at ENOSPC keep `diff` at exit 2 (`scan:update`, mtime 1 ms apart). The S2
+> expected values are not changed by this note; the S2.4 prediction and the content-file placement are for
+> the maintainer to decide.
