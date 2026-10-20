@@ -23,7 +23,7 @@ input.
 |---|---|---|
 | `changes` | always | `git diff` against the event-specific base decides whether `spikes/`, `specs/001-phase0-storage-spikes/`, `docs/phase0/` or `docs/adr/` changed: the pull request base SHA for pull requests, the push event's `before` SHA for pushes, and the explicit `base` input for manual dispatch |
 | `static` | always; required | install Nix; `nix flake check ./spikes/phase0` (unit tests with coverage, lint, formatting, schema and lock checks, evaluation checks); `spikectl verify --base origin/main` with full git history (append-only lock, criteria before record) |
-| `vm-smoke` | when `spikes/` changed; required | enable and prove KVM; S1 shakedown of a fast scenario subset |
+| `vm-smoke` | when `spikes/`, `specs/001-phase0-storage-spikes/`, `docs/phase0/` or `docs/adr/` changed; required | enable and prove KVM; S1 shakedown of a fast scenario subset; fails unless both guests log `Hypervisor detected: KVM` (no silent TCG fallback) |
 | `vm-full` | PR label `ci:full-s1` or manual dispatch | the full S1 shakedown; uploads `junit.xml` and the scratch output as an artifact; never writes a record |
 
 - Path decisions are job conditions (`if`), never the workflow `paths` filter: a required check
@@ -78,11 +78,22 @@ go into the PR description. `vm-smoke` logs `/dev/kvm` and the run time of every
 - tasks.md: new Foundation tasks for `static` and `vm-smoke`, `--only` with several ids, the
   coverage ratchet with its gap tests, and the required checks; T142 keeps the `repro` job.
 
-## Open until measured
+## Measured on the runner (2026-10-20)
 
-- KVM on the standard Linux runner: the GitHub documentation names hardware acceleration for
-  Android SDK tools on Linux runners, which needs KVM (Likely); only a job proves it.
-- Whether `vm-full` fits the runner. Measured on 2026-10-19: in the S1 record run the VM images
-  used at least 20252 MiB at their peak (sampled every 15 s; 4141 MiB after the setup), above the
-  14 GB SSD that GitHub documents for the runner; the free disk of a real runner is not known.
-- The job times on the runner, including the Nix build of the VM closure.
+Standard runner `ubuntu-24.04` of a public repository; runs of
+https://github.com/haexhub/nasaex/pull/43 and of `main` after its merge.
+
+- KVM: `/dev/kvm` is usable after the udev rule of `cachix/install-nix-action`, and every guest
+  logs `Hypervisor detected: KVM` and uses `kvm-clock` (22 of 22 boots in the full run).
+- Machine: 4 vCPUs, 16 GB RAM, `/` of 145 GB with 86 GB free before a VM job (GitHub documents
+  14 GB of SSD); no separate `/mnt`, so the VM state goes to `/p0` on `/`.
+- `static`: 2:40 to 2:55 including the Nix setup; the coverage is 88.14 %, the same as in the local
+  nix sandbox (ten xattr tests skip in both).
+- `vm-smoke`: 4:00 to 4:15 including the Nix build of the VM closure; S1.1 took 89 to 92 s.
+- `vm-full`: every S1 scenario passed in 40:19 (S1.8 1002 s, S1.11 930 s with 20 reboots);
+  https://github.com/haexhub/nasaex/actions/runs/39383310754. A `df` when an earlier attempt was
+  cancelled after 23 minutes showed 81 GB used on `/` (59 GB before the run).
+- A required job skipped by its condition counts as passed (GitHub); not yet seen on a PR without
+  VM-relevant changes (UNVERIFIED until then).
+- Required checks of `main` since 2026-10-20 (task T037j): `static` and `vm-smoke`, bound to the
+  GitHub Actions app, enforced for administrators; force pushes and deletion of `main` are refused.
