@@ -329,7 +329,7 @@ def run_pos_report(result: dict) -> dict:
         "first_last": [pos[0], pos[-1]] if pos else None,
         "blockpos_steps": step_stats([p for p, _ in pos]),
         "countpos_steps": step_stats([c for _, c in pos]),
-        "elapsed_field_last": tag_fields(result["log"], "run", "pos")[-1][6] if pos else None,
+        "elapsed_field_last": tag_fields(result["log"], "run", "pos")[-1][7] if pos else None,
         "seconds": result.get("seconds"),
     }
 
