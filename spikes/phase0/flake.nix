@@ -60,6 +60,12 @@
       # The S2 guest scripts snapsync.sh and archive-lock.sh against the real tools (T060, T061).
       probeGuestS2 = import ./vm-tests/probes/guest_s2.nix { inherit mkSpike; };
       # The recovery sequence recover.sh of S2 against the real tools (T062).
+      # The fault kinds kill-sync-at-position and write-error of S2 (T063).
+      probeS2Faults = import ./vm-tests/probes/guest_s2.nix {
+        inherit mkSpike;
+        name = "probe-s2-faults";
+        script = ./vm-tests/probes/probe_s2_faults.py;
+      };
       probeRecover = import ./vm-tests/probes/guest_s2.nix {
         inherit mkSpike;
         name = "probe-recover";
@@ -117,6 +123,9 @@
         probe-snapraid = apps.runDriver "probe-snapraid" probeSnapraid.driver;
         probe-guest-s2 = apps.runDriver "probe-guest-s2" probeGuestS2.driver;
         probe-recover = apps.runDriver "probe-recover" probeRecover.driver;
+        # PROBE_WRITE_ERROR (default parity0) names the disk that write-error fails;
+        # PROBE_DROP_CACHES=1 empties the page cache before that sync.
+        probe-s2-faults = apps.runDriver "probe-s2-faults" probeS2Faults.driver;
       } // lib.mapAttrs'
         (v: p: lib.nameValuePair "probe-pool-race-${v}" (apps.runDriver "probe-pool-race-${v}" p.driver))
         probePoolRace
@@ -149,6 +158,7 @@
         driver-probe-snapraid = probeSnapraid.driver;
         driver-probe-guest-s2 = probeGuestS2.driver;
         driver-probe-recover = probeRecover.driver;
+        driver-probe-s2-faults = probeS2Faults.driver;
       }
       // lib.mapAttrs' (v: p: lib.nameValuePair "driver-probe-pool-race-${v}" p.driver) probePoolRace
       // lib.mapAttrs'
