@@ -80,8 +80,19 @@ jobs:
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
         with:
           enable_kvm: false
-      - name: nix flake check (unit tests with the coverage floor, lint, formatting, schema, lock, evaluation)
-        run: nix flake check ./spikes/phase0 -L
+      - name: nix flake evaluation and checks (unit tests, lint, formatting, schema, lock)
+        run: |
+          # Keep evaluation separate from building: `nix flake check` can be cancelled on the
+          # hosted runner while traversing the large probe output graph, without reporting the
+          # underlying check result. The explicit list is the complete checks.x86_64-linux set.
+          nix flake check ./spikes/phase0 -L --no-build
+          nix build -L --no-link \
+            ./spikes/phase0#checks.x86_64-linux.criteria \
+            ./spikes/phase0#checks.x86_64-linux.records \
+            ./spikes/phase0#checks.x86_64-linux.oracle-unit \
+            ./spikes/phase0#checks.x86_64-linux.formatting \
+            ./spikes/phase0#checks.x86_64-linux.tiered-cache-layout \
+            ./spikes/phase0#checks.x86_64-linux.pool-retrigger
       - name: spikectl verify with the full git history
         run: nix run ./spikes/phase0#spikectl -- verify --base origin/main
 
