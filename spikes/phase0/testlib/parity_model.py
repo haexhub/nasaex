@@ -153,7 +153,7 @@ def after_interrupted_sync(
     old, new = _owners(synced, failed), _owners(scanned, failed)
 
     def rebuilt(p: int) -> bool:
-        parity_old = all(
+        parity_old = p >= boundary and all(
             path not in changed.get(disk, ()) and path not in seen_after.get(disk, ())
             for disk, path in old.get(p, ())
         )
