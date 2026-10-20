@@ -55,6 +55,8 @@
         name = "probe-append-retry";
         script = ./vm-tests/probes/probe_append_retry.py;
       };
+      # The SnapRAID and snapshot-tool probe of S2 (T057).
+      probeSnapraid = import ./vm-tests/probes/snapraid.nix { inherit mkSpike; };
       # The spikes' VM tests.
       s1 = import ./vm-tests/s1/default.nix { inherit mkSpike; };
 
@@ -103,6 +105,8 @@
         probe-nc-moveonenospc = apps.runDriver "probe-nc-moveonenospc" probeNcMoveOnEnospc.driver;
         probe-retry-timeline = apps.runDriver "probe-retry-timeline" probeRetryTimeline.driver;
         probe-append-retry = apps.runDriver "probe-append-retry" probeAppendRetry.driver;
+        # PROBE_PHASES (alloc,kill,snap,headroom) selects phases (probe_snapraid.py).
+        probe-snapraid = apps.runDriver "probe-snapraid" probeSnapraid.driver;
       } // lib.mapAttrs'
         (v: p: lib.nameValuePair "probe-pool-race-${v}" (apps.runDriver "probe-pool-race-${v}" p.driver))
         probePoolRace
@@ -132,6 +136,7 @@
         driver-probe-nc-moveonenospc = probeNcMoveOnEnospc.driver;
         driver-probe-retry-timeline = probeRetryTimeline.driver;
         driver-probe-append-retry = probeAppendRetry.driver;
+        driver-probe-snapraid = probeSnapraid.driver;
       }
       // lib.mapAttrs' (v: p: lib.nameValuePair "driver-probe-pool-race-${v}" p.driver) probePoolRace
       // lib.mapAttrs'
