@@ -90,7 +90,9 @@ def test_the_force_empty_override_is_passed_only_through_its_flag(box):
     ]
 
 
-@pytest.mark.parametrize("smuggled", ["-E", "--force-empty", "-vE"])
+@pytest.mark.parametrize(
+    "smuggled", ["-E", "--force-empty", "--force-em", "--force-em=value", "-vE"]
+)
 def test_force_empty_among_the_extra_options_is_refused_before_anything_runs(box, smuggled):
     result = run(box, "sync", "--", "--gui", smuggled)
 
@@ -194,6 +196,17 @@ def test_complete_requires_the_newest_snapraid_btrfs_snapshot_of_every_config_sy
     assert stubs.calls(box["stubs"], "snapper") == [
         ["snapper", "--jsonout", "-c", c, "list", "--disable-used-space"] for c in CONFIGS
     ]
+
+
+@pytest.mark.parametrize("configs", ["", "   "])
+def test_complete_rejects_an_empty_snapper_config_list(box, configs):
+    box["env"]["SNAPSYNC_CONFIGS"] = configs
+
+    result = run(box, "complete")
+
+    assert result.returncode == 1
+    assert "snapsync: no snapper config; the set is not complete\n" in result.stderr
+    assert stubs.calls(box["stubs"], "snapper") == []
 
 
 def test_covered_diffs_the_config_of_the_synced_set(box):

@@ -72,7 +72,7 @@ _usage() {
 }
 
 snapsync_sync() {
-    local force=() log='' extra=() arg rc=0
+    local force=() log='' extra=() arg option rc=0
     while (($# > 0)); do
         case $1 in
         --force-empty) force=(-E) && shift ;;
@@ -82,7 +82,9 @@ snapsync_sync() {
         esac
     done
     for arg in "${extra[@]}"; do
-        if [[ $arg == --force-empty || ($arg == -[!-]* && $arg == *E*) ]]; then
+        option=${arg%%=*}
+        if [[ ($option == --force-e* && --force-empty == "$option"*) ||
+            ($option == -[!-]* && $option == *E*) ]]; then
             echo "snapsync: the force-empty override is passed only as --force-empty" >&2
             return 2
         fi
@@ -117,8 +119,13 @@ snapsync_fix() {
 }
 
 snapsync_complete() {
-    local config newest number value incomplete=0
-    for config in $(_configs); do
+    local config configs newest number value incomplete=0
+    configs=$(_configs) || configs=''
+    if [[ -z ${configs//[[:space:]]/} ]]; then
+        echo "snapsync: no snapper config; the set is not complete" >&2
+        return 1
+    fi
+    for config in $configs; do
         newest=$(env LC_ALL=C snapper --jsonout -c "$config" list --disable-used-space |
             python3 -c "$NEWEST") || newest=none
         read -r number value <<<"$newest"
