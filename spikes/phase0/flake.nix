@@ -59,17 +59,23 @@
       probeSnapraid = import ./vm-tests/probes/snapraid.nix { inherit mkSpike; };
       # The S2 guest scripts snapsync.sh and archive-lock.sh against the real tools (T060, T061).
       probeGuestS2 = import ./vm-tests/probes/guest_s2.nix { inherit mkSpike; };
-      # The recovery sequence recover.sh of S2 against the real tools (T062).
       # The fault kinds kill-sync-at-position and write-error of S2 (T063).
       probeS2Faults = import ./vm-tests/probes/guest_s2.nix {
         inherit mkSpike;
         name = "probe-s2-faults";
         script = ./vm-tests/probes/probe_s2_faults.py;
       };
+      # The recovery sequence recover.sh of S2 against the real tools (T062).
       probeRecover = import ./vm-tests/probes/guest_s2.nix {
         inherit mkSpike;
         name = "probe-recover";
         script = ./vm-tests/probes/probe_recover.py;
+      };
+      # The corrupted-parity negative control of S2 against the recovery sequence (T064).
+      probeCorruptedParity = import ./vm-tests/probes/guest_s2.nix {
+        inherit mkSpike;
+        name = "probe-corrupted-parity";
+        script = ./vm-tests/probes/probe_corrupted_parity.py;
       };
       # The spikes' VM tests.
       s1 = import ./vm-tests/s1/default.nix { inherit mkSpike; };
@@ -126,6 +132,7 @@
         # PROBE_WRITE_ERROR (default parity0) names the disk that write-error fails;
         # PROBE_DROP_CACHES=1 empties the page cache before that sync.
         probe-s2-faults = apps.runDriver "probe-s2-faults" probeS2Faults.driver;
+        probe-corrupted-parity = apps.runDriver "probe-corrupted-parity" probeCorruptedParity.driver;
       } // lib.mapAttrs'
         (v: p: lib.nameValuePair "probe-pool-race-${v}" (apps.runDriver "probe-pool-race-${v}" p.driver))
         probePoolRace
@@ -159,6 +166,7 @@
         driver-probe-guest-s2 = probeGuestS2.driver;
         driver-probe-recover = probeRecover.driver;
         driver-probe-s2-faults = probeS2Faults.driver;
+        driver-probe-corrupted-parity = probeCorruptedParity.driver;
       }
       // lib.mapAttrs' (v: p: lib.nameValuePair "driver-probe-pool-race-${v}" p.driver) probePoolRace
       // lib.mapAttrs'
