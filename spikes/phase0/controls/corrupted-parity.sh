@@ -30,17 +30,31 @@ if (($#)); then
     exit 2
 fi
 
-mapfile -t parity < <(awk '$1 ~ /^([2-6]-)?parity$/ { print $NF }' "$CONF")
+mapfile -t parity < <(
+    awk '
+        $1 ~ /^(parity|[2-6]-parity|z-parity)$/ {
+            for (i = 2; i <= NF && $i !~ /^#/; i++) {
+                count = split($i, files, ",")
+                for (j = 1; j <= count; j++) {
+                    if (files[j] != "") print files[j]
+                }
+            }
+        }
+    ' "$CONF"
+)
 ((${#parity[@]})) || refuse "no parity file in $CONF"
+declare -A before
 for file in "${parity[@]}"; do
     [[ -f $file && -s $file ]] || refuse "$file is not a non-empty regular file"
+    before["$file"]=$(sha256sum <"$file" | cut -d' ' -f1)
+    expected=$(head -c "$(stat -c %s "$file")" /dev/zero | tr '\0' '\245' | sha256sum | cut -d' ' -f1)
+    [[ $expected != "${before[$file]}" ]] || refuse "$file is unchanged (sha256 ${before[$file]})"
 done
 
 for file in "${parity[@]}"; do
-    before=$(sha256sum <"$file" | cut -d' ' -f1)
     head -c "$(stat -c %s "$file")" /dev/zero | tr '\0' '\245' |
         dd of="$file" bs=1M iflag=fullblock conv=notrunc,fsync status=none
     after=$(sha256sum <"$file" | cut -d' ' -f1)
-    [[ $after != "$before" ]] || refuse "$file is unchanged (sha256 $before)"
-    echo "corrupted $file: sha256 $before -> $after"
+    [[ $after != "${before[$file]}" ]] || refuse "$file is unchanged (sha256 ${before[$file]})"
+    echo "corrupted $file: sha256 ${before[$file]} -> $after"
 done

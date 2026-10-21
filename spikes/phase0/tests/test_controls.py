@@ -87,6 +87,40 @@ def test_it_corrupts_every_parity_level_of_the_config(array):
     assert len(result.stdout.splitlines()) == 2
 
 
+def test_it_selects_comma_separated_split_and_z_parity_files(array):
+    second = array["tmp"] / "parity" / "snapraid.split-2"
+    third = array["tmp"] / "parity" / "snapraid.z-parity"
+    second.write_bytes(os.urandom(256 * 1024))
+    third.write_bytes(os.urandom(256 * 1024))
+    array["conf"].write_text(
+        f"parity {array['parity']},{second}\n"
+        f"z-parity {third}\n"
+        f"content {array['tmp']}/snapraid.content\n"
+    )
+
+    result = run(array)
+
+    assert result.returncode == 0, result.stderr
+    for parity in (array["parity"], second, third):
+        assert parity.read_bytes() == PATTERN * parity.stat().st_size
+    assert len(result.stdout.splitlines()) == 3
+
+
+def test_it_preflights_unchanged_hashes_before_corrupting_any_file(array):
+    first_before = array["parity"].read_bytes()
+    second = array["tmp"] / "parity" / "snapraid.2-parity"
+    second.write_bytes(PATTERN * 1024)
+    with array["conf"].open("a") as conf:
+        conf.write(f"2-parity {second}\n")
+
+    result = run(array)
+
+    assert result.returncode == 1
+    assert "unchanged" in result.stderr
+    assert array["parity"].read_bytes() == first_before
+    assert second.read_bytes() == PATTERN * 1024
+
+
 def test_a_missing_parity_file_is_refused_and_not_created(array):
     array["parity"].unlink()
 
