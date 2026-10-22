@@ -280,11 +280,13 @@ class History:
         """Each file of `disk` as of the last sync against its synced version, read from the
         data subvolume: bit_exact, differs (also when renamed *.unrecoverable) or missing."""
         expected = self.synced_sha[disk]
-        found = self._hashes(disk, sorted(expected))
+        paths = sorted((*expected, *(f"{rel}.unrecoverable" for rel in expected)))
+        found = self._hashes(disk, paths)
         out: dict[str, list[str]] = {"bit_exact": [], "differs": [], "missing": []}
         for rel, sha in sorted(expected.items()):
             if found[rel] is None:
-                out["missing"].append(rel)
+                category = "differs" if found[f"{rel}.unrecoverable"] is not None else "missing"
+                out[category].append(rel)
             else:
                 out["bit_exact" if found[rel] == sha else "differs"].append(rel)
         return out
