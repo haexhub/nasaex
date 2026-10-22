@@ -34,6 +34,12 @@ changelog:
     w2). S2.3 therefore judges them unrecoverable from the history and records whether the
     recover step names them; that the spec's "reported as unrecoverable" is met by the check and
     the record, not by the tool, is the reading this draft takes.
+  - >-
+    2026-10-22 review fix. This draft remains one criteria file so its interdependent fixture,
+    layout, prediction and scenario definitions are versioned atomically through the shakedown.
+    Before the freeze, split the tables into a data file and the scenarios into a scenario file,
+    then have the criteria loader assemble and validate the same document before updating the
+    frozen lock.
 
 tables:
   # SnapRAID's block size (default, manual "blocksize"); a position is one block of every data
@@ -108,6 +114,12 @@ tables:
     options: --gui --bw-limit=20M
     k: 60
     boundary_range: [42, 140]
+  # Named lifecycle points shared by the S2 recovery sequence and the fault-points contract.
+  # The serial placeholder is substituted with the stable virtio disk serial at runtime.
+  fault_points:
+    - "disk:<serial>:fail"
+    - "disk:<serial>:replace"
+    - "boot:after-failure"
   # Expected layouts after a completed sync: per disk, path -> positions as [first, last]
   # ranges. They assume that the physical start of the files of one sync follows their write
   # order; history.py measures the physical starts (filefrag) before each sync, and a write
@@ -237,11 +249,9 @@ tables:
         - {path: b/b4.bin, version: synced, recoverable: true, rule: intact}
         - {path: new/w0.bin, version: unsynced, recoverable: false, rule: unsynced}
         - {path: new/w1.bin, version: unsynced, recoverable: false, rule: unsynced}
-    # One prediction per variant and fault; the four gating cases share their file predictions
-    # (the model gives the same result for both variants and both faults on this history: no
-    # surviving block changes after the interrupted sync stopped). The device-failure cases are
-    # provisional: the spec marks their parity and block state UNVERIFIED, so the process-kill
-    # evidence is no proof for them.
+    # One prediction per variant and fault. The device-failure cases are provisional: the spec
+    # marks their parity and block state UNVERIFIED, so the process-kill evidence is no proof for
+    # them and neither device-failure case gates S2 until the fault is probed.
     # S2.4: arch1 fails by device-ioerror, after the kill in the kill cases and at sync:pos:K in
     # the device cases (write-error is device-ioerror at that point, testlib.faults).
     S2.4:
@@ -255,17 +265,67 @@ tables:
         snapshot-kill: {variant: snapshot, fault: kill-sync-at-position, provisional: false}
         plain-device: {variant: plain, fault: write-error, page_cache: emptied, provisional: true}
         snapshot-device: {variant: snapshot, fault: write-error, page_cache: emptied, provisional: true}
-      files:
-        - {path: b/b0.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
-        - {path: b/b1.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
-        - {path: b/b2.bin, version: synced, recoverable_from_boundary: null, otherwise: changed}
-        - {path: b/b3.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
-        - {path: b/b4.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
-        - {path: b/b5.bin, version: synced, recoverable_from_boundary: 41, otherwise: blocked}
-        - {path: b/b6.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
-        - {path: b/b7.bin, version: synced, recoverable_from_boundary: 171, otherwise: blocked}
-        - {path: b/b2.bin, version: unsynced, recoverable_from_boundary: null, otherwise: unsynced}
-        - {path: new/m0.bin, version: unsynced, recoverable_from_boundary: null, otherwise: unsynced}
+      case_predictions:
+        plain-kill:
+          variant: plain
+          fault: kill-sync-at-position
+          provisional: false
+          files:
+            - {path: b/b0.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b1.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b2.bin, version: synced, recoverable_from_boundary: null, otherwise: changed}
+            - {path: b/b3.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b4.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b5.bin, version: synced, recoverable_from_boundary: 41, otherwise: blocked}
+            - {path: b/b6.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b7.bin, version: synced, recoverable_from_boundary: 171, otherwise: blocked}
+            - {path: b/b2.bin, version: unsynced, recoverable_from_boundary: null, otherwise: unsynced}
+            - {path: new/m0.bin, version: unsynced, recoverable_from_boundary: null, otherwise: unsynced}
+        snapshot-kill:
+          variant: snapshot
+          fault: kill-sync-at-position
+          provisional: false
+          files:
+            - {path: b/b0.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b1.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b2.bin, version: synced, recoverable_from_boundary: null, otherwise: changed}
+            - {path: b/b3.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b4.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b5.bin, version: synced, recoverable_from_boundary: 41, otherwise: blocked}
+            - {path: b/b6.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b7.bin, version: synced, recoverable_from_boundary: 171, otherwise: blocked}
+            - {path: b/b2.bin, version: unsynced, recoverable_from_boundary: null, otherwise: unsynced}
+            - {path: new/m0.bin, version: unsynced, recoverable_from_boundary: null, otherwise: unsynced}
+        plain-device:
+          variant: plain
+          fault: write-error
+          provisional: true
+          files:
+            - {path: b/b0.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b1.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b2.bin, version: synced, recoverable_from_boundary: null, otherwise: changed}
+            - {path: b/b3.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b4.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b5.bin, version: synced, recoverable_from_boundary: 41, otherwise: blocked}
+            - {path: b/b6.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b7.bin, version: synced, recoverable_from_boundary: 171, otherwise: blocked}
+            - {path: b/b2.bin, version: unsynced, recoverable_from_boundary: null, otherwise: unsynced}
+            - {path: new/m0.bin, version: unsynced, recoverable_from_boundary: null, otherwise: unsynced}
+        snapshot-device:
+          variant: snapshot
+          fault: write-error
+          provisional: true
+          files:
+            - {path: b/b0.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b1.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b2.bin, version: synced, recoverable_from_boundary: null, otherwise: changed}
+            - {path: b/b3.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b4.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b5.bin, version: synced, recoverable_from_boundary: 41, otherwise: blocked}
+            - {path: b/b6.bin, version: synced, recoverable_from_boundary: 0, otherwise: intact}
+            - {path: b/b7.bin, version: synced, recoverable_from_boundary: 171, otherwise: blocked}
+            - {path: b/b2.bin, version: unsynced, recoverable_from_boundary: null, otherwise: unsynced}
+            - {path: new/m0.bin, version: unsynced, recoverable_from_boundary: null, otherwise: unsynced}
       # Informational (gating: false): the page cache stays warm, so the sync is expected to
       # read the failed disk's data from the cache and complete (probe T063). If it exits 0, the
       # prediction is that of a completed second sync over the `interrupted` layout; otherwise
@@ -407,8 +467,9 @@ scenarios:
       snapsync complete exit 0), no change afterwards; the layout of every disk equals
       tables.layouts.base by snapraid locate.
     action: >-
-      arch0 fails (device-ioerror); the recovery sequence of guest/recover.sh runs step by step
-      (detect, lock, replace by the spare of the same size, recover, verify, resync, unlock).
+      At `disk:<serial>:fail`, arch0 fails (device-ioerror); the recovery sequence of guest/recover.sh
+      runs step by step, replacing the disk at `disk:<serial>:replace`, booting at
+      `boot:after-failure`, then continuing with recover, verify, resync and unlock.
     observable: >-
       Every step exits 0; every file of tables.predictions.S2.1 is bit-exact under its path on the
       replacement, and every file of arch1 and arch2 is unchanged; after the resync step snapsync
@@ -423,9 +484,10 @@ scenarios:
       layout equals tables.layouts.base by snapraid locate; then tables.histories.changes_after_sync
       (both added files land on arch1).
     action: >-
-      arch0 fails (device-ioerror); the recovery sequence runs with --plain (detect, lock, replace
-      by the spare of the same size, recover; verify and resync with --accept-unrecoverable once
-      the unrecoverable files are listed; unlock).
+      At `disk:<serial>:fail`, arch0 fails (device-ioerror); the recovery sequence runs with
+      --plain, replacing the disk at `disk:<serial>:replace` and booting at `boot:after-failure`,
+      then continuing with recover, verify and resync with --accept-unrecoverable once the
+      unrecoverable files are listed, followed by unlock.
     observable: >-
       The set of files of arch0 that come back bit-exact in their synced version equals the
       recoverable set of tables.predictions.S2.2, no more and no fewer; every other file of the
@@ -442,8 +504,9 @@ scenarios:
       A fresh array with tables.base_set, synced by the snapshot workflow; then
       tables.histories.written_after_sync (both files land on arch1 through the mover path).
     action: >-
-      arch1 fails (device-unplug); the recovery sequence runs (detect, lock, replace by the spare
-      of the same size, recover, verify, resync, unlock).
+      At `disk:<serial>:fail`, arch1 fails (device-unplug); the recovery sequence runs, replacing
+      the disk at `disk:<serial>:replace` and booting at `boot:after-failure`, then continuing
+      with recover, verify, resync and unlock.
     observable: >-
       Every synced file of arch1 comes back bit-exact; new/w0.bin and new/w1.bin do not come back
       with their content, and the check reports them unrecoverable from the history (SnapRAID
@@ -460,18 +523,20 @@ scenarios:
       emptied, `sync && echo 3 > /proc/sys/vm/drop_caches` right before the second sync.
     action: >-
       The second sync runs with tables.interrupted_sync.options in the case's variant (snapraid
-      sync, or snapsync sync with the options after --). kill cases: at sync:pos:K
+      sync, or snapsync sync with the options after --). Kill cases: at `sync:pos:<K>`
       (tables.interrupted_sync.k) the SnapRAID process is killed (kill-sync-at-position), then
-      arch1 fails (device-ioerror); device cases: at sync:pos:K arch1 fails (write-error). The
-      processed boundary is derived from the parity file; then the recovery sequence (detect,
-      lock, replace by the spare of the same size, recover; verify and resync with
-      --accept-unrecoverable once the unrecoverable files are listed; unlock). fix -i is never
-      used.
+      arch1 fails (device-ioerror) at `disk:<serial>:fail`; device cases: at `sync:pos:<K>` arch1
+      fails (write-error), with the lifecycle failure recorded at `disk:<serial>:fail`. The
+      processed boundary is derived from the parity file; then the recovery sequence replaces
+      the disk at `disk:<serial>:replace`, boots at `boot:after-failure`, and continues with
+      recover, verify and resync with --accept-unrecoverable once the unrecoverable files are
+      listed, followed by unlock. fix -i is never used.
     observable: >-
       Per gating case, with the boundary inside tables.interrupted_sync.boundary_range (else the
       case is error): the set of files of arch1 that come back bit-exact in their synced version
-      equals the files of tables.predictions.S2.4 whose recoverable_from_boundary is at most the
-      boundary, no more and no fewer; every other file is listed by the recover step (exit 3)
+      equals the files of the matching `tables.predictions.S2.4.case_predictions[case]` whose
+      recoverable_from_boundary is at most the boundary, no more and no fewer; every other file
+      is listed by the recover step (exit 3)
       with its guidance, and neither the unsynced content of b/b2.bin nor new/m0.bin comes back;
       the files of arch0 and arch2 keep their content after the history. Recorded per case: the
       sync's exit status and last run:pos line, the boundary, the fix log's status tags, the
@@ -479,7 +544,7 @@ scenarios:
       sync exit status, the boundary and the per-file mapping against their prediction are
       recorded and never change the outcome.
     check: interrupted_sync
-    prediction: predictions.S2.4
+    prediction: predictions.S2.4.case_predictions
     cases: interrupted-sync
     variants:
       - case: plain-kill
@@ -489,11 +554,11 @@ scenarios:
         gating: true
         description: Snapshot workflow, SnapRAID process killed at sync:pos:K, then arch1 fails.
       - case: plain-device
-        gating: true
-        description: Plain SnapRAID, arch1 fails at sync:pos:K, page cache emptied before the sync.
+        gating: false
+        description: "Informational until device failure is probed: plain SnapRAID, arch1 fails at sync:pos:K, page cache emptied before the sync."
       - case: snapshot-device
-        gating: true
-        description: Snapshot workflow, arch1 fails at sync:pos:K, page cache emptied before the sync.
+        gating: false
+        description: "Informational until device failure is probed: snapshot workflow, arch1 fails at sync:pos:K, page cache emptied before the sync."
       - case: plain-device-warm
         gating: false
         description: Informational, as plain-device with the page cache warm.
@@ -504,7 +569,8 @@ scenarios:
     title: A sync before the recovery of a replaced disk destroys recoverability on the paths that reach it
     precondition: >-
       Per case a fresh array with tables.base_set, synced by plain SnapRAID; arch0 fails
-      (device-ioerror) and is replaced (detect, lock, replace by the spare of the same size); the
+      (device-ioerror) at `disk:<serial>:fail` and is replaced at `disk:<serial>:replace` (detect,
+      lock, replace by the spare of the same size); the
       archive lock is lifted (archive-lock unlock) so that the sync reaches SnapRAID; case partial:
       the files of tables.predictions.S2.5.cases.partial.placed are written onto the replacement
       with their synced content.
@@ -525,12 +591,12 @@ scenarios:
     title: Read-only gating after a failure refuses every maintenance action by every route
     precondition: >-
       A fresh array with tables.base_set, synced by the snapshot workflow; the pool file
-      pool/p0.bin created through the share; arch2 fails (device-ioerror); detect and lock of the
-      recovery sequence exit 0.
+      pool/p0.bin created through the share; arch2 fails (device-ioerror) at `disk:<serial>:fail`;
+      detect and lock of the recovery sequence exit 0.
     action: >-
       Every action of tables.gating.actions by every route of tables.gating.routes, and every
-      action of tables.gating.real by the manual route; then replace by the spare of the same
-      size, recover, verify, resync, unlock.
+      action of tables.gating.real by the manual route; then replace at `disk:<serial>:replace`
+      by the spare of the same size, boot at `boot:after-failure`, recover, verify, resync, unlock.
     observable: >-
       Every wrapped action exits tables.gating.refusal_status with the line
       `archive-lock: refused: <action>: the archive is locked (<reason>)`, every real-binary action
@@ -547,10 +613,11 @@ scenarios:
       A fresh array with tables.base_set, synced by the snapshot workflow; the procedure text
       rendered by testlib.procedure from guest/recover.sh.
     action: >-
-      arch0 fails (device-ioerror); every step of the procedure runs verbatim with its arguments,
-      in its order: detect, lock, replace (first the refused replacements of
+      At `disk:<serial>:fail`, arch0 fails (device-ioerror); every step of the procedure runs
+      verbatim with its arguments, in its order: detect, lock, replace at `disk:<serial>:replace`
+      (first the refused replacements of
       tables.predictions.S2.7.refused_replacements, then the spare of the same size, wiped), recover,
-      verify, resync, unlock; then a full verification (snapraid check of the whole array,
+      boot at `boot:after-failure`, verify, resync, unlock; then a full verification (snapraid check of the whole array,
       snapsync complete, snapsync covered) and a comparison of every file of the array.
     observable: >-
       Every step meets its own check (the procedure's `Check:` line); each refused replacement
@@ -568,8 +635,9 @@ scenarios:
     precondition: >-
       Per case a fresh array with tables.base_set, synced by the case's variant.
     action: >-
-      arch0 and arch2 fail (device-ioerror); detect and lock; both are replaced by the spares of
-      the same size; recover runs for arch0, then for arch2; verify for each.
+      arch0 and arch2 each fail (device-ioerror) at their `disk:<serial>:fail` points; detect and
+      lock; both are replaced at their `disk:<serial>:replace` points by the spares of the same
+      size; boot at `boot:after-failure`; recover runs for arch0, then for arch2; verify for each.
     observable: >-
       The set of files of arch0 and arch2 that come back bit-exact equals the recoverable set of
       tables.predictions.S2.8; recover exits 3 for each disk and lists every other file of it;
@@ -593,8 +661,9 @@ scenarios:
       A fresh array with tables.base_set, synced by the snapshot workflow; the layout equals
       tables.layouts.base; then tables.histories.changes_after_sync.
     action: >-
-      arch0 fails (device-ioerror); the recovery sequence runs (detect, lock, replace by the spare
-      of the same size, recover, verify, resync, unlock).
+      At `disk:<serial>:fail`, arch0 fails (device-ioerror); the recovery sequence runs, replacing
+      the disk at `disk:<serial>:replace` and booting at `boot:after-failure`, then continuing
+      with recover, verify, resync and unlock.
     observable: >-
       Every synced file of arch0 comes back bit-exact (tables.predictions.S2.9), and the unsynced
       content of a/a4.bin does not (the file holds its synced version); the files of the surviving disks keep their content after the
