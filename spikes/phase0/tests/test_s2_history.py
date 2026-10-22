@@ -466,7 +466,15 @@ def test_replace_runs_steps_1_to_3_with_the_failed_disks_size_and_uses_the_spare
 
 def test_compare_judges_each_synced_file_by_its_hash(lab, server):
     files = [
-        ("arch0", r, 100, p) for r, p in (("a.bin", 1), ("b.bin", 2), ("c.bin", 3), ("d.bin", 4))
+        ("arch0", r, 100, p)
+        for r, p in (
+            ("a.bin", 1),
+            ("b.bin", 2),
+            ("c.bin", 3),
+            ("d.bin", 4),
+            ("e.bin", 5),
+            ("e.bin.unrecoverable", 6),
+        )
     ]
     synced_once(lab, server, files)
     server.hashes = {
@@ -475,12 +483,14 @@ def test_compare_judges_each_synced_file_by_its_hash(lab, server):
         "c.bin": None,
         "c.bin.unrecoverable": "1" * 64,
         "d.bin": None,
+        "e.bin": None,
+        "e.bin.unrecoverable": lab.synced_sha["arch0"]["e.bin.unrecoverable"],
     }
 
     assert lab.compare("arch0") == {
-        "bit_exact": ["a.bin"],
+        "bit_exact": ["a.bin", "e.bin.unrecoverable"],
         "differs": ["b.bin", "c.bin"],
-        "missing": ["d.bin"],
+        "missing": ["d.bin", "e.bin"],
     }
 
 

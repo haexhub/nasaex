@@ -285,7 +285,12 @@ class History:
         out: dict[str, list[str]] = {"bit_exact": [], "differs": [], "missing": []}
         for rel, sha in sorted(expected.items()):
             if found[rel] is None:
-                category = "differs" if found[f"{rel}.unrecoverable"] is not None else "missing"
+                renamed = f"{rel}.unrecoverable"
+                category = (
+                    "differs"
+                    if renamed not in expected and found[renamed] is not None
+                    else "missing"
+                )
                 out[category].append(rel)
             else:
                 out["bit_exact" if found[rel] == sha else "differs"].append(rel)
