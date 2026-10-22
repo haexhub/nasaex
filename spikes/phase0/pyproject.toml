@@ -18,7 +18,7 @@ select = ["E", "F", "W", "I", "B", "UP"]
 
 [tool.coverage.run]
 branch = true
-source = ["spikectl", "testlib", "vm-tests/s1"]
+source = ["spikectl", "testlib", "vm-tests/s1", "vm-tests/s2"]
 # The S1 test script runs only inside the VM test driver (it needs the driver's machines); the
 # VM smoke job of the CI covers it. vm-tests/probes is outside `source`: finished measurement
 # tools whose results are committed.
