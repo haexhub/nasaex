@@ -77,6 +77,14 @@
         name = "probe-corrupted-parity";
         script = ./vm-tests/probes/probe_corrupted_parity.py;
       };
+      # history.py of S2 on the node of vm-tests/s2/default.nix (T065).
+      probeS2History = import ./vm-tests/s2/default.nix {
+        inherit mkSpike;
+        name = "probe-s2-history";
+        testScript = ./vm-tests/probes/probe_s2_history.py;
+        criteria = null;
+        budget = "probe";
+      };
       # The spikes' VM tests.
       s1 = import ./vm-tests/s1/default.nix { inherit mkSpike; };
 
@@ -133,6 +141,7 @@
         # PROBE_DROP_CACHES=1 empties the page cache before that sync.
         probe-s2-faults = apps.runDriver "probe-s2-faults" probeS2Faults.driver;
         probe-corrupted-parity = apps.runDriver "probe-corrupted-parity" probeCorruptedParity.driver;
+        probe-s2-history = apps.runDriver "probe-s2-history" probeS2History.driver;
       } // lib.mapAttrs'
         (v: p: lib.nameValuePair "probe-pool-race-${v}" (apps.runDriver "probe-pool-race-${v}" p.driver))
         probePoolRace
@@ -167,6 +176,7 @@
         driver-probe-recover = probeRecover.driver;
         driver-probe-s2-faults = probeS2Faults.driver;
         driver-probe-corrupted-parity = probeCorruptedParity.driver;
+        driver-probe-s2-history = probeS2History.driver;
       }
       // lib.mapAttrs' (v: p: lib.nameValuePair "driver-probe-pool-race-${v}" p.driver) probePoolRace
       // lib.mapAttrs'
