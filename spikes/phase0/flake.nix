@@ -100,6 +100,13 @@
         testScript = ./vm-tests/probes/probe_s2_baseline.py;
         budget = "probe";
       };
+      # Checks S2.2 and S2.9 through the recorder on the S2 node (T068).
+      probeS2HistoryChecks = import ./vm-tests/s2/default.nix {
+        inherit mkSpike;
+        name = "probe-s2-history-checks";
+        testScript = ./vm-tests/probes/probe_s2_history_checks.py;
+        budget = "probe";
+      };
       # The spikes' VM tests.
       s1 = import ./vm-tests/s1/default.nix { inherit mkSpike; };
 
@@ -159,6 +166,7 @@
         probe-s2-history = apps.runDriver "probe-s2-history" probeS2History.driver;
         probe-s2-boot = apps.runDriver "probe-s2-boot" probeS2Boot.driver;
         probe-s2-baseline = apps.runDriver "probe-s2-baseline" probeS2Baseline.driver;
+        probe-s2-history-checks = apps.runDriver "probe-s2-history-checks" probeS2HistoryChecks.driver;
       } // lib.mapAttrs'
         (v: p: lib.nameValuePair "probe-pool-race-${v}" (apps.runDriver "probe-pool-race-${v}" p.driver))
         probePoolRace
@@ -196,6 +204,7 @@
         driver-probe-s2-history = probeS2History.driver;
         driver-probe-s2-boot = probeS2Boot.driver;
         driver-probe-s2-baseline = probeS2Baseline.driver;
+        driver-probe-s2-history-checks = probeS2HistoryChecks.driver;
       }
       // lib.mapAttrs' (v: p: lib.nameValuePair "driver-probe-pool-race-${v}" p.driver) probePoolRace
       // lib.mapAttrs'
