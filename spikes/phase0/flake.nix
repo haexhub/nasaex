@@ -93,6 +93,13 @@
         criteria = null;
         budget = "probe";
       };
+      # Checks S2.1 and S2.3 through the recorder on the S2 node (T067).
+      probeS2Baseline = import ./vm-tests/s2/default.nix {
+        inherit mkSpike;
+        name = "probe-s2-baseline";
+        testScript = ./vm-tests/probes/probe_s2_baseline.py;
+        budget = "probe";
+      };
       # The spikes' VM tests.
       s1 = import ./vm-tests/s1/default.nix { inherit mkSpike; };
 
@@ -151,6 +158,7 @@
         probe-corrupted-parity = apps.runDriver "probe-corrupted-parity" probeCorruptedParity.driver;
         probe-s2-history = apps.runDriver "probe-s2-history" probeS2History.driver;
         probe-s2-boot = apps.runDriver "probe-s2-boot" probeS2Boot.driver;
+        probe-s2-baseline = apps.runDriver "probe-s2-baseline" probeS2Baseline.driver;
       } // lib.mapAttrs'
         (v: p: lib.nameValuePair "probe-pool-race-${v}" (apps.runDriver "probe-pool-race-${v}" p.driver))
         probePoolRace
@@ -187,6 +195,7 @@
         driver-probe-corrupted-parity = probeCorruptedParity.driver;
         driver-probe-s2-history = probeS2History.driver;
         driver-probe-s2-boot = probeS2Boot.driver;
+        driver-probe-s2-baseline = probeS2Baseline.driver;
       }
       // lib.mapAttrs' (v: p: lib.nameValuePair "driver-probe-pool-race-${v}" p.driver) probePoolRace
       // lib.mapAttrs'
