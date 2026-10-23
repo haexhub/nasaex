@@ -19,7 +19,8 @@ fails, with the bookkeeping the parity model needs (testlib.parity_model).
             measured before the sync
   fail      a data disk fails by a host-side fault (device-ioerror or device-unplug)
   replace   steps 1 to 3 of the recovery sequence (guest/recover.sh): detect, lock, and replace
-            by an unused spare of the same, a larger or a smaller size (nix/profiles.nix)
+            by an unused spare of the same, a larger or a smaller size (nix/profiles.nix); a step
+            that exits non-zero fails the check (AssertionError), it is no harness error
 
 The share of S2 is the cache pool mounted on the `server` itself (maintainer decision of
 2026-10-22: S2 has no SMB client; the in-place block changes are those S1 measured through SMB).
@@ -267,7 +268,9 @@ class History:
         device = faults.by_id(spare["serial"])
         size = self.disks[serial]["sizeMiB"] * MIB
         for step in (f"detect {serial}", f"lock {serial}", f"replace {serial} {device} {size}"):
-            self.machine.succeed(f"recover {step}")
+            rc, out = self.machine.execute(f"recover {step} 2>&1", timeout=900)
+            if rc != 0:
+                raise AssertionError(f"recover {step} exited {rc}: {out.strip()}")
         self._spares.add(spare["serial"])
         return device
 
@@ -301,6 +304,28 @@ class History:
                 out[category].append(rel)
             else:
                 out["bit_exact" if found[rel] == sha else "differs"].append(rel)
+        return out
+
+    def observe(self, disk: str) -> dict[tuple[str, str], str]:
+        """Every version of every file of `disk` read from the data subvolume: `synced` (its
+        content as of the last sync) and `unsynced` (written or changed after it), each
+        `bit_exact`, `differs` (also when renamed *.unrecoverable) or `missing`."""
+        expected = {(rel, "synced"): sha for rel, sha in self.synced_sha[disk].items()}
+        expected |= {
+            (rel, "unsynced"): self.files[rel].sha256(rel)
+            for rel in self._added[disk]
+            if rel in self.files
+        }
+        rels = sorted({rel for rel, _ in expected})
+        found = self._hashes(disk, [*rels, *(f"{rel}.unrecoverable" for rel in rels)])
+        out = {}
+        for (rel, version), sha in sorted(expected.items()):
+            if found[rel] == sha:
+                out[(rel, version)] = "bit_exact"
+            elif found[rel] is not None or found[f"{rel}.unrecoverable"] is not None:
+                out[(rel, version)] = "differs"
+            else:
+                out[(rel, version)] = "missing"
         return out
 
     def layout_differences(self) -> list[str]:
