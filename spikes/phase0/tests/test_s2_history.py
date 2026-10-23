@@ -460,9 +460,9 @@ def test_replace_runs_steps_1_to_3_with_the_failed_disks_size_and_uses_the_spare
 
     assert device == "/dev/disk/by-id/virtio-spare1"
     assert server.commands == [
-        "recover detect arch1",
-        "recover lock arch1",
-        f"recover replace arch1 /dev/disk/by-id/virtio-spare1 {1024 << 20}",
+        "recover detect arch1 2>&1",
+        "recover lock arch1 2>&1",
+        f"recover replace arch1 /dev/disk/by-id/virtio-spare1 {1024 << 20} 2>&1",
     ]
     assert lab.spare("arch1", "same")["serial"] == "spare3"  # spare1 is taken now
 
