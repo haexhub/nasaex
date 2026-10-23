@@ -18,48 +18,16 @@ A precondition that is not met (a sync that fails, a layout that is not the mode
 lands on another disk) is an `error`, a deviation from the prediction a `fail`. Scaffolding for
 the spikes, not product code."""
 
-from s2.context import Lab, Recovery, last_line, prediction_mismatches
-from s2.history import ARCH
+from s2.context import (
+    Lab,
+    failed_disk,
+    judge,
+    last_line,
+    recover_after_failure,
+    synced_array,
+)
 
 COVERAGE = ("complete", "covered")
-
-
-def _failed(prediction: dict) -> tuple[str, str, str]:
-    """(disk, how it fails, the size relation of its replacement) of a prediction table."""
-    ((disk, kind),) = prediction["failed"].items()
-    return disk, kind, prediction["replacement"][disk]
-
-
-def _synced_array(lab: Lab) -> None:
-    """A fresh array with tables.base_set, synced by the snapshot workflow, complete, and in the
-    layout of the model; anything else is no precondition of S2."""
-    lab.history.reset()
-    lab.populate_base()
-    rc, out, _ = lab.history.sync(snapshots=True)
-    if rc != 0:
-        raise RuntimeError(f"the first sync exited {rc}: {last_line(out)}")
-    complete = lab.snapsync("complete")
-    if complete.rc != 0:
-        raise RuntimeError(f"snapsync complete exited {complete.rc} after the first sync")
-    differences = lab.history.layout_differences()
-    if differences:
-        raise RuntimeError(
-            "the layout of the model differs from snapraid locate: " + "; ".join(differences)
-        )
-
-
-def _others_unchanged(lab: Lab, failed: str) -> list[str]:
-    changed = []
-    for disk in ARCH:
-        if disk == failed:
-            continue
-        seen = lab.history.compare(disk)
-        what = [
-            f"{kind} {', '.join(paths)}" for kind in ("differs", "missing") if (paths := seen[kind])
-        ]
-        if what:
-            changed.append(f"{disk} changed: {'; '.join(what)}")
-    return changed
 
 
 def _coverage(lab: Lab, seen: dict) -> list[str]:
@@ -73,58 +41,28 @@ def _coverage(lab: Lab, seen: dict) -> list[str]:
     ]
 
 
-def _recover(lab, prediction, listed_ok, after_resync=None):
-    """The failure, the replacement, the boot and the steps; (evidence, failures, recovery or
-    None when the replacement did not succeed and no boot was made)."""
-    disk, kind, relation = _failed(prediction)
-    seen = {"failed": {"disk": disk, "kind": kind}, "fault": str(lab.history.fail(disk, kind))}
-    try:
-        lab.history.replace(disk, relation)
-    except AssertionError as failure:
-        return seen, [str(failure)], None
-    lab.boot_after_failure(disk)
-    recovery = Recovery(lab, disk)
-    failures = []
-    recovery.run("recover", "verify", "resync")
-    if after_resync and "resync" in recovery.results and recovery.results["resync"].rc == 0:
-        failures += after_resync(seen)
-    recovery.run("unlock")
-    seen["steps"] = recovery.summary()
-    return seen, failures + recovery.failures(listed_ok), recovery
-
-
-def _judge(lab, name, prediction, seen, failures, recovered) -> None:
-    disk = _failed(prediction)[0]
-    if recovered:
-        observed = lab.history.observe(disk)
-        seen["observed"] = {f"{path} ({version})": o for (path, version), o in observed.items()}
-        seen["mismatches"] = prediction_mismatches(prediction["files"], observed)
-        failures += seen["mismatches"] + _others_unchanged(lab, disk)
-    seen["failures"] = failures
-    lab.evidence(name, seen)
-    assert not failures, "; ".join(failures)
-
-
 def check_complete_sync_recovery(lab: Lab) -> None:
     prediction = lab.tables["predictions"]["S2.1"]
-    _synced_array(lab)
-    seen, failures, recovery = _recover(lab, prediction, False, lambda seen: _coverage(lab, seen))
+    synced_array(lab)
+    seen, failures, recovery = recover_after_failure(
+        lab, prediction, False, after_resync=lambda seen: _coverage(lab, seen)
+    )
     if recovery is not None and "unlock" in recovery.results and recovery.results["unlock"].rc == 0:
         seen["readonly_after_unlock"] = lab.readonly_locations()
         if seen["readonly_after_unlock"]:
             failures.append(
                 f"read-only after the unlock: {', '.join(seen['readonly_after_unlock'])}"
             )
-    _judge(lab, "S2.1-complete-sync-recovery", prediction, seen, failures, recovery is not None)
+    judge(lab, "S2.1-complete-sync-recovery", prediction, seen, failures, recovery is not None)
 
 
 def check_written_after_sync(lab: Lab) -> None:
     prediction = lab.tables["predictions"]["S2.3"]
-    disk = _failed(prediction)[0]
-    _synced_array(lab)
+    disk = failed_disk(prediction)[0]
+    synced_array(lab)
     lab.apply(prediction["history"])
     unsynced = sorted(lab.history.unsynced[disk])
-    seen, failures, recovery = _recover(lab, prediction, True)
+    seen, failures, recovery = recover_after_failure(lab, prediction, True)
     seen["unrecoverable_from_history"] = unsynced
     if recovery is not None and "recover" in recovery.results:
         out = recovery.results["recover"].out
@@ -133,7 +71,7 @@ def check_written_after_sync(lab: Lab) -> None:
             for row in prediction["files"]
             if row["version"] == "unsynced" and row["path"] in out
         ]
-    _judge(lab, "S2.3-written-after-sync", prediction, seen, failures, recovery is not None)
+    judge(lab, "S2.3-written-after-sync", prediction, seen, failures, recovery is not None)
 
 
 CHECKS = {

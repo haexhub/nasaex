@@ -5,12 +5,16 @@ observation against a prediction table, and the evidence files.
 A step that exits with an unexpected status is a FAIL of the scenario (AssertionError), a table
 that the harness cannot follow is an `error` (RuntimeError): testlib.recorder maps the two so.
 The `history` is vm-tests/s2/history.py; `tables` are the criteria's `tables`; `recorder` takes
-the evidence references (testlib.recorder). Scaffolding for the spikes, not product code."""
+the evidence references (testlib.recorder). The sequence every check of S2 runs (a synced
+array, the failure, the replacement, the boot, the steps) and its judgement are here too, for
+tasks T067 to T073. Scaffolding for the spikes, not product code."""
 
 import json
 import shlex
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+
+from s2.history import ARCH
 
 from testlib import faults
 from testlib.recorder import write_evidence
@@ -148,6 +152,19 @@ class Lab:
         rc, out = self.machine.execute(f"snapsync {word} 2>&1", timeout=900)
         return Step(rc, out)
 
+    def fix_status(self, disk: str) -> dict[str, str]:
+        """The status tag of every file in the newest fix log of `disk`: recovered or
+        unrecoverable, by the path in the share."""
+        _, out = self.machine.execute(
+            f"cat $(ls -t /var/log/recover/fix-{disk}-*.log | head -1) 2>&1"
+        )
+        tags = {}
+        for line in out.splitlines():
+            parts = line.split(":", 3)
+            if parts[0] == "status" and len(parts) == 4 and parts[2] == disk:
+                tags[parts[3].removeprefix("branch/")] = parts[1]
+        return tags
+
     def readonly_locations(self) -> list[str]:
         return json.loads(self.machine.succeed(f"python3 -c {shlex.quote(_READONLY)}"))
 
@@ -178,3 +195,106 @@ def prediction_mismatches(
         for path, version in sorted(set(observed) - predicted)
     ]
     return out
+
+
+def listed_files(out: str) -> list[str]:
+    """The files the `recover` step lists as unrecoverable, by the path in the share."""
+    return [
+        line.strip().removeprefix("branch/")
+        for line in out.splitlines()
+        if line.startswith("  branch/")
+    ]
+
+
+def failed_disk(prediction: Mapping) -> tuple[str, str, str]:
+    """(disk, how it fails, the size relation of its replacement) of a prediction table."""
+    ((disk, kind),) = prediction["failed"].items()
+    return disk, kind, prediction["replacement"][disk]
+
+
+def synced_array(lab: Lab, snapshots: bool = True) -> None:
+    """A fresh array with tables.base_set, synced (by the snapshot workflow, complete, or by
+    plain SnapRAID), in the layout of the model; anything else is no precondition of S2."""
+    lab.history.reset()
+    lab.populate_base()
+    rc, out, _ = lab.history.sync(snapshots=snapshots)
+    if rc != 0:
+        raise RuntimeError(f"the first sync exited {rc}: {last_line(out)}")
+    if snapshots:
+        complete = lab.snapsync("complete")
+        if complete.rc != 0:
+            raise RuntimeError(f"snapsync complete exited {complete.rc} after the first sync")
+    differences = lab.history.layout_differences()
+    if differences:
+        raise RuntimeError(
+            "the layout of the model differs from snapraid locate: " + "; ".join(differences)
+        )
+
+
+def survivors_unchanged(lab: Lab, failed: str) -> list[str]:
+    """The other disks keep the content of the history: a file written or changed after the sync
+    holds that content now, and a synced file the history left alone is still there."""
+    changed = lab.history.changed
+    out = []
+    for disk in ARCH:
+        if disk == failed:
+            continue
+        wrong: dict[str, list[str]] = {}
+        for (rel, version), state in lab.history.observe(disk).items():
+            if state == "bit_exact":
+                continue
+            if version == "synced" and f"branch/{rel}" in changed.get(disk, ()):
+                continue  # its synced content was replaced or removed by the history
+            wrong.setdefault(state, []).append(rel)
+        if wrong:
+            what = "; ".join(f"{state} {', '.join(rels)}" for state, rels in wrong.items())
+            out.append(f"{disk} changed: {what}")
+    return out
+
+
+def recover_after_failure(
+    lab: Lab,
+    prediction: Mapping,
+    listed_ok: bool,
+    plain: bool = False,
+    after_resync: Callable[[dict], list[str]] | None = None,
+):
+    """The failure, the replacement, the boot and the steps: (evidence, failures, the recovery,
+    None when the replacement did not succeed and no boot was made)."""
+    disk, kind, relation = failed_disk(prediction)
+    seen = {"failed": {"disk": disk, "kind": kind}, "fault": str(lab.history.fail(disk, kind))}
+    try:
+        lab.history.replace(disk, relation)
+    except AssertionError as failure:
+        return seen, [str(failure)], None
+    lab.boot_after_failure(disk)
+    recovery = Recovery(lab, disk, plain=plain)
+    failures = []
+    recovery.run("recover", "verify", "resync")
+    if after_resync and "resync" in recovery.results and recovery.results["resync"].rc == 0:
+        failures += after_resync(seen)
+    recovery.run("unlock")
+    seen["steps"] = recovery.summary()
+    return seen, failures + recovery.failures(listed_ok), recovery
+
+
+def observe_recovery(lab: Lab, prediction: Mapping, seen: dict, failures: list[str]) -> dict:
+    """The replacement and the survivors against the prediction; the observation."""
+    disk = failed_disk(prediction)[0]
+    observed = lab.history.observe(disk)
+    seen["observed"] = {f"{path} ({version})": o for (path, version), o in observed.items()}
+    seen["mismatches"] = prediction_mismatches(prediction["files"], observed)
+    failures += seen["mismatches"] + survivors_unchanged(lab, disk)
+    return observed
+
+
+def conclude(lab: Lab, name: str, seen: dict, failures: list[str]) -> None:
+    seen["failures"] = failures
+    lab.evidence(name, seen)
+    assert not failures, "; ".join(failures)
+
+
+def judge(lab: Lab, name: str, prediction: Mapping, seen: dict, failures: list, recovered: bool):
+    if recovered:
+        observe_recovery(lab, prediction, seen, failures)
+    conclude(lab, name, seen, failures)
