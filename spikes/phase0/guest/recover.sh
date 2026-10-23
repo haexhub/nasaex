@@ -17,7 +17,8 @@
 # from the `#:` lines below by testlib/procedure.py, so text and commands cannot drift apart.
 # --plain is the array without the snapshot workflow. recover exits 3 when it lists unrecoverable
 # files; verify and resync then go on only with --accept-unrecoverable. State between steps:
-# /run/recover/<DISK>; logs: /var/log/recover. Reused by S3.4 and S4.6.
+# /var/lib/recover/<DISK>, on the system disk like the lock, so a boot between two steps keeps
+# both (task T066a); logs: /var/log/recover. Reused by S3.4 and S4.6.
 
 HERE=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 # shellcheck source-path=SCRIPTDIR source=archive-lock.sh
@@ -27,7 +28,7 @@ CONF=${SNAPRAID_CONF:-/etc/snapraid.conf}
 ARCHIVE=${RECOVER_ARCHIVE_ROOT:-/mnt/archive}
 CONTENT_ROOT=${RECOVER_CONTENT_ROOT:-/mnt/archive-content}
 LABELS=${RECOVER_LABEL_DIR:-/dev/disk/by-label}
-STATE_ROOT=${RECOVER_STATE_DIR:-/run/recover}
+STATE_ROOT=${RECOVER_STATE_DIR:-/var/lib/recover}
 LOG_DIR=${RECOVER_LOG_DIR:-/var/log/recover}
 USAGE="usage: recover.sh detect|lock|recover|verify|resync|unlock DISK [OPTIONS]
        | replace DISK DEVICE FAILED_BYTES"
@@ -44,6 +45,13 @@ _state() {
 _log() {
     mkdir -p "$LOG_DIR"
     echo "$LOG_DIR/$1-$2-$(date +%Y%m%dT%H%M%S%N).log"
+}
+# _replacement DISK: step 3 passed, and the data path of DISK is mounted from the filesystem it
+# exempted (probe-s2-boot: a boot mounted the failed disk, back with the same label, instead).
+_replacement() {
+    [[ -e $STATE_ROOT/$1/replaced ]] || fail "run step 3 first" || return
+    _al_exempt "$1" "$ARCHIVE/$1" || fail "$ARCHIVE/$1 is not mounted from the replacement of" \
+        "step 3; take the failed disk out and boot again" || return
 }
 _replace_cleanup() {
     local disk=$1 path cleanup_failed=0
@@ -110,9 +118,12 @@ recover_lock() {
 #: failed disk's size from the disk inventory) or if it carries any filesystem signature; never
 #: guess. Then create a btrfs filesystem labelled DISK on DEVICE with the subvolumes `data` and
 #: `content`, mount `data` at the data path of DISK and `content` beside it, create the
-#: directories `branch` and `trash` and the `.snapshots` subvolume (`spike-snapshots-init`).
-#: Check: The data path is mounted from DEVICE, DEVICE carries the label DISK, `branch` is empty
-#: and `.snapshots` is a btrfs subvolume.
+#: directories `branch` and `trash` and the `.snapshots` subvolume (`spike-snapshots-init`),
+#: write the new filesystem to the disk (`sync -f`, a crash must not take the layout), and exempt
+#: it from the lock by its UUID (`archive-lock exempt DISK`), so the replacement stays writable
+#: through every later lock, also the one a boot sets again.
+#: Check: The data path is mounted from DEVICE, DEVICE carries the label DISK, `branch` is empty,
+#: `.snapshots` is a btrfs subvolume and DISK is exempt.
 recover_replace() {
     local disk=$1 device=${2:?$USAGE} failed_bytes=${3:?$USAGE} size tmp source real state
     state=$(_state "$disk")
@@ -189,14 +200,27 @@ recover_replace() {
         fail ".snapshots is no subvolume"
         return
     fi
+    sync -f "$ARCHIVE/$disk" || {
+        _replace_cleanup "$disk" || true
+        fail "write the filesystem of $disk to $device"
+        return
+    }
+    archive_lock_exempt "$disk" || {
+        _replace_cleanup "$disk" || true
+        fail "exempt $disk from the lock"
+        return
+    }
     touch "$state/replaced"
+    sync "$state/replaced" "$state" # a power loss right after must not lose it
     say "$device replaces $disk"
 }
 
 #: 4. recover DISK [--plain]
-#: Do: Restore the files of DISK as of the last completed sync: `snapsync fix DISK` (DISK from
-#: its live filesystem, the other disks from their synced snapshots; snapperd is stopped first),
-#: or `snapraid -d DISK -l LOG fix` without the snapshot workflow. The fix may be retried, for
+#: Do: Refuse unless the data path of DISK is mounted from the filesystem exempt in step 3 (a boot
+#: mounts the failed disk instead when it is back with the same label). Restore the files of DISK
+#: as of the last completed sync: `snapsync fix DISK` (DISK from its live filesystem, the other
+#: disks from their synced snapshots; snapperd is stopped first), or `snapraid -d DISK -l LOG
+#: fix` without the snapshot workflow. The fix may be retried, for
 #: example with copies of deleted files (`-i DIR`); after a sync it can no longer be.
 #: Check: The fix log carries its `summary:exit` tag. Every file the log reports
 #: `status:unrecoverable` is listed with this guidance, and the step exits 3: restore those files
@@ -205,7 +229,7 @@ recover_recover() {
     local disk=$1 plain=0 log rc=0 state
     [[ ${2-} == --plain ]] && plain=1
     state=$(_state "$disk")
-    [[ -e $state/replaced ]] || fail "run step 3 first" || return
+    _replacement "$disk" || return
     log=$(_log fix "$disk")
     if ((plain)); then
         snapraid -c "$CONF" -d "$disk" -l "$log" fix || rc=$?
@@ -227,8 +251,8 @@ recover_recover() {
 }
 
 #: 5. verify DISK [--accept-unrecoverable]
-#: Do: `snapraid -d DISK -a -l LOG check`: every file of DISK against its hash as of the last
-#: sync, without using parity.
+#: Do: Refuse as step 4 does unless the replacement is mounted. `snapraid -d DISK -a -l LOG
+#: check`: every file of DISK against its hash as of the last sync, without using parity.
 #: Check: The check exits 0. With files listed by step 4, it may fail only on those files, and only
 #: when the loss is accepted with --accept-unrecoverable.
 recover_verify() {
@@ -236,6 +260,7 @@ recover_verify() {
     [[ ${2-} == --accept-unrecoverable ]] && accept=1
     state=$(_state "$disk")
     [[ -e $state/unrecoverable ]] || fail "run step 4 first" || return
+    _replacement "$disk" || return
     log=$(_log check "$disk")
     snapraid -c "$CONF" -d "$disk" -a -l "$log" check || rc=$?
     if ((rc != 0)); then
@@ -254,9 +279,10 @@ recover_verify() {
 }
 
 #: 6. resync DISK [--plain] [--accept-unrecoverable]
-#: Do: Only after step 5 passed: `archive-lock open-for-resync` (the filesystems turn writable,
-#: snapperd is restarted, every action except the sync is still refused), then `snapsync sync`,
-#: or `snapraid -l LOG sync` without the snapshot workflow.
+#: Do: Only after step 5 passed and while the replacement is mounted (as in step 4):
+#: `archive-lock open-for-resync` (the filesystems turn writable, snapperd is restarted, every
+#: action except the sync is still refused), then `snapsync sync`, or `snapraid -l LOG sync`
+#: without the snapshot workflow.
 #: Check: The sync exits 0 and the array is covered again: `snapsync complete` and `snapsync
 #: covered` (without the snapshot workflow `snapsync covered --plain`).
 recover_resync() {
@@ -274,6 +300,7 @@ recover_resync() {
         fail "unrecoverable files are listed; a resync makes their loss final"
         return
     fi
+    _replacement "$disk" || return
     archive_lock_open_for_resync || fail "the resync stage" || return
     log=$(_log sync "$disk")
     if ((plain)); then
