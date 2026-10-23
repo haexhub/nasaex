@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 import test_s2_history as base
-from s2.context import Lab, Recovery, prediction_mismatches
+from s2.context import Lab, Recovery, listed_files, prediction_mismatches, survivors_unchanged
 from s2.history import History
 
 qemu_img = base.qemu_img
@@ -312,3 +312,85 @@ def test_every_kind_of_deviation_is_named():
         "b.bin (unsynced) was not observed",
         "c.bin (unsynced) was observed but is not in the prediction",
     ]
+
+
+# --- what the surviving disks and the fix log show (task T068) -----------------------------------
+
+
+class Observing:
+    """A history that only reports what was observed and what changed since the last sync."""
+
+    def __init__(self, observed, changed=None):
+        self.observed = observed
+        self.changed = changed or {}
+
+    def observe(self, disk):
+        return self.observed[disk]
+
+
+def survivors(observed, changed=None, failed="arch0"):
+    lab = Lab(Observing(observed, changed), Recorder(), TABLES)
+    return survivors_unchanged(lab, failed)
+
+
+def test_a_synced_file_that_the_history_changed_is_not_expected_to_keep_its_synced_content():
+    observed = {
+        "arch1": {
+            ("b/b0.bin", "synced"): "bit_exact",
+            ("b/b1.bin", "synced"): "differs",  # modified in place after the sync
+            ("b/b1.bin", "unsynced"): "bit_exact",
+            ("b/b2.bin", "synced"): "missing",  # deleted after the sync
+            ("new/n0.bin", "unsynced"): "bit_exact",
+        },
+        "arch2": {("c/c0.bin", "synced"): "bit_exact"},
+    }
+    changed = {"arch1": {"branch/b/b1.bin", "branch/b/b2.bin"}}
+
+    assert survivors(observed, changed) == []
+
+
+def test_a_file_that_the_history_wrote_or_changed_must_hold_that_content_now():
+    observed = {
+        "arch1": {("new/n0.bin", "unsynced"): "differs", ("b/b1.bin", "unsynced"): "missing"},
+        "arch2": {},
+    }
+
+    assert survivors(observed) == ["arch1 changed: differs new/n0.bin; missing b/b1.bin"]
+
+
+def test_a_synced_file_that_the_history_left_alone_must_still_be_there():
+    observed = {
+        "arch1": {},
+        "arch2": {("c/c0.bin", "synced"): "differs", ("c/c1.bin", "synced"): "differs"},
+    }
+
+    assert survivors(observed) == ["arch2 changed: differs c/c0.bin, c/c1.bin"]
+
+
+def test_the_failed_disk_is_not_a_survivor():
+    observed = {"arch1": {}, "arch2": {}}  # arch0 is not even asked
+
+    assert survivors(observed) == []
+
+
+def test_the_fix_status_tags_come_from_the_newest_fix_log_of_the_disk(machine, lab):
+    machine.script["cat $(ls -t /var/log/recover/fix-arch0-*.log"] = (
+        0,
+        "status:recovered:arch0:branch/a/a4.bin\n"
+        "status:unrecoverable:arch0:branch/a/a0.bin\n"
+        "status:recovered:arch1:branch/b/b0.bin\n"
+        "summary:exit:unrecoverable\n",
+    )
+
+    assert lab.fix_status("arch0") == {"a/a4.bin": "recovered", "a/a0.bin": "unrecoverable"}
+    assert machine.commands == ["cat $(ls -t /var/log/recover/fix-arch0-*.log | head -1) 2>&1"]
+
+
+def test_the_files_the_recover_step_lists_are_read_from_its_output():
+    out = (
+        "x\nrecover.sh: unrecoverable files of arch0 (renamed *.unrecoverable by the fix):\n"
+        "  branch/a/a0.bin\n  branch/a/a1.bin\nrecover.sh: restore them from elsewhere\n"
+    )
+
+    assert listed_files(out) == ["a/a0.bin", "a/a1.bin"]
+    assert listed_files("recover.sh: every file of arch0 recovered\n") == []

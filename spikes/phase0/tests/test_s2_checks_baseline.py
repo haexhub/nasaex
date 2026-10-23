@@ -18,7 +18,6 @@ qemu_img = base.qemu_img
 CRITERIA = yaml.safe_load((REPO_ROOT / "docs/phase0/criteria/S2.yaml").read_text())
 TABLES = CRITERIA["tables"]
 ARCH = ("arch0", "arch1", "arch2")
-GOOD = {"bit_exact": ["x.bin"], "differs": [], "missing": []}
 
 
 class Machine(ctx.Machine):
@@ -36,8 +35,8 @@ class FakeHistory:
         self.layout: list[str] = []
         self.replace_error: str | None = None
         self.unsynced = {d: set() for d in ARCH}
+        self.changed = {d: set() for d in ARCH}
         self.observed: dict[str, dict] = {}
-        self.compared = {d: GOOD for d in ARCH}
 
     def log(self, text):
         self.machine.events.append(f"history {text}")
@@ -52,6 +51,12 @@ class FakeHistory:
         self.log(f"add {rel}")
         self.unsynced["arch1"].add(f"branch/{rel}")
         return "arch1"
+
+    def modify(self, rel, offsets):
+        self.log(f"modify {rel}")
+
+    def delete(self, rel):
+        self.log(f"delete {rel}")
 
     def sync(self, snapshots):
         self.log(f"sync snapshots={snapshots}")
@@ -71,10 +76,7 @@ class FakeHistory:
         return "/dev/disk/by-id/virtio-spare"
 
     def observe(self, disk):
-        return self.observed[disk]
-
-    def compare(self, disk):
-        return self.compared[disk]
+        return self.observed.get(disk, {})  # a surviving disk with nothing to report
 
 
 CRITERIA_ROWS = {k: v["files"] for k, v in TABLES["predictions"].items() if "files" in v}
@@ -211,12 +213,7 @@ def test_s21_a_file_that_does_not_come_back_bit_exact_fails(s21):
 
 @pytest.mark.parametrize("category", ["differs", "missing"])
 def test_s21_a_surviving_disk_that_changed_fails(s21, category):
-    s21.history.compared["arch2"] = {
-        "bit_exact": [],
-        "differs": [],
-        "missing": [],
-        category: ["c/c0.bin"],
-    }
+    s21.history.observed["arch2"] = {("c/c0.bin", "synced"): category}
 
     with pytest.raises(AssertionError, match=f"arch2 changed: {category} c/c0.bin"):
         checks_baseline.check_complete_sync_recovery(s21)
@@ -311,7 +308,7 @@ def test_s23_a_synced_file_that_is_lost_fails(s23):
 
 
 def test_s23_the_other_disks_must_be_unchanged(s23):
-    s23.history.compared["arch0"] = {"bit_exact": [], "differs": ["a/a0.bin"], "missing": []}
+    s23.history.observed["arch0"] = {("a/a0.bin", "synced"): "differs"}
 
     with pytest.raises(AssertionError, match="arch0 changed: differs a/a0.bin"):
         checks_baseline.check_written_after_sync(s23)
