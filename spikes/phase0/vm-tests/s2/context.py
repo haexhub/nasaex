@@ -7,16 +7,14 @@ that the harness cannot follow is an `error` (RuntimeError): testlib.recorder ma
 The `history` is vm-tests/s2/history.py; `tables` are the criteria's `tables`; `recorder` takes
 the evidence references (testlib.recorder). Scaffolding for the spikes, not product code."""
 
-import hashlib
 import json
 import shlex
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from testlib import faults
+from testlib.recorder import write_evidence
 
-EVIDENCE_DIR = Path("status")
 TAIL = 20
 FLAGS = {  # step -> the options it takes: plain (SnapRAID without the workflow), accept
     "recover": ("plain",),
@@ -155,11 +153,7 @@ class Lab:
 
     def evidence(self, name: str, data) -> None:
         """Write status/<name>.json and reference it from the running scenario."""
-        EVIDENCE_DIR.mkdir(exist_ok=True)
-        path = EVIDENCE_DIR / f"{name}.json"
-        text = json.dumps(data, indent=2, sort_keys=True, default=str, ensure_ascii=False)
-        path.write_text(text + "\n", encoding="utf-8")
-        self.recorder.attach(path.as_posix(), hashlib.sha256(path.read_bytes()).hexdigest())
+        write_evidence(self.recorder, name, data)
 
 
 def prediction_mismatches(

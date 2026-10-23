@@ -6,13 +6,28 @@ of the verdict model; only `pass` counts as passing. Cases of a variant scenario
 of the criteria, for example `mount-variants`) carry the `gating` flag of their variant; only
 gating cases decide the scenario outcome, informational ones are recorded and never change it."""
 
+import hashlib
+import json
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from pathlib import Path
 
 OUTCOMES = ("pass", "fail", "error", "skipped", "flaky")
 # Scenario outcome of a case matrix with any non-pass case: the most severe case outcome.
 SEVERITY = ("error", "fail", "flaky", "skipped")
+
+
+def write_evidence(recorder, name: str, data: object) -> None:
+    """Write a status JSON file and attach its hash to the running scenario."""
+    directory = Path("status")
+    directory.mkdir(exist_ok=True)
+    path = directory / f"{name}.json"
+    path.write_text(
+        json.dumps(data, indent=2, sort_keys=True, default=str, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    recorder.attach(path.as_posix(), hashlib.sha256(path.read_bytes()).hexdigest())
 
 
 class Skip(Exception):
