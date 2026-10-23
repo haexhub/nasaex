@@ -1,64 +1,75 @@
 # Probe result: a boot between the failure, the replacement and the recovery of S2
 
-Measured on 2026-10-22 with the probe `probe-s2-boot` (`vm-tests/s2/default.nix` with `probe_s2_boot.py`, budget
-`probe`), one VM test at a time, KVM, machine state on an ext4 disk, on the `server` node of S2 (SnapRAID 14.4,
-snapper 0.13.1, snapraid-btrfs `6492a45`, the archive lock of T061 and `guest/recover.sh` of T062). It asks what
-the lifecycle point `boot:after-failure` of the S2 criteria does to the archive lock, the state of the recovery
-sequence and the mounts. It measures and never writes a record; the full output is `probe-s2-boot.json` in the
-output directory of the driver.
+Measured on 2026-10-22 and 2026-10-23 with the probe `probe-s2-boot` (`vm-tests/s2/default.nix` with
+`probe_s2_boot.py`, budget `probe`), one VM test at a time, KVM, machine state on an ext4 disk, on the `server`
+node of S2 (SnapRAID 14.4, snapper 0.13.1, snapraid-btrfs `6492a45`, the archive lock of T061 and
+`guest/recover.sh` of T062). It asks what the lifecycle point `boot:after-failure` of the S2 criteria does to the
+archive lock, the state of the recovery sequence and the mounts, and whether the lock that survives a boot (task
+T066a: state in `/var/lib/archive-lock` and `/var/lib/recover`, the unit `archive-lock-restore` of
+`nix/archive-lock.nix`) closes the gap. It measures and never writes a record; the full output is
+`probe-s2-boot.json` in the output directory of the driver.
 
-The boot: a graceful `shutdown`, then the image of the failed disk is replaced by a blank one (the failed disk
-was taken out; `faults.device_failed_at_boot`), then `start`. Seven seeded files on the three disks, a snapshot
-sync, arch0 fails by `device-ioerror`.
+Every phase starts from a fresh array (`History.reset`): seven seeded files on the three disks, a snapshot sync.
+A boot is a graceful `shutdown` (or a crash: QEMU process termination), the image of the failed disk replaced by
+a blank one (the failed disk taken out; `faults.device_failed_at_boot`) unless the phase keeps it, then `start`.
 
-Runs: 2 VM runs. Run 1 read the mounts with `findmnt -R /mnt`, which fails because `/mnt` is no mount point, and
-after the boot set the lock again with `recover lock`, which unmounts the replacement first; both fixed. Run 2 ran
-the committed probe; its outcomes of every step run 1 also measured are the same.
+Runs: 5 VM runs.
+
+- Runs 1 and 2 used the lock of T061, with its state in `/run`. Run 1 read the mounts with `findmnt -R /mnt`, which fails because `/mnt` is no mount point, and set the lock again with `recover lock`, which unmounts the replacement first. Both were fixed for run 2.
+- Run 3 used the first version of T066a and found the three faults below.
+- Runs 4 and 5 ran the committed code. Run 5 took 323 s. Run 5 reproduced every outcome of run 4; only boot times, filesystem UUIDs and device names differ.
 
 ```sh
 SPIKE_STATE_DIR=<short directory on an ext4 disk> nix run ./spikes/phase0#probe-s2-boot
 ```
 
-## A: boot after the replacement (detect, lock, replace, boot, recover ...)
+## Before T066a: the lock in `/run` (run 2)
 
-| Step | Result (run 2) |
+| Phase | Result |
 | --- | --- |
-| detect, lock, replace by spare0 | rc 0 each; locked: parity, arch1, arch2 and `/var/lib/snapraid` read-only, the replacement mounted at the arch0 paths read-write; `/run/archive-lock` and `/run/recover/arch0/replaced` exist |
-| shutdown, boot | 1.4 s, 15.1 s; no failed unit; the replacement carries the label arch0 and is mounted at `/mnt/archive/arch0` by it; both pools active |
-| the lock after the boot | `unlocked`: `/run/archive-lock` and `/run/recover` are gone (tmpfs); **parity, arch1, arch2, arch0 and every content location are read-write** |
-| `recover recover arch0` | rc 1, `run step 3 first` (the marker of step 3 is gone) |
-| `recover replace arch0 <spare0>` again | rc 1, `already carries a filesystem signature` |
-| `archive-lock lock` again, the marker of step 3 set by hand | locked; now the replacement at `/mnt/archive/arch0` is read-only too |
-| `recover recover arch0` | rc 1: `Error creating directory '/mnt/archive/arch0/branch/a'. Read-only file system.`, `Stopping at block 0`; verify rc 1, resync refused (`step 5 has not passed`) |
-| files | arch0 0 of 3 (not restored); arch1 and arch2 unchanged |
+| detect, lock, replace by spare0; shutdown, boot | `unlocked`: `/run/archive-lock` and `/run/recover` are gone (tmpfs); **parity, arch1, arch2, arch0 and every content location read-write**; `recover recover` rc 1 `run step 3 first`; step 3 again rc 1 `already carries a filesystem signature` |
+| the same, the lock set again by hand | the replacement is read-only too; `fix` rc 1 `Read-only file system`; arch0 0 of 3 restored |
+| arch0 fails, boot before the lock, then the whole sequence | rc 0 each; 3 of 3 bit-exact; between the boot and the lock every location is read-write, both pools `inactive` |
 
-snapper after the boot listed only snapshot 0 for arch0 (the replacement); the content files on the system disk and
-the parity disk were present, `snapraid status`: `No error detected.`
+## T066a, run 3: three faults
 
-## B: boot before the lock (fail, boot, detect, lock, replace, recover ...)
-
-| Step | Result (run 2) |
+| Phase | Fault |
 | --- | --- |
-| shutdown, boot | 1.0 s, 22.2 s; no failed unit; no device carries the label arch0; **parity, arch1, arch2 and their content locations read-write**, both pools `inactive` (a branch is missing) |
-| detect | rc 0, `/mnt/archive/arch0 is not mounted`, `no device carries the label arch0` |
-| lock, replace by spare0, recover, verify, resync, unlock | rc 0 each; `every file of arch0 recovered`, `Everything OK`, `covered` |
-| files | arch0 3 of 3 bit-exact as of the sync; arch1 and arch2 unchanged |
+| the reset boot (every disk blank, the content file of the system disk left from the phase before) | `archive-lock-restore` failed with exit 1 and no output. The parity file does not exist while the parity disk is not mounted; `findmnt --target` exits 1 without a word on a missing path (measured with util-linux 2.39 on the host; the guest unit failed with the same silence), and `set -e` ended the lock. A lock with a missing parity disk failed the same way. |
+| crash right after step 3 | The marker `replaced` (synced) survived; the new filesystem had not been written: `recover` rc 1, `/mnt/archive/arch0/.snapshots is not a valid btrfs subvolume`. verify and resync refused; arch0 0 of 3 restored. |
+| failed disk back (its image kept) | The boot mounted the **failed** disk (same label arch0) at `/mnt/archive/arch0`, and the exempt-by-name left it writable. recover, verify, resync passed against the failed disk; the replacement stayed unused. |
 
-## Findings (for the decision on `boot:after-failure`, not decided here)
+Fixes (runs 4 and 5):
+- `_al_mount_of` falls back to the parent of a missing path.
+- Step 3 writes the new filesystem to the disk (`sync -f`) before the exempt and the marker.
+- `archive-lock exempt DISK` records the UUID of the filesystem mounted at the data path. A different filesystem there is locked (`not the filesystem exempt as the replacement of arch0, locked`).
+- Steps 4 to 6 refuse unless the data path is mounted from that filesystem.
 
-1. The archive lock and the state of the recovery sequence live in `/run` and do not survive a boot: after any
-   boot every archive, parity and content location is read-write until the lock is set again.
-2. A boot after the replacement breaks the sequence of T062: step 4 refuses without the marker of step 3, and
-   step 3 cannot run again on the formatted replacement. Setting the lock again (as a lock that survives the boot
-   would) also makes the mounted replacement read-only, so `fix` cannot write it: a persistent lock must leave
-   the replacement of the failed disk writable.
-3. A boot before the lock needs nothing to survive it, and the whole sequence passed with every file
-   bit-exact. Between that boot and the lock the array is writable (no lock), and the pools stay inactive while
-   a branch is missing.
+## T066a, runs 4 and 5
+
+After every boot, `archive-lock-restore` was `active`/`success`, ordered `After` the parity and data mount units and `local-fs.target` and `Before` `sysinit.target`. No unit failed.
+
+| Phase | Boot (run 4 / run 5) | After the boot | Recovery | Files |
+| --- | --- | --- | --- | --- |
+| after-replace: detect, lock, replace; shutdown; boot | 29.6 s / 16.8 s | locked (`arch0 failed`), `exempt: arch0 <UUID of the replacement>`; parity, arch1, arch2 and `/var/lib/snapraid` read-only, only arch0 (the replacement, same UUID) read-write; `/var/lib/recover/arch0/replaced` kept; pools active | recover, verify, resync, unlock rc 0 each; `covered` | 7 of 7 bit-exact |
+| crash-after-replace: the same with a crash | 14.1 s / 27.7 s | the same | the same | 7 of 7 bit-exact |
+| power-off-failure: arch0 fails while off; boot | 24.2 s / 30.2 s | locked by the restore: `boot: arch0 is not mounted`; parity, arch1, arch2 and `/var/lib/snapraid` read-only; pools inactive | the whole sequence rc 0 each | 7 of 7 bit-exact |
+| failed-disk-back: detect, lock, replace; boot with the failed disk attached | 15.5 s / 16.8 s | label arch0 on the failed disk, mounted at `/mnt/archive/arch0` (other UUID); the restore locked it: **every location read-only** | `recover` rc 1: `/mnt/archive/arch0 is not mounted from the replacement of step 3; take the failed disk out and boot again`; no fix ran | |
+| failed-disk-taken-out: the failed disk taken out; boot | 15.3 s / 15.6 s | the replacement mounted (the recorded UUID), the only location read-write | recover, verify, resync, unlock rc 0 each | 7 of 7 bit-exact |
+
+The reset boot before the crash phase (every disk blank) succeeded: the restore printed four `not mounted,
+skipped` lines, and the reset lifted that lock. While the failed disk was back, its ro remount was recorded. After the boot without it, `archive-lock status` lists `remount /mnt/archive/arch0 rw` (the exempt
+replacement). The unlock remounts it read-write, which it already is.
+
+## Findings
+
+1. With T066a no boot opened the archive. After every measured boot (graceful, crash, a disk failed while off, the failed disk back), no data, parity or content location was writable except the replacement exempt by its filesystem UUID. The recovery sequence completed with every file bit-exact.
+2. A boot between `replace` and `recover` is safe once step 3 writes its filesystem to the disk before its marker. Without that write, a crash kept the marker but not the layout.
+3. A failed disk that comes back with its label can take the place of the replacement at a boot. The UUID binds the exempt and the steps 4 to 6 to the replacement; the failed disk stays read-only, and the sequence stops until it is taken out.
+4. `findmnt --target` on a missing path exits 1 without output. Under `set -e` that ended the lock silently; `_al_mount_of` now falls back to the parent directory.
 
 ## UNVERIFIED
 
-- A boot while the failed disk is still attached (its image kept): the failed disk would come back with its old
-  label beside the replacement.
-- A crash instead of a graceful shutdown.
-- Maintenance timers at boot: the S2 node runs none.
+- Maintenance timers at boot: the S2 node runs none (the restore is ordered before `sysinit.target`, so before any timer).
+- `recover unlock` after a failed recovery: in run 3 it unlocked the array with arch0 empty (the probe runs every step regardless). Whether the next sync would then drop the files of arch0 from the parity was not measured. SnapRAID refuses a sync while a whole disk is empty, unless it gets `-E`.
+- While the array is locked, the base pool (`mfs`) has only the replacement as a writable branch, so a write to the share during the recovery would land on it. Not measured.
