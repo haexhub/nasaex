@@ -11,7 +11,7 @@ from s2 import checks_history
 machine, lab, qemu_img = bl.machine, bl.lab, bl.qemu_img
 CRITERIA, ROWS = bl.CRITERIA, bl.CRITERIA_ROWS
 LOST = ["a/a0.bin", "a/a1.bin", "a/a2.bin", "a/a3.bin"]
-FIX_LOG = "cat $(ls -t /var/log/recover/fix-arch0-*.log"
+FIX_LOG = "log=$(ls -t /var/log/recover/fix-arch0-*.log 2>/dev/null | head -1) || log=;"
 HISTORY = [
     "history modify b/b1.bin",
     "history modify b/b2.bin",
@@ -66,7 +66,8 @@ def test_s22_changes_the_array_after_a_plain_sync_then_runs_the_plain_sequence(s
         "$ recover verify arch0 --accept-unrecoverable 2>&1",
         "$ recover resync arch0 --plain --accept-unrecoverable 2>&1",
         "$ recover unlock arch0 2>&1",
-        "$ cat $(ls -t /var/log/recover/fix-arch0-*.log | head -1) 2>&1",
+        "$ log=$(ls -t /var/log/recover/fix-arch0-*.log 2>/dev/null | head -1) || log=; "
+        'if [ -n "$log" ]; then cat "$log" 2>&1; fi',
     ]
 
 
