@@ -63,7 +63,7 @@ def test_replace_writes_the_new_filesystem_to_the_disk_before_it_counts(box):
     assert stubs.calls(box["stubs"], "sync")[-3:] == [
         ["sync", "-f", box["data"]["arch2"]],
         ["sync", f"{lock}/exempt", str(lock)],
-        ["sync", f"{state}/replaced", str(state)],
+        ["sync", "-f", f"{state}/replaced"],
     ]
 
 

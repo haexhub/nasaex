@@ -211,7 +211,8 @@ recover_replace() {
         return
     }
     touch "$state/replaced"
-    sync "$state/replaced" "$state" # a power loss right after must not lose it
+    # The whole system filesystem: the marker and the directories _state may just have created.
+    sync -f "$state/replaced" # a power loss right after must lose neither
     say "$device replaces $disk"
 }
 
