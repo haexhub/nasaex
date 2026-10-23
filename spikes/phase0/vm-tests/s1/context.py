@@ -16,18 +16,17 @@ The `server` and `client` arguments are driver machine objects (duck-typed). Sca
 the spikes, not product code."""
 
 import base64
-import hashlib
 import json
 import shlex
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from pathlib import Path
 
 from s1.fixture import ARCHIVE, POOL
 
 from testlib.fixtures import Entry, Fixture, to_json
 from testlib.manifest import Manifest, from_json, tree_hash
+from testlib.recorder import write_evidence
 from testlib.smb import CifsMount, Share, SmbClient
 
 CACHE = "/mnt/cache"
@@ -37,7 +36,6 @@ CACHE_UNIT = "mnt-cache.mount"
 BASE_UNIT = "mnt-base.mount"
 SMBD = "samba-smbd.service"
 BASELINE_ARCHIVE_MODE = "NC"
-EVIDENCE_DIR = Path("status")
 
 _MANIFEST = """import sys
 from pathlib import Path
@@ -323,8 +321,4 @@ class Lab:
 
     def evidence(self, name: str, data) -> None:
         """Write status/<name>.json and reference it from the running scenario."""
-        EVIDENCE_DIR.mkdir(exist_ok=True)
-        path = EVIDENCE_DIR / f"{name}.json"
-        text = json.dumps(data, indent=2, sort_keys=True, default=str, ensure_ascii=False)
-        path.write_text(text + "\n", encoding="utf-8")
-        self.recorder.attach(path.as_posix(), hashlib.sha256(path.read_bytes()).hexdigest())
+        write_evidence(self.recorder, name, data)
