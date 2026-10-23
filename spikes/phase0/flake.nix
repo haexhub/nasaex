@@ -85,6 +85,14 @@
         criteria = null;
         budget = "probe";
       };
+      # A boot between the failure, the replacement and the recovery of S2 (boot:after-failure).
+      probeS2Boot = import ./vm-tests/s2/default.nix {
+        inherit mkSpike;
+        name = "probe-s2-boot";
+        testScript = ./vm-tests/probes/probe_s2_boot.py;
+        criteria = null;
+        budget = "probe";
+      };
       # The spikes' VM tests.
       s1 = import ./vm-tests/s1/default.nix { inherit mkSpike; };
 
@@ -142,6 +150,7 @@
         probe-s2-faults = apps.runDriver "probe-s2-faults" probeS2Faults.driver;
         probe-corrupted-parity = apps.runDriver "probe-corrupted-parity" probeCorruptedParity.driver;
         probe-s2-history = apps.runDriver "probe-s2-history" probeS2History.driver;
+        probe-s2-boot = apps.runDriver "probe-s2-boot" probeS2Boot.driver;
       } // lib.mapAttrs'
         (v: p: lib.nameValuePair "probe-pool-race-${v}" (apps.runDriver "probe-pool-race-${v}" p.driver))
         probePoolRace
@@ -177,6 +186,7 @@
         driver-probe-s2-faults = probeS2Faults.driver;
         driver-probe-corrupted-parity = probeCorruptedParity.driver;
         driver-probe-s2-history = probeS2History.driver;
+        driver-probe-s2-boot = probeS2Boot.driver;
       }
       // lib.mapAttrs' (v: p: lib.nameValuePair "driver-probe-pool-race-${v}" p.driver) probePoolRace
       // lib.mapAttrs'

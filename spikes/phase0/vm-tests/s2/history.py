@@ -4,7 +4,8 @@ fails, with the bookkeeping the parity model needs (testlib.parity_model).
   reset     a fresh array: the machine is powered off (QEMU process termination) and every disk
             image is replaced by an empty one (faults.device_failed_at_boot), so each scenario
             fails a disk by a real host-side fault on a machine that saw no earlier one; then
-            boot, spike-mkfs, the mounts, both pools and the snapper subvolumes
+            boot, the lock that the boot set lifted and the lock and recovery state removed,
+            spike-mkfs, the mounts, both pools and the snapper subvolumes
   populate  seeded files written straight into the branch directory of an archive disk: the
             data set before the first sync, and files written to a disk after a sync (S2.3)
   add       a new file the way new data reaches the archive: created through the share (it
@@ -122,12 +123,18 @@ class History:
         # Mounts are nofail with a device timeout: on a boot with blank disks their jobs are
         # still pending at multi-user.target (vm-tests/probes/probe_faults.py).
         machine.wait_until_succeeds('test -z "$(systemctl list-jobs --no-legend)"', timeout=120)
+        # The system disk keeps the content file of the last scenario across the power-off, so
+        # the boot finds a synced array with blank disks and locks it (archive-lock restore,
+        # task T066a); a new scenario lifts that lock and forgets the lock and recovery state.
+        machine.succeed("archive-lock unlock")
+        machine.succeed(
+            "rm -rf /var/lib/archive-lock /var/lib/recover && rm -f /var/lib/snapraid/snapraid.*"
+        )
         machine.succeed("spike-mkfs all")
         for mount in [POOL_BRANCH, *DATA.values(), *CONTENT.values(), PARITY]:
             machine.succeed(f"findmnt -n {mount} >/dev/null || mount {mount}")
         machine.succeed(f"systemctl start {' '.join(UNITS)}")
-        # The system disk keeps its content across the power-off.
-        machine.succeed(f"rm -f /var/lib/snapraid/snapraid.* && mkdir -p {LOGS}")
+        machine.succeed(f"mkdir -p {LOGS}")
         machine.succeed("spike-snapshots-init " + " ".join(ARCH))
         self._clear()
 

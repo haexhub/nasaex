@@ -3,8 +3,10 @@ snapraid-btrfs, snapper, systemctl, btrfs, df), so the scripts' decisions run on
 
 Every stub appends its argv (and LC_ALL) as one JSON line to `calls.jsonl`. The mount table is a
 JSON file {target: "ro" | "rw"}; `busy` lists targets whose read-only remount fails like a
-filesystem with a file open for writing. `state.json` keeps what the stubs create (the source
-device of a mount, the label mkfs gave a device). Other behaviour comes from `stub.json`."""
+filesystem with a file open for writing, `absent` paths that do not exist. `state.json` keeps what
+the stubs create (the source device of a mount, the label mkfs gave a device) and `uuids`, the
+filesystem UUID of a target that differs from the one of its source. Other behaviour comes from
+`stub.json`."""
 
 import json
 import os
@@ -44,6 +46,8 @@ STUBS = {
 t = table()
 if "--target" in sys.argv:
     path = arg("--target").rstrip("/") or "/"
+    if path in CONF.get("absent", []):  # a path that does not exist: exit 1 without a word
+        sys.exit(1)
     hits = [m for m in t if path == m or path.startswith(m.rstrip("/") + "/")]
     print(max(hits, key=len) if hits else "/")
 elif "--mountpoint" in sys.argv:
@@ -52,6 +56,10 @@ elif "--mountpoint" in sys.argv:
         sys.exit(1)
     if arg("-o") == "SOURCE":
         print(state()["sources"].get(target, "?"))
+    elif arg("-o") == "UUID":  # of the filesystem: of its device, or of the fstab mount
+        s = state()
+        source = s["sources"].get(target, target).split("[")[0]
+        print(s.get("uuids", {}).get(target, "uuid:" + source))
     else:
         print(t[target] + ",relatime")
 """,
