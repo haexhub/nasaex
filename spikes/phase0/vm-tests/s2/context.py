@@ -156,7 +156,9 @@ class Lab:
         """The status tag of every file in the newest fix log of `disk`: recovered or
         unrecoverable, by the path in the share."""
         _, out = self.machine.execute(
-            f"cat $(ls -t /var/log/recover/fix-{disk}-*.log | head -1) 2>&1"
+            f"log=$(ls -t /var/log/recover/fix-{disk}-*.log 2>/dev/null | head -1) || log=; "
+            'if [ -n "$log" ]; then cat "$log" 2>&1; fi',
+            timeout=900,
         )
         tags = {}
         for line in out.splitlines():

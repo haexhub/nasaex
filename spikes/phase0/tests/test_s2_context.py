@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 import test_s2_history as base
+from helpers import LocalMachine
 from s2.context import Lab, Recovery, listed_files, prediction_mismatches, survivors_unchanged
 from s2.history import History
 
@@ -374,7 +375,9 @@ def test_the_failed_disk_is_not_a_survivor():
 
 
 def test_the_fix_status_tags_come_from_the_newest_fix_log_of_the_disk(machine, lab):
-    machine.script["cat $(ls -t /var/log/recover/fix-arch0-*.log"] = (
+    machine.script[
+        "log=$(ls -t /var/log/recover/fix-arch0-*.log 2>/dev/null | head -1) || log=;"
+    ] = (
         0,
         "status:recovered:arch0:branch/a/a4.bin\n"
         "status:unrecoverable:arch0:branch/a/a0.bin\n"
@@ -383,7 +386,17 @@ def test_the_fix_status_tags_come_from_the_newest_fix_log_of_the_disk(machine, l
     )
 
     assert lab.fix_status("arch0") == {"a/a4.bin": "recovered", "a/a0.bin": "unrecoverable"}
-    assert machine.commands == ["cat $(ls -t /var/log/recover/fix-arch0-*.log | head -1) 2>&1"]
+    assert machine.commands == [
+        "log=$(ls -t /var/log/recover/fix-arch0-*.log 2>/dev/null | head -1) || log=; "
+        'if [ -n "$log" ]; then cat "$log" 2>&1; fi'
+    ]
+
+
+def test_fix_status_without_a_log_returns_no_tags():
+    machine = LocalMachine()
+    lab = Lab(StubHistory(machine), Recorder(), TABLES)
+
+    assert lab.fix_status("disk-with-no-fix-log") == {}
 
 
 def test_the_files_the_recover_step_lists_are_read_from_its_output():
