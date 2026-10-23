@@ -167,7 +167,14 @@ def test_reset_powers_off_replaces_every_disk_image_then_formats_mounts_and_init
     assert sorted(p.name for p in Path(server.state_dir).iterdir()) == sorted(
         d["image"] for d in TOPOLOGY["disks"]
     )
-    assert server.commands[0] == "spike-mkfs all"
+    # The content file of the last scenario survives on the system disk, so the boot finds a
+    # synced array with blank disks and locks it (archive-lock restore, task T066a): the reset
+    # lifts that lock and forgets the lock and recovery state before it formats anything.
+    assert server.commands[:2] == [
+        "archive-lock unlock",
+        "rm -rf /var/lib/archive-lock /var/lib/recover && rm -f /var/lib/snapraid/snapraid.*",
+    ]
+    assert server.commands[2] == "spike-mkfs all"
     mounts = [c.split("|| mount ")[1] for c in server.commands if "|| mount " in c]
     assert mounts == [
         "/mnt/pool",
@@ -177,7 +184,6 @@ def test_reset_powers_off_replaces_every_disk_image_then_formats_mounts_and_init
     ]
     assert "systemctl start mnt-base.mount mnt-cache.mount" in server.commands
     assert server.commands[-1] == "spike-snapshots-init arch0 arch1 arch2"
-    assert any(c.startswith("rm -f /var/lib/snapraid/snapraid.*") for c in server.commands)
 
 
 def test_reset_of_a_machine_that_never_started_does_not_power_it_off(lab, server):
